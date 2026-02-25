@@ -5,7 +5,7 @@ from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, Signal
 
-from leonardo.gui.chart.dummy_data import Candle
+from leonardo.common.market_types import Candle
 
 
 @dataclass(frozen=True)
@@ -28,6 +28,10 @@ class ChartModel(QObject):
     """
     GUI-side chart data container.
     Holds all series needed for rendering: price, volume, overlays, oscillators, trades.
+
+    IMPORTANT:
+    - Render surfaces may hold references to `candles` and `volume` lists.
+      Therefore `set_candles`/`set_volume` must mutate lists IN PLACE (not rebind).
     """
     changed = Signal()
 
@@ -51,11 +55,40 @@ class ChartModel(QObject):
         return self._volume
 
     def set_candles(self, candles: List[Candle]) -> None:
-        self._candles = candles
+        # In-place update so any widget holding a reference keeps working.
+        self._candles.clear()
+        self._candles.extend(candles)
         self.changed.emit()
 
     def set_volume(self, volume: List[float]) -> None:
-        self._volume = volume
+        # In-place update so any widget holding a reference keeps working.
+        self._volume.clear()
+        self._volume.extend(volume)
+        self.changed.emit()
+
+    def append_candle(self, candle: Candle, *, maxlen: int | None = None) -> None:
+        self._candles.append(candle)
+        self._volume.append(float(candle.volume))
+
+        if maxlen is not None and len(self._candles) > maxlen:
+            drop = len(self._candles) - maxlen
+            del self._candles[:drop]
+            del self._volume[:drop]
+
+        self.changed.emit()
+
+    def update_last_candle(self, candle: Candle) -> None:
+        if not self._candles:
+            self.append_candle(candle)
+            return
+
+        self._candles[-1] = candle
+
+        if self._volume:
+            self._volume[-1] = float(candle.volume)
+        else:
+            self._volume.append(float(candle.volume))
+
         self.changed.emit()
 
     # ---- overlays (price indicators) ----

@@ -1,4 +1,4 @@
-Leonardo CORE Summary (v0.1 skeleton)
+Leonardo CORE Summary (v0.2 – runtime + GUI bridge + exchange scaffolding)
 Scope
 
 CORE provides the foundational runtime infrastructure for Leonardo:
@@ -13,11 +13,22 @@ Audit/Event stream (product-facing events) with pluggable sinks
 
 Centralized error routing (exceptions → logs + audit events)
 
-Global registry / AppContext for runtime state, services, and task supervision
+Global registry / AppContext for runtime state, service lookup, and task supervision
 
-This layer is designed to support future services (websockets, REST APIs, exchange connectors, persistence, GUI bridge) without coupling those services to each other.
+New in this iteration (compared to the v0.1 skeleton):
 
-Package layout (CORE-related)
+State subsystem (core/state.py) used to record product-facing runtime state (e.g., window open/close, realtime active flag) that the GUI can query/poll.
+
+Registry keys (core/registry_keys.py) defining stable identifiers for services exposed via ctx.registry (e.g., GUI WindowManager).
+
+Market data feed task (core/market_data/bybit_feed.py) that streams chart snapshot/patch events into the GUI via the bridge.
+
+Exchange connection scaffolding (connection/exchange/*) including a registry + adapter layout (Bybit adapter present), designed to support multiple exchanges cleanly.
+
+This layer is explicitly designed to support additional services (websockets, REST APIs, exchange connectors, persistence, GUI bridge) without coupling those services tightly to each other.
+
+Package layout (CORE-related + connected infra that CORE drives)
+Core runtime
 
 leonardo/core/app.py — App host, lifecycle orchestration
 
@@ -29,20 +40,40 @@ leonardo/core/audit.py — Audit event model + sinks
 
 leonardo/core/errors.py — ErrorRouter (central exception routing)
 
-leonardo/core/context.py — AppContext + TaskManager
+leonardo/core/context.py — AppContext + TaskManager + registry surface
 
 leonardo/core/services/base.py — Service protocol
 
 leonardo/core/services/heartbeat.py — Example service proving lifecycle
+
+Runtime state + registry keys (new)
+
+leonardo/core/state.py — App state surface (GUI-visible state: window tracking, realtime active flag, etc.)
+
+leonardo/core/registry_keys.py — Stable registry keys (e.g., SVC_GUI_WINDOW_MANAGER)
+
+Market data tasks (new)
+
+leonardo/core/market_data/bybit_feed.py — Core-side async chart feed task (snapshot + realtime patches)
+
+Exchange connection scaffolding (new but adjacent)
+
+leonardo/connection/exchange/base.py — exchange interface contracts / base types
+
+leonardo/connection/exchange/registry.py — exchange registry (discover + select adapters)
+
+leonardo/connection/exchange/adapters/bybit.py — Bybit adapter implementation
+
+Note: The connection/ package is not “CORE” strictly speaking, but CORE is what will orchestrate these connectors as services/tasks.
 
 Core lifecycle
 Entry point
 
 python -m leonardo runs leonardo/__main__.py
 
-This calls asyncio.run(LeonardoApp.run_main())
+This calls asyncio.run(...) on the app host main coroutine
 
-Boot sequence (LeonardoApp.run_main)
+Boot sequence (app host)
 
 load_config() builds a typed AppConfig
 
@@ -58,13 +89,15 @@ task manager
 
 app context (registry)
 
+runtime state surface (ctx.state) (new)
+
 await app.run() starts the runtime loop
 
 Startup (LeonardoApp._startup)
 
 Emits lifecycle audit/log events: startup begin, startup complete
 
-Registers services (currently only HeartbeatService)
+Registers services (heartbeat as baseline; GUI services may be registered depending on bootstrap path)
 
 Starts services in registration order:
 
@@ -90,10 +123,10 @@ Cancels supervised tasks via TaskManager.cancel_all(timeout)
 
 Closes audit sinks (flush/close file sink)
 
-Global registry: AppContext
+Global registry: AppContext (runtime coordination surface)
 What it is
 
-AppContext is a runtime coordination surface and registry. It exists to:
+AppContext exists to:
 
 provide consistent access to cross-cutting concerns (config/log/audit/errors)
 
@@ -101,7 +134,7 @@ register and access services
 
 centralize task creation/cancellation
 
-keep a small “runtime state” dict for coarse app-level flags
+expose a small runtime state surface (ctx.state) for GUI/product-visible status (new)
 
 What it is not
 
@@ -111,13 +144,13 @@ trading logic
 
 exchange/domain models
 
-GUI state/models
+GUI state/models (beyond coarse window/state tracking)
 
 analytics state
 
 large mutable business objects
 
-Contents
+Contents (conceptual)
 
 config: typed config object (AppConfig)
 
@@ -129,17 +162,30 @@ error_router: centralized error routing
 
 tasks: TaskManager (supervised background tasks)
 
-services: dict registry {name: service_instance}
+registry: service registry (keyed, used by GUI for e.g. window manager)
 
-runtime_state: dict for coarse flags (keep small)
+state: runtime/product state façade (new)
 
-Service registry API
+Runtime state surface (core/state.py) — new
+Why it exists
 
-register_service(name, svc)
-Ensures unique name; raises if already registered.
+Some state is not “logs” and not “services”, but still must be queryable by the GUI:
 
-get_service(name, type)
-Fetches a service and asserts its type at runtime.
+whether realtime streaming is active
+
+which GUI windows are open (for inspector tooling)
+
+service-like status flags that are useful for operators/users
+
+This state is updated by GUI actions (via CoreBridge submit calls) and read by diagnostic windows (polling snapshots).
+
+Typical responsibilities
+
+window tracking: window_open(...), window_close(...)
+
+realtime flag: set_realtime_active(True/False), is_realtime_active()
+
+snapshot APIs for tooling: windows_state() (used by WindowsInspectorWindow)
 
 Task supervision: TaskManager
 Problem it solves
@@ -164,13 +210,13 @@ refuses to create a second running task with same name
 
 spawns asyncio.create_task
 
-attaches done_callback:
+attaches done callback:
 
 ignores CancelledError
 
 routes other exceptions to ErrorRouter.capture(...)
 
-if critical=True, emits a lifecycle:fatal audit event (policy can later escalate to shutdown)
+if critical=True, emits a lifecycle:fatal audit event (future policy can escalate to shutdown)
 
 cancel_all(timeout_s)
 
@@ -182,11 +228,43 @@ emits an audit error if tasks remain pending after timeout
 
 Guidance for future services
 
-All background loops (websocket readers, polling loops, schedulers) should be started using:
+All background loops (websocket readers, polling loops, schedulers, feeds) should be started using:
 
 ctx.tasks.create("service_name.loop", coro, critical=..., where="service")
 
 …not raw asyncio.create_task, unless there is a very specific reason.
+
+Market data feed tasks (core/market_data/bybit_feed.py) — new
+
+CORE now includes a first “real” async workload: a chart feed task.
+
+Conceptually it:
+
+requests an initial snapshot (historical candles)
+
+streams patch updates (append/update of current candle)
+
+routes updates to the GUI via the bridge signal layer (GUI is responsible for rendering and viewport behavior)
+
+This is intentionally “feed-like” and will later be generalized behind exchange connector interfaces.
+
+Exchange connection scaffolding (connection/exchange/*) — new
+
+A dedicated package exists for exchange integration, structured as:
+
+base.py: common protocols/types for exchanges
+
+registry.py: register and resolve supported exchanges/adapters
+
+adapters/: per-exchange implementations (Bybit present)
+
+This keeps “how to talk to an exchange” separate from:
+
+chart rendering
+
+core orchestration
+
+future strategy/backtesting layers
 
 Configuration: layered + typed (core/config.py)
 Layer order (last wins)
@@ -205,57 +283,31 @@ Nested keys split by __
 
 Example: LEONARDO__logging__level=DEBUG
 
-Keys are normalized to lowercase to behave consistently on Windows.
-
-Current schema (v0.1)
-
-profile: str
-
-logging.level: str
-
-logging.json: bool
-
-audit.enabled: bool
-
-audit.file_enabled: bool
-
-audit.file_path: str (default ./runs/audit.jsonl)
-
-audit.memory_max_events: int
-
-runtime.shutdown_timeout_s: float
+Keys normalized to lowercase (Windows-friendly)
 
 Notes
 
-Config dataclasses are frozen (immutable). Any “modify config” behavior later should be handled by creating a new config instance and writing to a file (future).
+Config dataclasses are frozen (immutable). Future “modify config” behavior should be done by creating a new config instance and writing it out.
 
 Structured logging (core/logging.py)
-What we do
 
 stdlib logging configured once at startup
 
 JSON formatter emits one JSON object per log line
 
-Context variables (async-safe correlation)
+Context variables (async-safe):
 
-run_id: unique per run
+run_id (unique per run)
 
-component: e.g. core (later gui, engine, etc.)
+component (core, later gui/engine/etc.)
 
-correlation_id: reserved for request/job/user-action correlation later
+correlation_id (reserved)
 
-These are implemented using contextvars, which behaves correctly with asyncio task switching.
-
-Structured fields
-
-Use log(logger, level, msg, **fields) which writes:
-
-msg and metadata into fields payload in JSON output
+Use log(logger, level, msg, **fields) to emit structured payloads.
 
 Audit/event log (core/audit.py)
-Why audit exists
 
-Audit/events are product-facing: they are meant for:
+Audit/events are product-facing and meant for:
 
 GUI display (“what happened?”)
 
@@ -263,64 +315,43 @@ user-facing action history
 
 error feeds
 
-later: compliance/traceability for trading suggestions/actions
+later: traceability/compliance for trading suggestions/actions
 
-This is separate from developer logs.
+Event model:
 
-Event model
+AuditEvent: ts, event_type, severity, message, fields
 
-AuditEvent fields:
-
-ts (UTC ISO)
-
-event_type (e.g. lifecycle, error, service, heartbeat)
-
-severity (debug/info/warn/error/fatal)
-
-message (human-readable)
-
-fields (structured payload)
-
-Sinks
+Sinks:
 
 InMemoryAuditSink (ring buffer)
 
-bounded list of recent events (GUI can snapshot/poll)
+JsonlAuditSink (append-only JSONL)
 
-JsonlAuditSink
-
-append-only file output (JSON Lines)
-
-CompositeAuditSink
-
-fan-out to multiple sinks, fail-soft per sink
+CompositeAuditSink (fan-out, fail-soft)
 
 Centralized error handling (core/errors.py)
-ErrorRouter responsibilities
 
 ErrorRouter.capture(exc, where=..., fatal=..., **fields):
 
-emits structured log line (exception captured)
+emits structured log line + traceback
 
-logs traceback
-
-emits an audit event:
+emits audit event:
 
 event_type="error"
 
 severity="fatal" if fatal else "error"
 
-includes where, fatal, and metadata
+includes where/fatal/metadata
 
-How it’s used
+Used by:
 
-Service start failures are treated as fatal and abort startup.
+service start failures (fatal)
 
-Background task exceptions are routed via TaskManager callbacks.
+TaskManager callbacks (background task exceptions)
 
 Service contract (core/services/base.py)
 
-A service is any object implementing:
+A service implements:
 
 name: str
 
@@ -328,53 +359,17 @@ async start(ctx)
 
 async stop(ctx)
 
-Services are started/stopped by the app host; they should:
+Services should:
 
 register tasks through ctx.tasks
 
 emit audit events for lifecycle and notable state transitions
 
-Example service: Heartbeat
-
-HeartbeatService demonstrates:
-
-service start/stop hooks
-
-task creation via TaskManager
-
-audit + structured logging emission
-
-cooperative shutdown using _running flag + task cancellation by app
-
-It is purely a proof-of-lifecycle and should be replaced/augmented by real services (websocket feeds, exchange connectors, etc.).
-
-Design rules for future services (websockets/API/connectors)
-
-No raw orphan tasks: use ctx.tasks.create(...).
-
-Errors go to ErrorRouter: do not swallow exceptions silently.
-
-Emit audit for lifecycle + major events:
-
-connected/disconnected
-
-authentication success/failure
-
-subscription changes
-
-fatal vs recoverable errors
-
-Keep AppContext lean: register services and small runtime flags only.
-
-Shutdown discipline:
-
-stop() should request graceful stop
-
-app host will enforce cancellation + timeout
+Example service: Heartbeat proves lifecycle wiring.
 
 Optional future: CLI smoke test
 
-We may later add an optional CLI smoke test that spawns python -m leonardo in a subprocess and verifies start/stop behavior. This is deferred until CI/boot complexity increases.
+We may later add an optional CLI smoke test that spawns python -m leonardo in a subprocess and verifies start/stop behavior. Deferred until CI/boot complexity increases.
 
 ##################################################################
 
@@ -462,10 +457,26 @@ errors.py
          ))
 
 
+registry_keys.py
+└─ constants (stable string keys)
+   └─ e.g. SVC_GUI_WINDOW_MANAGER  (used by GUI to fetch WindowManager via ctx.registry.get(...))
+
+
+state.py
+└─ AppState (owned by AppContext as ctx.state)
+   ├─ window_open(id, title, where=...) ─────────→ records into state store + emits audit/log (policy-dependent)
+   ├─ window_close(id, where=...) ───────────────→ updates state store
+   ├─ windows_state() ───────────────────────────→ snapshot for WindowsInspectorWindow
+   ├─ set_realtime_active(bool, where=...) ──────→ updates realtime flag
+   └─ is_realtime_active() ──────────────────────→ bool
+
+
 context.py
-├─ AppContext(config, logger, audit, error_router, tasks)
-│  ├─ services: dict[name → service instance]
-│  ├─ runtime_state: dict[str → Any] (keep small)
+├─ AppContext(config, logger, audit, error_router, tasks, ...)
+│  ├─ services: dict[name → service instance]              (existing)
+│  ├─ registry: key-value service registry                 (NEW in practice; used by GUI via registry_keys)
+│  ├─ state: AppState                                      (NEW: ctx.state used by GUI)
+│  ├─ runtime_state: dict[str → Any] (keep small)          (may still exist)
 │  ├─ register_service(name, svc)
 │  │  └─ stores svc in services dict (raises if duplicate)
 │  └─ get_service(name, expected_type) ─────────→ typed service instance
@@ -512,6 +523,30 @@ services/heartbeat.py
       └─ exits when _running=False or task cancelled by TaskManager.cancel_all()
 
 
+market_data/bybit_feed.py
+└─ run_bybit_chart_feed(bridge, market, symbol, timeframe, limit, testnet=False)
+   ├─ fetch initial candles (snapshot)
+   │  └─ emits bridge.chart_snapshot(snapshot)
+   ├─ realtime loop (append/update patches)
+   │  └─ emits bridge.chart_patch(patch)
+   └─ cooperates with cancellation (task cancelled by GUI stop or TaskManager shutdown)
+
+
+connection/exchange/registry.py
+└─ ExchangeRegistry
+   ├─ register(adapter)
+   └─ get(name/market/...) ───────────────→ adapter instance
+
+
+connection/exchange/base.py
+└─ exchange adapter base contracts / common types
+
+
+connection/exchange/adapters/bybit.py
+└─ Bybit adapter implementation
+   └─ used by: market_data/bybit_feed.py (directly today or via registry as it evolves)
+
+
 app.py
 └─ LeonardoApp(config: AppConfig)
    ├─ __init__
@@ -523,7 +558,9 @@ app.py
    │  ├─ audit = CompositeAuditSink(*sinks)
    │  ├─ error_router = ErrorRouter(logger, audit)
    │  ├─ tasks = TaskManager(error_router, audit, logger)
-   │  └─ ctx = AppContext(config, logger, audit, error_router, tasks)
+   │  └─ ctx = AppContext(config, logger, audit, error_router, tasks, ...)
+   │     └─ ctx.state = AppState(...)                    (NEW)
+   │     └─ ctx.registry = ... (keys from registry_keys) (NEW in practice)
    ├─ run_main()  [classmethod]
    │  ├─ config = load_config()
    │  ├─ app = LeonardoApp(config)
@@ -531,7 +568,7 @@ app.py
    ├─ run()
    │  ├─ await _startup()
    │  ├─ audit.emit("app running") + log("app running")
-   │  ├─ while True: await sleep(0.25)  (skeleton “keep alive” loop)
+   │  ├─ while True: await sleep(0.25)
    │  └─ finally: await _shutdown(reason=...)
    ├─ _startup()
    │  ├─ audit/log "startup begin"
@@ -553,4 +590,4 @@ app.py
    └─ _register_service(svc)
       ├─ name = svc.name (or class name)
       ├─ ctx.register_service(name, svc)
-      └─ start_order.append(name)         
+      └─ start_order.append(name)       

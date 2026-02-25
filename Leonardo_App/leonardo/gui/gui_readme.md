@@ -2,11 +2,22 @@ Leonardo GUI Overview (current state)
 High-level architecture
 
 The GUI is built around a single central workspace containing a stack of chart panes (price + optional volume + optional oscillators).
+
 The panes share:
 
-a ChartViewport (controls X-range: start/end/visible, pan/zoom)
+a ChartViewport (controls discrete X slot range: start/end/visible, pan/zoom, future padding)
 
 a Crosshair (controls shared crosshair index and chart-hover state)
+
+The X-axis model is discrete and slot-based:
+
+Each candle occupies exactly one slot.
+
+Slot centers are used for rendering and crosshair alignment.
+
+Vertical grid lines align to slot boundaries.
+
+Zoom changes slot width but never shifts slot positions.
 
 The app also includes:
 
@@ -80,9 +91,9 @@ Role: The chart container: holds model, viewport, crosshair, and the vertical sp
 
 Owns:
 
-ChartModel (dummy candles, volume, oscillator series)
+ChartModel (candles, volume, oscillator series)
 
-ChartViewport (shared X-axis state)
+ChartViewport (shared discrete X-axis state + future padding)
 
 Crosshair (shared crosshair state)
 
@@ -129,6 +140,7 @@ title
 line1
 
 line2
+
 Mouse-transparent so it doesn’t steal hover.
 
 Used by all panes.
@@ -163,7 +175,7 @@ Subscribes to:
 
 viewport.viewport_changed
 
-crosshair.changed, crosshair.cleared (though clearing is now rare by design)
+crosshair.changed, crosshair.cleared
 
 VolumePane(QWidget)
 
@@ -200,12 +212,15 @@ viewport + crosshair signals
 Rendering surfaces (actual drawing + mouse interaction)
 leonardo/gui/chart/chart_render.py — ChartRenderSurface(QWidget)
 
-Role: Draws the candlestick chart + grid + price axis + shared crosshair vertical line.
+Role: Draws the candlestick chart + discrete grid + localized time axis + price axis + shared crosshair vertical line.
+
 Also supports:
 
 horizontal pan (drag inside plot)
 
-anchored horizontal zoom (wheel, anchored at mouse X)
+anchored horizontal zoom (wheel, anchored to slot center)
+
+future padding (scroll into empty slots when anchor OFF)
 
 optional non-anchored Y scaling when anchor zoom is OFF:
 
@@ -219,9 +234,9 @@ Crosshair vertical line is shared across all panes via Crosshair.index
 
 Horizontal line on chart is shown only when hovering the chart plot
 
-Crosshair index is updated from mouse X when hovering chart plot area
+Crosshair index is updated from mouse X using slot-based index_from_x(...)
 
-Wheel zoom uses viewport.zoom_in_at/zoom_out_at anchored to mouse X
+Wheel zoom uses viewport.zoom_in_at/zoom_out_at anchored to slot center
 
 Axis interaction:
 
@@ -231,6 +246,14 @@ click/drag right axis = Y zoom
 
 shift + drag right axis = Y pan
 
+Additional rendering behavior:
+
+Candles are rendered strictly inside the plot rectangle (vertical clipping enforced)
+
+Time axis labels are localized (HH:MM, every 5 slots + first/last)
+
+Always-visible real-time price tag drawn on right legend (latest close)
+
 Calls into:
 
 ChartViewport.index_from_x(), x_from_index()
@@ -239,9 +262,11 @@ ChartViewport.zoom_in_at() / zoom_out_at()
 
 ChartViewport.pan_left()/pan_right()
 
-Crosshair.set(...) (idx + y_rel) in earlier versions
+Crosshair.set_index(...)
 
-current behavior uses Crosshair.index + hover tracking (depending on version you’re running)
+Crosshair.set_hover_on_price(...)
+
+(Legacy Crosshair.set(idx, y_rel) no longer used.)
 
 leonardo/gui/chart/series_render.py
 
@@ -249,14 +274,14 @@ Contains VolumeRenderSurface and OscillatorRenderSurface.
 
 VolumeRenderSurface(QWidget)
 
-Role: Draws volume bars + right-side label.
+Role: Draws volume bars + right-side legend tag.
 Handles mouse to update shared crosshair index and wheel zoom.
 
 Crosshair behavior:
 
 On mouse move inside plot:
 
-computes idx from mouse X
+computes idx from mouse X (slot-based)
 
 sets shared Crosshair.index
 
@@ -268,7 +293,9 @@ shared vertical line if index is visible
 
 horizontal line that follows volume[idx] (value-based)
 
-uses current visible scale; clamps if needed to avoid off-plot y
+always-visible real-time volume tag (latest volume value)
+
+Bars are aligned to discrete slots.
 
 Calls into:
 
@@ -282,7 +309,7 @@ crosshair.set_hover_on_price(False)
 
 OscillatorRenderSurface(QWidget)
 
-Role: Draws oscillator line series + right-side label.
+Role: Draws oscillator line series + right-side legend tag.
 Handles mouse to update shared crosshair index and wheel zoom.
 
 Crosshair behavior:
@@ -299,6 +326,10 @@ shared vertical line if visible
 
 horizontal line at values[idx] (value-based)
 
+always-visible real-time oscillator tag (latest value)
+
+Polyline is aligned to discrete slot centers.
+
 Calls into:
 
 same viewport + crosshair methods as volume surface
@@ -306,17 +337,25 @@ same viewport + crosshair methods as volume surface
 Shared state objects
 leonardo/gui/chart/viewport.py — ChartViewport(QObject)
 
-Role: Shared horizontal (time) viewport for all panes.
+Role: Shared horizontal (time) viewport for all panes using a discrete slot model.
 
 State:
 
-_total, _visible, _start
+_data_total (real candles count)
 
-derived:
+_future_pad (empty slots to the right)
+
+_total = data_total + future_pad
+
+_visible
+
+_start
+
+anchor_zoom_enabled flag
+
+Derived:
 
 end = start + visible
-
-anchor_zoom_enabled flag (controls chart-only Y behavior; X zoom is always anchored)
 
 Provides:
 
@@ -324,11 +363,11 @@ pan:
 
 pan_left(step), pan_right(step)
 
-index mapping:
+index mapping (slot-based):
 
-index_from_x(plot, x) → absolute index in [start, end-1]
+index_from_x(plot, x) → absolute slot index in [start, end-1]
 
-x_from_index(plot, idx) → x pixel for index
+x_from_index(plot, idx) → slot-centered x pixel
 
 anchored zoom:
 
@@ -356,7 +395,7 @@ leonardo/gui/chart/crosshair.py — Crosshair(QObject)
 
 Role: Shared crosshair state across panes.
 
-State (current concept):
+State:
 
 shared index → drives the vertical line everywhere
 
@@ -364,9 +403,9 @@ hover_on_price → tells ChartRenderSurface whether to draw its horizontal line
 
 Signals:
 
-changed (most commonly used)
+changed
 
-cleared (less used now because we avoid flicker between panes)
+cleared
 
 Used by:
 
@@ -437,31 +476,43 @@ Crosshair
 
 The vertical line is global: driven by Crosshair.index and drawn on all panes.
 
+Slot-centered alignment guarantees stable positioning during zoom.
+
 The horizontal line:
 
 On chart: shown only when hovering chart plot (mouse Y)
 
 On volume/osc: always value-based at series[idx] (not mouse Y)
 
-Volume/osc horizontal lines are always shown when crosshair is active (driven by index)
+Volume/osc horizontal lines are always shown when crosshair is active.
 
 Zoom
 
-Mouse wheel zoom changes X range via ChartViewport.zoom_*_at(...), anchored at mouse X.
+Mouse wheel zoom changes X range via ChartViewport.zoom_*_at(...), anchored to slot center.
 
 This wheel zoom can be used on chart/volume/osc panes (same mechanics).
 
-Anchor Zoom toggle:
+Future padding allows scrolling into empty slots when anchor zoom is OFF.
 
-ON: chart auto-scales Y to visible candles (TradingView-style “anchored”)
+Anchor Zoom toggle
 
-OFF: chart enters free Y mode:
+ON:
+
+chart auto-scales Y to visible candles (TradingView-style anchored behavior)
+
+right edge snaps to latest real candle
+
+OFF:
+
+chart enters free Y mode:
 
 drag right axis = Y zoom
 
 shift + drag right axis = Y pan
 
-volume/osc remain naturally constrained (still behave “anchored” vertically)
+horizontal scroll can move into future padded slots
+
+volume/osc remain vertically auto-scaled.
 
 ############################################################################
 
@@ -505,17 +556,21 @@ MainWindow
 
 ChartRenderSurface (price)
 ├─ mouseMoveEvent
-│  ├─ ChartViewport.index_from_x(...) ─────→ idx
-│  └─ Crosshair.set(...) / set_index(...)  → shared crosshair index updated
+│  ├─ ChartViewport.index_from_x(...) ─────→ idx (discrete slot index)
+│  └─ Crosshair.set_index(...)              → shared crosshair index updated
 ├─ wheelEvent
 │  └─ ChartViewport.zoom_in_at/out_at(...) → updates start/visible → viewport_changed
 ├─ axis drag (when anchor OFF)
 │  └─ modifies local _y_lo/_y_hi (free Y)  → update()
 └─ paintEvent
-   ├─ reads ChartViewport.start/end
-   ├─ draws candles
+   ├─ reads ChartViewport.start/end (slot-based window)
+   ├─ draws discrete vertical grid (slot aligned)
+   ├─ draws candles (slot centered)
+   ├─ draws localized time axis (HH:MM, every 5 slots)
+   ├─ draws right-axis price scale
+   ├─ draws real-time price tag (latest close)
    └─ reads Crosshair.index / hover_on_price
-      ├─ draw shared vertical line (index)
+      ├─ draw shared vertical line (slot centered)
       └─ draw price horizontal line (mouse Y only if hover_on_price)
 
 
@@ -528,7 +583,8 @@ VolumeRenderSurface
 │  └─ ChartViewport.zoom_in_at/out_at(...)
 └─ paintEvent
    ├─ reads ChartViewport.start/end
-   ├─ draws volume bars
+   ├─ draws volume bars (slot aligned)
+   ├─ draws real-time volume tag (latest value)
    └─ reads Crosshair.index
       ├─ draw shared vertical line (index)
       └─ draw horizontal line at volume[idx] (value-based)
@@ -543,7 +599,8 @@ OscillatorRenderSurface
 │  └─ ChartViewport.zoom_in_at/out_at(...)
 └─ paintEvent
    ├─ reads ChartViewport.start/end
-   ├─ draws oscillator polyline
+   ├─ draws oscillator polyline (slot aligned)
+   ├─ draws real-time oscillator tag (latest value)
    └─ reads Crosshair.index
       ├─ draw shared vertical line (index)
       └─ draw horizontal line at values[idx] (value-based)
@@ -572,8 +629,10 @@ Crosshair.changed / cleared     ─→ surfaces.update(), panes._update_overlay(
 MainWindow.on_core_started()
 └─ CoreBridge.submit(ctx.state.window_open("main","MainWindow"...))
 
+
 MainWindow.closeEvent()
 └─ CoreBridge.submit(ctx.state.window_close("main"...))
+
 
 WindowsInspectorWindow.refresh() [timer every 500ms]
 └─ CoreBridge.submit(ctx.state.windows_state()) → snapshot

@@ -5,9 +5,9 @@ from typing import List, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
 
+from leonardo.common.market_types import Candle
 from leonardo.gui.chart.viewport import ChartViewport
 from leonardo.gui.chart.model import ChartModel
-from leonardo.gui.chart.dummy_data import Candle
 
 from leonardo.gui.chart.chart_render import ChartRenderSurface
 from leonardo.gui.chart.series_render import VolumeRenderSurface, OscillatorRenderSurface
@@ -93,6 +93,10 @@ class PricePane(QWidget):
         self._crosshair.changed.connect(self._update_overlay)
         self._crosshair.cleared.connect(self._update_overlay)
 
+        # Ensure repaint + overlay refresh when model data changes (snapshot/stream updates)
+        self._model.changed.connect(self._update_overlay)
+        self._model.changed.connect(self._surface.update)
+
         self._update_overlay()
 
     def resizeEvent(self, event) -> None:
@@ -122,7 +126,7 @@ class PricePane(QWidget):
 
         c = candles[idx]
         self._overlay.set_line1(
-            f"O: {c.o:.2f}  H: {c.h:.2f}  L: {c.l:.2f}  C: {c.c:.2f}"
+            f"O: {c.open:.2f}  H: {c.high:.2f}  L: {c.low:.2f}  C: {c.close:.2f}"
         )
 
         # IMPORTANT: only show price OVERLAYS (indicators) here.

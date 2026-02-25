@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from typing import Optional
+from concurrent.futures import Future
 
 from PySide6.QtCore import QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent
@@ -15,6 +16,8 @@ from leonardo.gui.chart.workspace import ChartWorkspaceWidget, OscillatorSpec
 class MainWindow(QMainWindow):
     def __init__(self, core_bridge: CoreBridge) -> None:
         super().__init__()
+        self._feed_future: Optional[Future[object]] = None
+
         self._core = core_bridge
         self._ctx_ref: Optional[AppContext] = None  # set in on_core_started()
 
@@ -24,10 +27,17 @@ class MainWindow(QMainWindow):
         # Central chart workspace
         self._workspace = ChartWorkspaceWidget(self)
         self.setCentralWidget(self._workspace)
+        self._workspace.set_asset_label("Disconnected")
 
         # Status bar
         self.statusBar().showMessage("Ready")
         self._core.status_changed.connect(self._on_status_changed)
+
+        # chart data updates from core -> GUI
+        if hasattr(self._core, "chart_snapshot"):
+            self._core.chart_snapshot.connect(self._on_chart_snapshot)  # type: ignore[attr-defined]
+        if hasattr(self._core, "chart_patch"):
+            self._core.chart_patch.connect(self._on_chart_patch)  # type: ignore[attr-defined]
 
         # Menu bar
         mb = self.menuBar()
@@ -35,7 +45,7 @@ class MainWindow(QMainWindow):
         menu2 = mb.addMenu("menu2")
         mb.addMenu("menu3")
 
-        # ---- Chart actions (existing) ----
+        # ---- Chart actions ----
         self._act_toggle_volume = QAction("Toggle Volume", self, checkable=True)
         self._act_toggle_volume.triggered.connect(self._on_toggle_volume)
         menu1.addAction(self._act_toggle_volume)
@@ -54,9 +64,9 @@ class MainWindow(QMainWindow):
 
         menu1.addSeparator()
 
-        # ---- Realtime + Signals actions (NEW; gated until core is started) ----
+        # ---- Realtime + Signals actions ----
         self._act_start_rt = QAction("Start Realtime", self)
-        self._act_start_rt.setEnabled(False)  # enabled via _sync_realtime_ui() after core starts
+        self._act_start_rt.setEnabled(False)
         self._act_start_rt.triggered.connect(self._start_realtime)
         menu1.addAction(self._act_start_rt)
 
@@ -79,14 +89,13 @@ class MainWindow(QMainWindow):
         self._act_open_windows_inspector.triggered.connect(self._open_windows_inspector)
         menu1.addAction(self._act_open_windows_inspector)
 
-        # ---- Zoom mode (NEW; menu2) ----
+        # ---- Zoom mode ----
         self._act_anchor_zoom = QAction("Anchor Zoom", self, checkable=True)
-        self._act_anchor_zoom.setChecked(self._workspace.viewport.anchor_zoom_enabled)  # current behavior = anchored/autoscale
+        self._act_anchor_zoom.setChecked(self._workspace.viewport.anchor_zoom_enabled)
         self._act_anchor_zoom.triggered.connect(self._on_anchor_zoom_toggled)
         menu2.addAction(self._act_anchor_zoom)
 
-        # Overlay text
-        self._workspace.set_asset_label("BTCUSDT · 1m")
+        # Studies overlay (kept)
         self._workspace.set_studies_labels(indicators=[], oscillators=[])
 
         # Audit polling (optional)
@@ -109,7 +118,6 @@ class MainWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         self.statusBar().showMessage("Shutting down...")
         self._audit_timer.stop()
-        # core.stop() is idempotent; app.py also stops in finally
         try:
             self._core.submit(self._ctx().state.window_close("main", where="gui"))
         except Exception:
@@ -138,8 +146,19 @@ class MainWindow(QMainWindow):
         snap = self._core.try_get_audit_snapshot()
         if not snap:
             return
-        # keep short; don't fight your own status messages
         pass
+
+    # ---- Chart data updates (core -> GUI) ----
+
+    @Slot(object)
+    def _on_chart_snapshot(self, snapshot: object) -> None:
+        if hasattr(self._workspace, "apply_snapshot"):
+            self._workspace.apply_snapshot(snapshot)  # type: ignore[attr-defined]
+
+    @Slot(object)
+    def _on_chart_patch(self, patch: object) -> None:
+        if hasattr(self._workspace, "apply_patch"):
+            self._workspace.apply_patch(patch)  # type: ignore[attr-defined]
 
     # ---- Chart actions ----
 
@@ -158,10 +177,9 @@ class MainWindow(QMainWindow):
         self._active_oscillators.clear()
         self._workspace.set_studies_labels(self._active_indicators, self._active_oscillators)
 
-    # ---- Zoom mode handler (NEW) ----
+    # ---- Zoom mode handler ----
 
     def _on_anchor_zoom_toggled(self, enabled: bool) -> None:
-        # enabled=True => anchored/autoscale (current behavior)
         self._workspace.set_anchor_zoom_enabled(enabled)
 
     # ---- Windows Inspector handler ----
@@ -189,6 +207,18 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Streaming")
         self._sync_realtime_ui()
 
+        if self._feed_future is None or self._feed_future.done():
+            from leonardo.core.market_data.bybit_feed import run_bybit_chart_feed
+
+            self._feed_future = self._core.submit(run_bybit_chart_feed(
+                bridge=self._core,
+                market="linear",
+                symbol="BTCUSDT",
+                timeframe="30m",
+                limit=200,
+                testnet=False,
+            ))
+
         wm = self._wm()
         if wm is not None:
             win = wm.get_signals()
@@ -199,6 +229,10 @@ class MainWindow(QMainWindow):
         self._core.submit(self._ctx().state.set_realtime_active(False, where="gui"))
         self.statusBar().showMessage("Ready")
         self._sync_realtime_ui()
+
+        if self._feed_future is not None and not self._feed_future.done():
+            self._feed_future.cancel()
+        self._feed_future = None
 
         wm = self._wm()
         if wm is not None:

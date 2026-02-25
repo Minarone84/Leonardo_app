@@ -2,12 +2,52 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from PySide6.QtCore import QRectF
-from PySide6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QWheelEvent
+from PySide6.QtCore import QRectF, Qt
+from PySide6.QtGui import (
+    QColor,
+    QFont,
+    QPainter,
+    QPen,
+    QBrush,
+    QWheelEvent,
+    QFontMetricsF,
+)
 from PySide6.QtWidgets import QWidget
 
 from leonardo.gui.chart.viewport import ChartViewport
 from leonardo.gui.chart.crosshair import Crosshair
+
+
+def draw_right_axis_value_tag(p: QPainter, axis: QRectF, y: float, text: str) -> None:
+    """
+    Draw a right-side floating label INSIDE the axis/legend gutter at vertical position y.
+    Style: orange box, 50% opacity, black text.
+    """
+    fm = QFontMetricsF(p.font())
+    pad_x = 7.0
+    pad_y = 3.0
+
+    text_w = fm.horizontalAdvance(text)
+    text_h = fm.height()
+
+    w = min(axis.width() - 8.0, text_w + 2 * pad_x)
+    h = text_h + 2 * pad_y
+
+    y_top = y - h / 2.0
+    y_top = max(axis.top(), min(axis.bottom() - h, y_top))
+
+    x_left = axis.right() - w - 4.0
+    r = QRectF(x_left, y_top, w, h)
+
+    p.save()
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor(255, 165, 0))  # orange
+    p.setOpacity(0.5)
+    p.drawRoundedRect(r, 6.0, 6.0)
+    p.setOpacity(1.0)
+    p.setPen(QColor(0, 0, 0))        # black text
+    p.drawText(r, Qt.AlignCenter, text)
+    p.restore()
 
 
 class VolumeRenderSurface(QWidget):
@@ -44,6 +84,9 @@ class VolumeRenderSurface(QWidget):
             max(1, h - self._pad_top - self._pad_bottom),
         )
 
+    def _axis_rect(self, plot: QRectF) -> QRectF:
+        return QRectF(plot.right(), plot.top(), float(self._pad_right), plot.height())
+
     def mouseMoveEvent(self, e) -> None:
         plot = self._plot_rect()
         try:
@@ -58,7 +101,6 @@ class VolumeRenderSurface(QWidget):
 
         idx = self._viewport.index_from_x(plot, x)
         self._crosshair.set_index(idx)
-        # ensure price pane doesn't draw its horizontal line while hovering lower panes
         self._crosshair.set_hover_on_price(False)
 
     def wheelEvent(self, event: QWheelEvent) -> None:
@@ -76,7 +118,8 @@ class VolumeRenderSurface(QWidget):
             return
 
         anchor_idx = self._viewport.index_from_x(plot, mx)
-        anchor_rel = (mx - plot.left()) / max(1.0, plot.width())
+        # slot-centered anchor_rel (NOT continuous mouse-based)
+        anchor_rel = ((anchor_idx - self._viewport.start) + 0.5) / max(1, self._viewport.visible)
 
         dy = event.angleDelta().y()
         if dy > 0:
@@ -87,8 +130,6 @@ class VolumeRenderSurface(QWidget):
         event.accept()
 
     def leaveEvent(self, e) -> None:
-        # Do NOT clear shared index here; it would flicker when moving between panes.
-        # Workspace-level clearing (optional) can be added later.
         return
 
     def paintEvent(self, event) -> None:
@@ -100,8 +141,8 @@ class VolumeRenderSurface(QWidget):
         p.fillRect(0, 0, w, h, QColor(12, 12, 14))
 
         plot = self._plot_rect()
+        axis = self._axis_rect(plot)
 
-        # border
         p.setPen(QPen(QColor(70, 70, 82)))
         p.drawRect(plot)
 
@@ -122,31 +163,31 @@ class VolumeRenderSurface(QWidget):
         p.setPen(QPen(QColor(80, 120, 220)))
         p.setBrush(brush)
 
+        # NEW: clip plot drawing so bars/crosshair can't bleed into x-label gutter (or outside plot)
+        p.save()
+        p.setClipRect(plot)
+
         for i, v in enumerate(vis):
             cx = plot.left() + (i + 0.5) * bar_w
             t = v / vmax if vmax > 0 else 0.0
             bar_h = t * plot.height()
             p.drawRect(cx - body_w / 2, plot.bottom() - bar_h, body_w, bar_h)
 
-        # ---- shared vertical + value-based horizontal (at volume[idx]) ----
+        # crosshair lines (keep as-is) (clipped)
         if self._crosshair.active and self._crosshair.index is not None:
             idx = self._crosshair.index
 
-            # vertical (only if within visible slice)
             if start <= idx < end:
                 x = self._viewport.x_from_index(plot, idx)
                 p.setPen(QPen(QColor(120, 120, 140)))
                 p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
 
-            # horizontal at value:
-            # IMPORTANT: use the SAME scale as visible bars (vmax from vis),
-            # but clamp series value to that scale to avoid off-plot y when idx is outside vis.
             if 0 <= idx < len(self._volume) and vmax > 0:
                 v = self._volume[idx]
                 if v < 0.0:
                     v = 0.0
                 elif v > vmax:
-                    v = vmax  # clamp to visible scale
+                    v = vmax
 
                 t = v / vmax
                 y = plot.bottom() - t * plot.height()
@@ -154,7 +195,22 @@ class VolumeRenderSurface(QWidget):
                 p.setPen(QPen(QColor(120, 120, 140)))
                 p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
 
-        # right-side label
+        p.restore()
+        # ---- end clip ----
+
+        # ---- ALWAYS: latest volume value tag (NOT crosshair-based) ----
+        if self._volume and vmax > 0:
+            v_raw = float(self._volume[-1])
+            v_clamped = v_raw
+            if v_clamped < 0.0:
+                v_clamped = 0.0
+            elif v_clamped > vmax:
+                v_clamped = vmax
+
+            y_tag = plot.bottom() - (v_clamped / vmax) * plot.height()
+            p.setFont(QFont("Consolas", 9))
+            draw_right_axis_value_tag(p, axis, y_tag, f"{v_raw:.0f}")
+
         p.setPen(QPen(QColor(170, 170, 185)))
         p.setFont(QFont("Consolas", 9))
         p.drawText(int(plot.right() + 8), int(plot.top() + 12), "Vol")
@@ -197,6 +253,9 @@ class OscillatorRenderSurface(QWidget):
             max(1, h - self._pad_top - self._pad_bottom),
         )
 
+    def _axis_rect(self, plot: QRectF) -> QRectF:
+        return QRectF(plot.right(), plot.top(), float(self._pad_right), plot.height())
+
     def mouseMoveEvent(self, e) -> None:
         plot = self._plot_rect()
         try:
@@ -228,7 +287,8 @@ class OscillatorRenderSurface(QWidget):
             return
 
         anchor_idx = self._viewport.index_from_x(plot, mx)
-        anchor_rel = (mx - plot.left()) / max(1.0, plot.width())
+        # slot-centered anchor_rel (NOT continuous mouse-based)
+        anchor_rel = ((anchor_idx - self._viewport.start) + 0.5) / max(1, self._viewport.visible)
 
         dy = event.angleDelta().y()
         if dy > 0:
@@ -250,8 +310,8 @@ class OscillatorRenderSurface(QWidget):
         p.fillRect(0, 0, w, h, QColor(12, 12, 14))
 
         plot = self._plot_rect()
+        axis = self._axis_rect(plot)
 
-        # border
         p.setPen(QPen(QColor(70, 70, 82)))
         p.drawRect(plot)
 
@@ -276,6 +336,10 @@ class OscillatorRenderSurface(QWidget):
             t = (v - ymin) / (ymax - ymin)
             return plot.bottom() - t * plot.height()
 
+        # NEW: clip plot drawing so line/crosshair can't bleed into x-label gutter (or outside plot)
+        p.save()
+        p.setClipRect(plot)
+
         prev_x = plot.left()
         prev_y = y_to_px(vis[0])
         for i in range(1, n):
@@ -284,24 +348,30 @@ class OscillatorRenderSurface(QWidget):
             p.drawLine(int(prev_x), int(prev_y), int(x), int(y))
             prev_x, prev_y = x, y
 
-        # ---- shared vertical + value-based horizontal (at values[idx]) ----
         if self._crosshair.active and self._crosshair.index is not None:
             idx = self._crosshair.index
 
-            # vertical (only if within visible slice)
             if start <= idx < end:
                 x = self._viewport.x_from_index(plot, idx)
                 p.setPen(QPen(QColor(120, 120, 140)))
                 p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
 
-            # horizontal at value (clamp safely)
             if 0 <= idx < len(self._values):
                 v = self._values[idx]
                 y = y_to_px(v)
                 p.setPen(QPen(QColor(120, 120, 140)))
                 p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
 
-        # right-side title
+        p.restore()
+        # ---- end clip ----
+
+        # ---- ALWAYS: latest oscillator value tag (NOT crosshair-based) ----
+        if self._values:
+            v_last = float(self._values[-1])
+            y_tag = y_to_px(v_last)
+            p.setFont(QFont("Consolas", 9))
+            draw_right_axis_value_tag(p, axis, y_tag, f"{v_last:.2f}")
+
         p.setPen(QPen(QColor(170, 170, 185)))
         p.setFont(QFont("Consolas", 9))
         p.drawText(int(plot.right() + 8), int(plot.top() + 12), self._title)

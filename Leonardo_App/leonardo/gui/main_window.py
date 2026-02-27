@@ -43,7 +43,7 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         menu1 = mb.addMenu("menu1")
         menu2 = mb.addMenu("menu2")
-        mb.addMenu("menu3")
+        menu3 = mb.addMenu("menu3")
 
         # ---- Chart actions ----
         self._act_toggle_volume = QAction("Toggle Volume", self, checkable=True)
@@ -95,6 +95,17 @@ class MainWindow(QMainWindow):
         self._act_anchor_zoom.triggered.connect(self._on_anchor_zoom_toggled)
         menu2.addAction(self._act_anchor_zoom)
 
+        # ---- Menu3: Historical tools ----
+        self._act_open_hist_download = QAction("Historical Download Manager", self)
+        self._act_open_hist_download.setEnabled(False)
+        self._act_open_hist_download.triggered.connect(self._open_historical_download_manager)
+        menu3.addAction(self._act_open_hist_download)
+
+        self._act_open_hist_chart = QAction("Historical Chart", self)
+        self._act_open_hist_chart.setEnabled(False)
+        self._act_open_hist_chart.triggered.connect(self._open_historical_chart)
+        menu3.addAction(self._act_open_hist_chart)
+
         # Studies overlay (kept)
         self._workspace.set_studies_labels(indicators=[], oscillators=[])
 
@@ -111,6 +122,9 @@ class MainWindow(QMainWindow):
     # Called by gui/app.py after core.start() + services registered
     def on_core_started(self) -> None:
         self._act_open_windows_inspector.setEnabled(True)
+        self._act_open_hist_download.setEnabled(True)
+        self._act_open_hist_chart.setEnabled(True)
+
         self._ctx_ref = self._core.context
         self._core.submit(self._ctx().state.window_open("main", "MainWindow", where="gui"))
         self._sync_realtime_ui()
@@ -190,6 +204,24 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Window manager missing")
             return
         wm.open_windows_inspector()
+
+    # ---- Menu3: Historical handlers ----
+
+    def _open_historical_download_manager(self) -> None:
+        wm = self._wm()
+        if wm is None:
+            self.statusBar().showMessage("Window manager missing")
+            return
+        # WindowManager should own lifecycle; we pass core bridge + parent
+        wm.open_historical_download_manager(core_bridge=self._core, parent=self)
+
+    def _open_historical_chart(self) -> None:
+        wm = self._wm()
+        if wm is None:
+            self.statusBar().showMessage("Window manager missing")
+            return
+        # Stub: we will implement this window later and wire properly
+        wm.open_historical_chart(core_bridge=self._core, parent=self)
 
     # ---- Realtime + Signals (registry/state driven) ----
 

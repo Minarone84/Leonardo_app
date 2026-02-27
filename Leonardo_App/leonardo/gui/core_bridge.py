@@ -100,8 +100,9 @@ class CoreBridge(QObject):
         snap = self._runner.get_audit_snapshot()
         if snap is None:
             return None
-        return {"count": snap.count}
-
+        events = getattr(snap, "events", [])
+        return {"count": getattr(snap, "count", len(events)), "events": list(events)}
+    
     @property
     def context(self) -> AppContext:
         if self._runner is None or self._runner.context is None:

@@ -272,3 +272,42 @@
 {"ts": "2026-02-05T18:32:18.628859+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown begin", "fields": {"reason": "keyboard_interrupt"}}
 {"ts": "2026-02-05T18:32:18.628859+00:00", "event_type": "service", "severity": "info", "message": "heartbeat stopping", "fields": {}}
 {"ts": "2026-02-05T18:32:18.628859+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown complete", "fields": {}}
+{"ts": "2026-02-27T14:49:48.195855+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup begin", "fields": {"profile": "default"}}
+{"ts": "2026-02-27T14:55:21.911307+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup begin", "fields": {"profile": "default"}}
+{"ts": "2026-02-27T14:55:21.911307+00:00", "event_type": "service", "severity": "info", "message": "heartbeat starting", "fields": {}}
+{"ts": "2026-02-27T14:55:21.911307+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup complete", "fields": {}}
+{"ts": "2026-02-27T14:55:21.911307+00:00", "event_type": "lifecycle", "severity": "info", "message": "app running", "fields": {}}
+{"ts": "2026-02-27T14:55:21.911307+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown begin", "fields": {"reason": "smoke_test_done"}}
+{"ts": "2026-02-27T14:55:21.912307+00:00", "event_type": "service", "severity": "info", "message": "heartbeat stopping", "fields": {}}
+{"ts": "2026-02-27T14:55:21.912307+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown complete", "fields": {}}
+{"ts": "2026-02-27T14:55:35.580615+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup begin", "fields": {"profile": "default"}}
+{"ts": "2026-02-27T14:55:35.580615+00:00", "event_type": "service", "severity": "info", "message": "heartbeat starting", "fields": {}}
+{"ts": "2026-02-27T14:55:35.580615+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup complete", "fields": {}}
+{"ts": "2026-02-27T14:55:35.580615+00:00", "event_type": "lifecycle", "severity": "info", "message": "app running", "fields": {}}
+{"ts": "2026-02-27T14:55:35.581614+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown begin", "fields": {"reason": "smoke_test_done"}}
+{"ts": "2026-02-27T14:55:35.581614+00:00", "event_type": "service", "severity": "info", "message": "heartbeat stopping", "fields": {}}
+{"ts": "2026-02-27T14:55:35.581614+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown complete", "fields": {}}
+{"ts": "2026-02-27T14:56:00.672306+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup begin", "fields": {"profile": "default"}}
+{"ts": "2026-02-27T14:56:00.672306+00:00", "event_type": "service", "severity": "info", "message": "heartbeat starting", "fields": {}}
+{"ts": "2026-02-27T14:56:00.672306+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup complete", "fields": {}}
+{"ts": "2026-02-27T14:56:00.672306+00:00", "event_type": "lifecycle", "severity": "info", "message": "app running", "fields": {}}
+{"ts": "2026-02-27T14:56:00.677505+00:00", "event_type": "heartbeat", "severity": "debug", "message": "tick", "fields": {"n": 1}}
+{"ts": "2026-02-27T14:56:00.786756+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown begin", "fields": {"reason": "smoke_test_done"}}
+{"ts": "2026-02-27T14:56:00.786756+00:00", "event_type": "service", "severity": "info", "message": "heartbeat stopping", "fields": {}}
+{"ts": "2026-02-27T14:56:00.786756+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown complete", "fields": {}}
+{"ts": "2026-02-27T14:56:14.260125+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup begin", "fields": {"profile": "default"}}
+{"ts": "2026-02-27T14:56:14.260125+00:00", "event_type": "service", "severity": "info", "message": "heartbeat starting", "fields": {}}
+{"ts": "2026-02-27T14:56:14.260125+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup complete", "fields": {}}
+{"ts": "2026-02-27T14:56:14.260125+00:00", "event_type": "lifecycle", "severity": "info", "message": "app running", "fields": {}}
+{"ts": "2026-02-27T14:56:14.263125+00:00", "event_type": "heartbeat", "severity": "debug", "message": "tick", "fields": {"n": 1}}
+{"ts": "2026-02-27T14:56:14.370812+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown begin", "fields": {"reason": "smoke_test_done"}}
+{"ts": "2026-02-27T14:56:14.370812+00:00", "event_type": "service", "severity": "info", "message": "heartbeat stopping", "fields": {}}
+{"ts": "2026-02-27T14:56:14.370812+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown complete", "fields": {}}
+{"ts": "2026-02-27T15:05:31.313516+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup begin", "fields": {"profile": "default"}}
+{"ts": "2026-02-27T15:05:31.313516+00:00", "event_type": "service", "severity": "info", "message": "heartbeat starting", "fields": {}}
+{"ts": "2026-02-27T15:05:31.313516+00:00", "event_type": "lifecycle", "severity": "info", "message": "startup complete", "fields": {}}
+{"ts": "2026-02-27T15:05:31.313516+00:00", "event_type": "lifecycle", "severity": "info", "message": "app running", "fields": {}}
+{"ts": "2026-02-27T15:05:31.318026+00:00", "event_type": "heartbeat", "severity": "debug", "message": "tick", "fields": {"n": 1}}
+{"ts": "2026-02-27T15:05:31.420781+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown begin", "fields": {"reason": "smoke_test_done"}}
+{"ts": "2026-02-27T15:05:31.420781+00:00", "event_type": "service", "severity": "info", "message": "heartbeat stopping", "fields": {}}
+{"ts": "2026-02-27T15:05:31.420781+00:00", "event_type": "lifecycle", "severity": "info", "message": "shutdown complete", "fields": {}}

@@ -12,3 +12,5 @@ RT_TRADES = "runtime.trades"
 RT_CONNECTIONS = "runtime.connections"
 RT_SERVICES = "runtime.services"
 RT_USER = "runtime.user"
+# Historical data (read-only windowed access)
+SVC_HISTORICAL_DATASET = "svc.historical.dataset"

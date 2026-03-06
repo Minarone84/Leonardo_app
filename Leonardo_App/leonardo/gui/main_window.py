@@ -8,7 +8,6 @@ from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import QMainWindow
 
 from leonardo.core.context import AppContext
-from leonardo.core.registry_keys import SVC_GUI_WINDOW_MANAGER
 from leonardo.gui.core_bridge import CoreBridge
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget, OscillatorSpec
 
@@ -147,7 +146,11 @@ class MainWindow(QMainWindow):
         return self._ctx_ref
 
     def _wm(self):
-        return self._ctx().registry.get(SVC_GUI_WINDOW_MANAGER)
+        # GUI-owned; set in gui/app.py
+        wm = getattr(self, "window_manager", None)
+        if wm is None:
+            wm = getattr(self._core, "window_manager", None)
+        return wm
 
     # ---- Status/audit ----
 

@@ -24,6 +24,7 @@ class AuditConfig:
 @dataclass(frozen=True)
 class RuntimeConfig:
     shutdown_timeout_s: float = 10.0
+    data_dir: str = "data"
 
 
 @dataclass(frozen=True)
@@ -66,7 +67,7 @@ def _defaults_dict() -> dict[str, Any]:
             "file_path": "./runs/audit.jsonl",
             "memory_max_events": 2000,
         },
-        "runtime": {"shutdown_timeout_s": 10.0},
+        "runtime": {"shutdown_timeout_s": 10.0, "data_dir": "data"},
     }
 
 

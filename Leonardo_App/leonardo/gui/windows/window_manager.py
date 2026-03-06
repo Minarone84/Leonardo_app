@@ -11,7 +11,7 @@ from leonardo.gui.core_bridge import CoreBridge
 from leonardo.gui.windows.signals_window import SignalsWindow
 from leonardo.gui.windows.windows_inspector_window import WindowsInspectorWindow
 from leonardo.gui.windows.historical_download_window import HistoricalDownloadWindow
-
+from leonardo.gui.windows.historical_chart_window import HistoricalChartWindow
 
 class WindowManager(QObject):
     """
@@ -38,7 +38,7 @@ class WindowManager(QObject):
 
         # ---- Historical windows ----
         self._historical_download: Optional[HistoricalDownloadWindow] = None
-        self._historical_chart: Optional[QWidget] = None  # stub until implemented
+        self._historical_chart: Optional[HistoricalChartWindow] = None
 
     def _safe_submit(self, coro: Awaitable[object]) -> None:
         try:
@@ -133,28 +133,26 @@ class WindowManager(QObject):
         self._historical_download = None
         self._safe_submit(self._state.window_close("historical_download", where="gui"))
 
-    # ---------- Historical Chart (stub for now) ----------
+    # ---------- Historical Chart ----------
 
-    def get_historical_chart(self) -> Optional[QWidget]:
-        return self._historical_chart
+    def get_historical_chart(self) -> Optional[HistoricalChartWindow]:
+        return self._historical_chart  # type: ignore[return-value]
 
-    def open_historical_chart(self, *, core_bridge: CoreBridge, parent: Optional[QObject] = None) -> QWidget:
-        """
-        Stub window until we implement leonardo/gui/windows/historical_chart_window.py
-        This keeps menu3 functional without breaking anything.
-        """
+    def open_historical_chart(self, *, core_bridge: CoreBridge, parent: Optional[QObject] = None) -> HistoricalChartWindow:
         if self._historical_chart is None:
-            w = QWidget(parent or self._parent)
-            w.setWindowTitle("Historical Chart (stub)")
-            w.setAttribute(Qt.WA_DeleteOnClose, True)
-            w.destroyed.connect(self._on_historical_chart_destroyed)
-            self._historical_chart = w
-            self._safe_submit(self._state.window_open("historical_chart", "HistoricalChartWindowStub", where="gui"))
+            self._historical_chart = HistoricalChartWindow(core_bridge=core_bridge, parent=None)
+            self._historical_chart.setWindowTitle("Historical Chart")
+            self._historical_chart.setAttribute(Qt.WA_DeleteOnClose, True)
+            self._historical_chart.destroyed.connect(self._on_historical_chart_destroyed)
+            self._safe_submit(self._state.window_open("historical_chart", "HistoricalChartWindow", where="gui"))
 
+        if parent is not None:
+            self._historical_chart.move(parent.frameGeometry().topLeft() + parent.rect().center())
+        
         self._historical_chart.show()
         self._historical_chart.raise_()
         self._historical_chart.activateWindow()
-        return self._historical_chart
+        return self._historical_chart  # type: ignore[return-value]
 
     def close_historical_chart(self) -> None:
         if self._historical_chart is not None:

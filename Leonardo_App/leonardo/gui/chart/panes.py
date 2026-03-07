@@ -115,6 +115,12 @@ class PricePane(QWidget):
         self._update_overlay()
 
     def _sync_surface_from_model(self) -> None:
+        if hasattr(self._surface, "set_candles"):
+            try:
+                self._surface.set_candles(self._model.candles)
+            except Exception:
+                pass
+            
         if hasattr(self._surface, "set_resident_base_index"):
             try:
                 self._surface.set_resident_base_index(self._model.resident_base_index)

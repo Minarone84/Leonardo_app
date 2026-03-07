@@ -169,14 +169,29 @@ class ChartRenderSurface(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         pt = event.position().toPoint()
         plot = self._plot_rect()
-
+    
         if self._y_dragging and not self._is_anchor_enabled():
             dy = float(event.position().y()) - self._y_drag_start_y
             self._apply_y_axis_drag(plot, dy)
             self.update()
             event.accept()
             return
-
+    
+        # During horizontal pan-drag, prioritize panning over hover/crosshair updates.
+        # This avoids crosshair jitter and overlay churn while the viewport is moving.
+        if self._dragging and self._last_drag_x is not None and plot.contains(pt):
+            self._crosshair.set_hover_on_price(False)
+            self._mouse_pt = None
+    
+            dx = pt.x() - self._last_drag_x
+            if dx != 0:
+                self._pan_by_pixels(plot, dx)
+                self._last_drag_x = pt.x()
+    
+            self.update()
+            event.accept()
+            return
+    
         if plot.contains(pt):
             idx = self._viewport.index_from_x(plot, float(pt.x()))
             self._crosshair.set_index(idx)
@@ -185,13 +200,7 @@ class ChartRenderSurface(QWidget):
         else:
             self._crosshair.set_hover_on_price(False)
             self._mouse_pt = None
-
-        if self._dragging and self._last_drag_x is not None and plot.contains(pt):
-            dx = pt.x() - self._last_drag_x
-            if dx != 0:
-                self._pan_by_pixels(plot, dx)
-                self._last_drag_x = pt.x()
-
+    
         self.update()
 
     def leaveEvent(self, event) -> None:

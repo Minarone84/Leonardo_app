@@ -182,6 +182,10 @@ class HistoricalChartController(QObject):
         center_global = start + (visible // 2)
         center_global = max(0, min(center_global, self._dataset_count - 1))
 
+        # Clamp to current resident slice so timestamp lookup always uses a resident candle.
+        resident_right_inclusive = resident_right_exclusive - 1
+        center_global = max(resident_left, min(center_global, resident_right_inclusive))
+
         center_ts_ms = self._global_index_to_ts_ms(center_global)
         if center_ts_ms is None:
             return

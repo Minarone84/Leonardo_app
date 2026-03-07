@@ -119,6 +119,7 @@ class VolumeRenderSurface(QWidget):
             y = float(e.y())
 
         if not plot.contains(x, y):
+            self._crosshair.set_hover_on_price(False)
             return
 
         idx = self._viewport.index_from_x(plot, x)
@@ -152,7 +153,8 @@ class VolumeRenderSurface(QWidget):
         event.accept()
 
     def leaveEvent(self, e) -> None:
-        return
+        self._crosshair.set_hover_on_price(False)
+        super().leaveEvent(e)
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
@@ -186,7 +188,6 @@ class VolumeRenderSurface(QWidget):
         p.setPen(QPen(QColor(80, 120, 220)))
         p.setBrush(brush)
 
-        # NEW: clip plot drawing so bars/crosshair can't bleed into x-label gutter (or outside plot)
         p.save()
         p.setClipRect(plot)
 
@@ -198,7 +199,6 @@ class VolumeRenderSurface(QWidget):
             bar_h = t * plot.height()
             p.drawRect(cx - body_w / 2, plot.bottom() - bar_h, body_w, bar_h)
 
-        # crosshair lines (keep as-is) (clipped)
         if self._crosshair.active and self._crosshair.index is not None:
             idx = self._crosshair.index
 
@@ -222,9 +222,7 @@ class VolumeRenderSurface(QWidget):
                 p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
 
         p.restore()
-        # ---- end clip ----
 
-        # ---- ALWAYS: latest volume value tag (NOT crosshair-based) ----
         if self._volume and vmax > 0:
             v_raw = float(self._volume[-1])
             v_clamped = v_raw
@@ -314,6 +312,7 @@ class OscillatorRenderSurface(QWidget):
             y = float(e.y())
 
         if not plot.contains(x, y):
+            self._crosshair.set_hover_on_price(False)
             return
 
         idx = self._viewport.index_from_x(plot, x)
@@ -347,7 +346,8 @@ class OscillatorRenderSurface(QWidget):
         event.accept()
 
     def leaveEvent(self, e) -> None:
-        return
+        self._crosshair.set_hover_on_price(False)
+        super().leaveEvent(e)
 
     def paintEvent(self, event) -> None:
         p = QPainter(self)
@@ -385,7 +385,6 @@ class OscillatorRenderSurface(QWidget):
             t = (v - ymin) / (ymax - ymin)
             return plot.bottom() - t * plot.height()
 
-        # NEW: clip plot drawing so line/crosshair can't bleed into x-label gutter (or outside plot)
         p.save()
         p.setClipRect(plot)
 
@@ -420,9 +419,7 @@ class OscillatorRenderSurface(QWidget):
                 p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
 
         p.restore()
-        # ---- end clip ----
 
-        # ---- ALWAYS: latest oscillator value tag (NOT crosshair-based) ----
         if self._values:
             v_last = float(self._values[-1])
             y_tag = y_to_px(v_last)

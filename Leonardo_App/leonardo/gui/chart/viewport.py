@@ -65,6 +65,7 @@ class ChartViewport(QObject):
         enabled = bool(enabled)
         if self._anchor_zoom_enabled == enabled:
             return
+
         self._anchor_zoom_enabled = enabled
 
         # When enabling anchor, snap view to latest real candle.
@@ -176,17 +177,28 @@ class ChartViewport(QObject):
         # Clamp into legal window bounds
         self._start = max(0, min(self._start, self._total - self._visible))
 
+    def _is_right_aligned_to_data(self) -> bool:
+        """
+        True when the current viewport is locked to the latest real candle,
+        i.e. right edge equals data_total (exclusive).
+        """
+        return self._data_total > 0 and self.end == self._data_total
+
     # ---------------------------
     # pan
     # ---------------------------
 
     def pan_left(self, step: int = 10) -> None:
+        old_start = self._start
         self._start = max(0, self._start - int(step))
-        self.viewport_changed.emit()
+        if self._start != old_start:
+            self.viewport_changed.emit()
 
     def pan_right(self, step: int = 10) -> None:
+        old_start = self._start
         self._start = min(self._total - self._visible, self._start + int(step))
-        self.viewport_changed.emit()
+        if self._start != old_start:
+            self.viewport_changed.emit()
 
     # ---------------------------
     # crosshair
@@ -244,6 +256,7 @@ class ChartViewport(QObject):
     def _set_visible_anchored(self, new_visible: int, anchor_idx: int, anchor_rel: float) -> None:
         old_visible = self._visible
         old_start = self._start
+        was_right_aligned = self._is_right_aligned_to_data()
 
         new_visible = max(1, min(int(new_visible), self._total))
 
@@ -257,8 +270,9 @@ class ChartViewport(QObject):
         self._visible = new_visible
         self._start = new_start
 
-        # If anchor mode is ON, snap right edge to data after zoom
-        if self._anchor_zoom_enabled:
+        # Keep "latest locked" behavior only if we were already locked there.
+        # Otherwise preserve the true anchor-centered historical zoom.
+        if self._anchor_zoom_enabled and was_right_aligned:
             self._snap_right_to_data()
 
         if (self._visible != old_visible) or (self._start != old_start):

@@ -205,12 +205,12 @@ class ChartWorkspaceWidget(QWidget):
     ) -> None:
         """
         Historical-mode apply path.
-
+    
         Unlike apply_snapshot(), the viewport total represents the full dataset
         size, while the model stores only the currently resident slice.
         """
         self.set_asset_label(f"{symbol} · {timeframe}")
-
+    
         if not candles:
             self._model.set_candles([])
             self._model.set_volume([])
@@ -224,18 +224,18 @@ class ChartWorkspaceWidget(QWidget):
                     setattr(self._model, "resident_base_index", int(resident_base_index))
                 except Exception:
                     pass
-
-            self._refresh_aux_pane_bindings()
-
+                
             if hasattr(self._viewport, "set_total_count_preserve_position"):
                 self._viewport.set_total_count_preserve_position(max(0, int(dataset_total)))  # type: ignore[attr-defined]
             elif hasattr(self._viewport, "set_total_count"):
                 self._viewport.set_total_count(max(0, int(dataset_total)))  # type: ignore[attr-defined]
+    
+            self._refresh_aux_pane_bindings()
             return
-
+    
         self._model.set_candles(candles)
         self._model.set_volume([float(c.volume) for c in candles])
-
+    
         if hasattr(self._model, "set_resident_base_index"):
             try:
                 self._model.set_resident_base_index(int(resident_base_index))  # type: ignore[attr-defined]
@@ -246,13 +246,13 @@ class ChartWorkspaceWidget(QWidget):
                 setattr(self._model, "resident_base_index", int(resident_base_index))
             except Exception:
                 pass
-
-        self._refresh_aux_pane_bindings()
-
+            
         if hasattr(self._viewport, "set_total_count_preserve_position"):
             self._viewport.set_total_count_preserve_position(max(0, int(dataset_total)))  # type: ignore[attr-defined]
         elif hasattr(self._viewport, "set_total_count"):
             self._viewport.set_total_count(max(0, int(dataset_total)))  # type: ignore[attr-defined]
+    
+        self._refresh_aux_pane_bindings()
 
     def apply_patch(self, patch: ChartPatch) -> None:
         self.set_asset_label(f"{patch.symbol} · {patch.timeframe}")

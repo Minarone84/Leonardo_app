@@ -35,6 +35,9 @@ class Crosshair(QObject):
         return self._hover_on_price
 
     def set_index(self, idx: int) -> None:
+        idx = int(idx)
+        if self._active and self._index == idx:
+            return
         self._active = True
         self._index = idx
         self.changed.emit()

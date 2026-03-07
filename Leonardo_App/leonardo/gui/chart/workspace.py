@@ -77,10 +77,10 @@ class ChartWorkspaceWidget(QWidget):
 
     def set_anchor_zoom_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
-    
+
         # allow future space only when anchor is OFF
         self._viewport.set_future_padding(0 if enabled else 50)  # tweak as desired
-    
+
         self._viewport.set_anchor_zoom_enabled(enabled)
 
     def set_volume_enabled(self, enabled: bool) -> None:
@@ -92,6 +92,7 @@ class ChartWorkspaceWidget(QWidget):
                 parent=self,
             )
             self._splitter.addWidget(self._volume)
+            self._refresh_aux_pane_bindings()
             self._apply_default_sizes()
         elif not enabled and self._volume is not None:
             self._remove_widget(self._volume)
@@ -123,6 +124,7 @@ class ChartWorkspaceWidget(QWidget):
         )
         self._oscillators[spec.key] = pane
         self._splitter.addWidget(pane)
+        self._refresh_aux_pane_bindings()
         self._apply_default_sizes()
 
     def remove_oscillator(self, key: str) -> None:
@@ -155,6 +157,18 @@ class ChartWorkspaceWidget(QWidget):
         if not candles:
             self._model.set_candles([])
             self._model.set_volume([])
+            if hasattr(self._model, "set_resident_base_index"):
+                try:
+                    self._model.set_resident_base_index(0)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            elif hasattr(self._model, "resident_base_index"):
+                try:
+                    setattr(self._model, "resident_base_index", 0)
+                except Exception:
+                    pass
+
+            self._refresh_aux_pane_bindings()
             if hasattr(self._viewport, "set_total_count"):
                 self._viewport.set_total_count(0)  # type: ignore[attr-defined]
             return
@@ -162,23 +176,125 @@ class ChartWorkspaceWidget(QWidget):
         self._model.set_candles(candles)
         self._model.set_volume([float(c.volume) for c in candles])
 
+        # Realtime/local snapshot semantics: viewport indices remain local.
+        if hasattr(self._model, "set_resident_base_index"):
+            try:
+                self._model.set_resident_base_index(0)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        elif hasattr(self._model, "resident_base_index"):
+            try:
+                setattr(self._model, "resident_base_index", 0)
+            except Exception:
+                pass
+
+        self._refresh_aux_pane_bindings()
+
         n = len(candles)
         if hasattr(self._viewport, "set_total_count"):
             self._viewport.set_total_count(n)  # type: ignore[attr-defined]
 
+    def apply_historical_slice(
+        self,
+        *,
+        symbol: str,
+        timeframe: str,
+        candles: List[Candle],
+        resident_base_index: int,
+        dataset_total: int,
+    ) -> None:
+        """
+        Historical-mode apply path.
+
+        Unlike apply_snapshot(), the viewport total represents the full dataset
+        size, while the model stores only the currently resident slice.
+        """
+        self.set_asset_label(f"{symbol} · {timeframe}")
+
+        if not candles:
+            self._model.set_candles([])
+            self._model.set_volume([])
+            if hasattr(self._model, "set_resident_base_index"):
+                try:
+                    self._model.set_resident_base_index(int(resident_base_index))  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            elif hasattr(self._model, "resident_base_index"):
+                try:
+                    setattr(self._model, "resident_base_index", int(resident_base_index))
+                except Exception:
+                    pass
+
+            self._refresh_aux_pane_bindings()
+
+            if hasattr(self._viewport, "set_total_count_preserve_position"):
+                self._viewport.set_total_count_preserve_position(max(0, int(dataset_total)))  # type: ignore[attr-defined]
+            elif hasattr(self._viewport, "set_total_count"):
+                self._viewport.set_total_count(max(0, int(dataset_total)))  # type: ignore[attr-defined]
+            return
+
+        self._model.set_candles(candles)
+        self._model.set_volume([float(c.volume) for c in candles])
+
+        if hasattr(self._model, "set_resident_base_index"):
+            try:
+                self._model.set_resident_base_index(int(resident_base_index))  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        elif hasattr(self._model, "resident_base_index"):
+            try:
+                setattr(self._model, "resident_base_index", int(resident_base_index))
+            except Exception:
+                pass
+
+        self._refresh_aux_pane_bindings()
+
+        if hasattr(self._viewport, "set_total_count_preserve_position"):
+            self._viewport.set_total_count_preserve_position(max(0, int(dataset_total)))  # type: ignore[attr-defined]
+        elif hasattr(self._viewport, "set_total_count"):
+            self._viewport.set_total_count(max(0, int(dataset_total)))  # type: ignore[attr-defined]
+
     def apply_patch(self, patch: ChartPatch) -> None:
         self.set_asset_label(f"{patch.symbol} · {patch.timeframe}")
-    
+
         if patch.op == "append":
             # cap realtime window
             self._model.append_candle(patch.candle, maxlen=200)
-    
+
+            # Realtime/local patch semantics: viewport indices remain local.
+            if hasattr(self._model, "set_resident_base_index"):
+                try:
+                    self._model.set_resident_base_index(0)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            elif hasattr(self._model, "resident_base_index"):
+                try:
+                    setattr(self._model, "resident_base_index", 0)
+                except Exception:
+                    pass
+
             # update viewport to new (possibly trimmed) length
             if hasattr(self._viewport, "set_total_count"):
                 self._viewport.set_total_count(len(self._model.candles))  # type: ignore[attr-defined]
+
+            self._refresh_aux_pane_bindings()
         else:
             # "update" of the currently forming candle
             self._model.update_last_candle(patch.candle)
+
+            # Realtime/local patch semantics: viewport indices remain local.
+            if hasattr(self._model, "set_resident_base_index"):
+                try:
+                    self._model.set_resident_base_index(0)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+            elif hasattr(self._model, "resident_base_index"):
+                try:
+                    setattr(self._model, "resident_base_index", 0)
+                except Exception:
+                    pass
+
+            self._refresh_aux_pane_bindings()
 
     # -------- Internal helpers --------
 
@@ -197,3 +313,42 @@ class ChartWorkspaceWidget(QWidget):
     def _remove_widget(self, w: QWidget) -> None:
         w.setParent(None)
         w.hide()
+
+    def _refresh_aux_pane_bindings(self) -> None:
+        """
+        Keep auxiliary panes bound to the model's current series objects and
+        resident base index.
+        """
+        resident_base_index = 0
+        if hasattr(self._model, "resident_base_index"):
+            try:
+                resident_base_index = int(self._model.resident_base_index)
+            except Exception:
+                resident_base_index = 0
+
+        if self._volume is not None:
+            if hasattr(self._volume, "set_volume"):
+                try:
+                    self._volume.set_volume(self._model.volume)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+            if hasattr(self._volume, "set_resident_base_index"):
+                try:
+                    self._volume.set_resident_base_index(resident_base_index)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+        for key, pane in self._oscillators.items():
+            series = self._model.oscillator(key)
+            if series is not None and hasattr(pane, "set_values"):
+                try:
+                    pane.set_values(series.values)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+            if hasattr(pane, "set_resident_base_index"):
+                try:
+                    pane.set_resident_base_index(resident_base_index)  # type: ignore[attr-defined]
+                except Exception:
+                    pass

@@ -71,6 +71,8 @@ class ChartRenderSurface(QWidget):
         self._candles = candles
         self._crosshair = crosshair
 
+        self._resident_base_index = 0
+
         self._viewport.viewport_changed.connect(self.update)
         self._crosshair.changed.connect(self.update)
         self._crosshair.cleared.connect(self.update)
@@ -99,10 +101,28 @@ class ChartRenderSurface(QWidget):
 
     def set_candles(self, candles: List[Candle]) -> None:
         self._candles = candles
-        self._viewport.set_total(len(candles))
         self._y_lo = None
         self._y_hi = None
         self.update()
+
+    def set_resident_base_index(self, base_index: int) -> None:
+        self._resident_base_index = max(0, int(base_index))
+        self.update()
+
+    def _global_to_local(self, global_index: int) -> Optional[int]:
+        local = int(global_index) - self._resident_base_index
+        if 0 <= local < len(self._candles):
+            return local
+        return None
+
+    def _local_to_global(self, local_index: int) -> int:
+        return self._resident_base_index + int(local_index)
+
+    def _candle_at_global(self, global_index: int) -> Optional[Candle]:
+        local = self._global_to_local(global_index)
+        if local is None:
+            return None
+        return self._candles[local]
 
     # ---------------- Mouse ----------------
 
@@ -201,13 +221,10 @@ class ChartRenderSurface(QWidget):
         # Discrete-grid vertical lines must align to slots
         self._draw_grid(p, plot, start, slots)
 
-        # Build visible candle list *by slots* (future slots -> None)
+        # Build visible candle list *by global slots* (future/non-resident slots -> None)
         vis: List[Optional[Candle]] = []
         for gi in range(start, end):
-            if 0 <= gi < len(self._candles):
-                vis.append(self._candles[gi])
-            else:
-                vis.append(None)
+            vis.append(self._candle_at_global(gi))
 
         # Determine Y range from real candles only
         real_vis = [c for c in vis if c is not None]
@@ -252,7 +269,7 @@ class ChartRenderSurface(QWidget):
         # X axis time labels (first, every 5, every 10, ..., last)
         self._draw_time_axis(p, plot, start, vis)
 
-        # ALWAYS latest price tag (real-time value)
+        # ALWAYS latest price tag (latest resident value)
         last = self._candles[-1]
         y_price = self._y_for_price(plot, last.close, lo, hi)
         p.setFont(QFont("Consolas", 9))
@@ -296,18 +313,20 @@ class ChartRenderSurface(QWidget):
         """
         Timestamp for a global slot index gi.
         - If gi is a real candle -> candle.ts_ms
-        - If gi is future -> infer from last candle + timeframe
+        - If gi is future -> infer from last resident candle + timeframe
         """
-        if 0 <= gi < len(self._candles):
-            return int(self._candles[gi].ts_ms)
+        c = self._candle_at_global(gi)
+        if c is not None:
+            return int(c.ts_ms)
 
         tf = self._infer_tf_ms()
         if tf is None or not self._candles:
             return None
 
-        last_idx = len(self._candles) - 1
-        last_ts = int(self._candles[last_idx].ts_ms)
-        steps = gi - last_idx
+        last_local_idx = len(self._candles) - 1
+        last_global_idx = self._local_to_global(last_local_idx)
+        last_ts = int(self._candles[last_local_idx].ts_ms)
+        steps = gi - last_global_idx
         if steps <= 0:
             return None
         return last_ts + steps * tf
@@ -372,7 +391,7 @@ class ChartRenderSurface(QWidget):
 
     def _current_y_range_for_drag(self) -> Tuple[float, float]:
         start, end = self._viewport.start, self._viewport.end
-        real = [self._candles[i] for i in range(start, min(end, len(self._candles))) if 0 <= i < len(self._candles)]
+        real = [c for gi in range(start, end) if (c := self._candle_at_global(gi)) is not None]
         if not real:
             return (0.0, 1.0)
         return self._ensure_non_anchored_range(real)

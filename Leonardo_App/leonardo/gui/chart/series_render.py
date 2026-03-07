@@ -63,6 +63,8 @@ class VolumeRenderSurface(QWidget):
         self._volume = volume
         self._crosshair = crosshair
 
+        self._resident_base_index = 0
+
         self.setMouseTracking(True)
 
         self._viewport.viewport_changed.connect(self.update)
@@ -73,6 +75,26 @@ class VolumeRenderSurface(QWidget):
         self._pad_top = 6
         self._pad_right = 64
         self._pad_bottom = 14
+
+    def set_volume(self, volume: List[float]) -> None:
+        self._volume = volume
+        self.update()
+
+    def set_resident_base_index(self, base_index: int) -> None:
+        self._resident_base_index = max(0, int(base_index))
+        self.update()
+
+    def _global_to_local(self, global_index: int) -> Optional[int]:
+        local = int(global_index) - self._resident_base_index
+        if 0 <= local < len(self._volume):
+            return local
+        return None
+
+    def _value_at_global(self, global_index: int) -> Optional[float]:
+        local = self._global_to_local(global_index)
+        if local is None:
+            return None
+        return float(self._volume[local])
 
     def _plot_rect(self) -> QRectF:
         w = self.width()
@@ -147,11 +169,12 @@ class VolumeRenderSurface(QWidget):
         p.drawRect(plot)
 
         start, end = self._viewport.start, self._viewport.end
-        vis = self._volume[start:end]
-        if not vis:
+        vis: List[Optional[float]] = [self._value_at_global(gi) for gi in range(start, end)]
+        real_vis = [v for v in vis if v is not None]
+        if not real_vis:
             return
 
-        vmax = max(vis)
+        vmax = max(real_vis)
         n = len(vis)
         if n <= 0:
             return
@@ -168,6 +191,8 @@ class VolumeRenderSurface(QWidget):
         p.setClipRect(plot)
 
         for i, v in enumerate(vis):
+            if v is None:
+                continue
             cx = plot.left() + (i + 0.5) * bar_w
             t = v / vmax if vmax > 0 else 0.0
             bar_h = t * plot.height()
@@ -182,8 +207,9 @@ class VolumeRenderSurface(QWidget):
                 p.setPen(QPen(QColor(120, 120, 140)))
                 p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
 
-            if 0 <= idx < len(self._volume) and vmax > 0:
-                v = self._volume[idx]
+            v_cross = self._value_at_global(idx)
+            if v_cross is not None and vmax > 0:
+                v = v_cross
                 if v < 0.0:
                     v = 0.0
                 elif v > vmax:
@@ -232,6 +258,8 @@ class OscillatorRenderSurface(QWidget):
         self._crosshair = crosshair
         self._values = values
 
+        self._resident_base_index = 0
+
         self.setMouseTracking(True)
 
         self._viewport.viewport_changed.connect(self.update)
@@ -242,6 +270,26 @@ class OscillatorRenderSurface(QWidget):
         self._pad_top = 6
         self._pad_right = 64
         self._pad_bottom = 14
+
+    def set_values(self, values: List[float]) -> None:
+        self._values = values
+        self.update()
+
+    def set_resident_base_index(self, base_index: int) -> None:
+        self._resident_base_index = max(0, int(base_index))
+        self.update()
+
+    def _global_to_local(self, global_index: int) -> Optional[int]:
+        local = int(global_index) - self._resident_base_index
+        if 0 <= local < len(self._values):
+            return local
+        return None
+
+    def _value_at_global(self, global_index: int) -> Optional[float]:
+        local = self._global_to_local(global_index)
+        if local is None:
+            return None
+        return float(self._values[local])
 
     def _plot_rect(self) -> QRectF:
         w = self.width()
@@ -316,12 +364,13 @@ class OscillatorRenderSurface(QWidget):
         p.drawRect(plot)
 
         start, end = self._viewport.start, self._viewport.end
-        vis = self._values[start:end]
-        if len(vis) < 2:
+        vis: List[Optional[float]] = [self._value_at_global(gi) for gi in range(start, end)]
+        real_vis = [v for v in vis if v is not None]
+        if len(real_vis) < 2:
             return
 
-        ymin = min(vis)
-        ymax = max(vis)
+        ymin = min(real_vis)
+        ymax = max(real_vis)
         if ymax <= ymin:
             ymax = ymin + 1.0
 
@@ -340,12 +389,20 @@ class OscillatorRenderSurface(QWidget):
         p.save()
         p.setClipRect(plot)
 
-        prev_x = plot.left()
-        prev_y = y_to_px(vis[0])
-        for i in range(1, n):
+        prev_x: float | None = None
+        prev_y: float | None = None
+        for i, v in enumerate(vis):
+            if v is None:
+                prev_x = None
+                prev_y = None
+                continue
+
             x = plot.left() + i * dx
-            y = y_to_px(vis[i])
-            p.drawLine(int(prev_x), int(prev_y), int(x), int(y))
+            y = y_to_px(v)
+
+            if prev_x is not None and prev_y is not None:
+                p.drawLine(int(prev_x), int(prev_y), int(x), int(y))
+
             prev_x, prev_y = x, y
 
         if self._crosshair.active and self._crosshair.index is not None:
@@ -356,9 +413,9 @@ class OscillatorRenderSurface(QWidget):
                 p.setPen(QPen(QColor(120, 120, 140)))
                 p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
 
-            if 0 <= idx < len(self._values):
-                v = self._values[idx]
-                y = y_to_px(v)
+            v_cross = self._value_at_global(idx)
+            if v_cross is not None:
+                y = y_to_px(v_cross)
                 p.setPen(QPen(QColor(120, 120, 140)))
                 p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
 

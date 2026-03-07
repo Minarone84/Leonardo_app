@@ -5,7 +5,7 @@ from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Slot
 
-from leonardo.common.market_types import Candle as GuiCandle, ChartSnapshot
+from leonardo.common.market_types import Candle as GuiCandle
 from leonardo.core.registry_keys import SVC_HISTORICAL_DATASET
 from leonardo.data.historical.dataset_service import DatasetId, SliceRequest, SlicePayload
 from leonardo.gui.core_bridge import CoreBridge
@@ -42,8 +42,21 @@ class HistoricalChartController(QObject):
 
         self._latest_request_id: Optional[str] = None
 
+        # Historical session state (Phase 1 groundwork)
+        self._dataset_count: Optional[int] = None
+        self._resident_base_index: int = 0
+        self._resident_size: int = 0
+        self._has_more_left: bool = False
+        self._has_more_right: bool = False
+        self._initial_view_applied: bool = False
+        self._request_in_flight: bool = False
+        self._suppress_viewport_refill: bool = False
+
         # Ensure UI mutations happen on the GUI thread
         self.slice_ready.connect(self._apply_slice)
+
+        # Refill-on-pan trigger
+        self._workspace.viewport.viewport_changed.connect(self._on_viewport_changed)
 
     # ---------------- API ----------------
 
@@ -52,6 +65,16 @@ class HistoricalChartController(QObject):
         self._dataset = dataset
         self._symbol = symbol
         self._timeframe = timeframe
+
+        # Reset per-dataset historical session state
+        self._dataset_count = None
+        self._resident_base_index = 0
+        self._resident_size = 0
+        self._has_more_left = False
+        self._has_more_right = False
+        self._initial_view_applied = False
+        self._request_in_flight = False
+        self._suppress_viewport_refill = False
 
         svc = self._core.context.registry.get(SVC_HISTORICAL_DATASET)
         if svc is None:
@@ -72,6 +95,7 @@ class HistoricalChartController(QObject):
 
         request_id = uuid.uuid4().hex
         self._latest_request_id = request_id
+        self._request_in_flight = True
 
         req = SliceRequest(
             tab_id="historical-tab",
@@ -96,6 +120,12 @@ class HistoricalChartController(QObject):
             self.error.emit(f"open_dataset failed: {e!r}")
             return
 
+        # Preserve dataset-global size for Phase 1 stabilization
+        try:
+            self._dataset_count = int(meta.count)
+        except Exception:
+            self._dataset_count = None
+
         # Initial slice centered at newest candle
         self.request_slice(center_ts_ms=meta.last_ts_ms, reason="initial")
 
@@ -103,6 +133,7 @@ class HistoricalChartController(QObject):
         try:
             payload: SlicePayload = fut.result()
         except Exception as e:
+            self._request_in_flight = False
             self.error.emit(f"get_slice failed: {e!r}")
             return
 
@@ -111,6 +142,64 @@ class HistoricalChartController(QObject):
 
         # Marshal to GUI thread (prevents Qt cross-thread parenting)
         self.slice_ready.emit(payload)
+
+    # ---------------- viewport refill trigger (GUI thread) ----------------
+
+    @Slot()
+    def _on_viewport_changed(self) -> None:
+        if self._dataset is None:
+            return
+        if self._dataset_count is None or self._dataset_count <= 0:
+            return
+        if self._request_in_flight:
+            return
+        if self._suppress_viewport_refill:
+            return
+        if self._resident_size <= 0:
+            return
+        if not self._initial_view_applied:
+            return
+
+        vp = self._workspace.viewport
+        start = int(vp.start)
+        end = int(vp.end)
+        visible = max(1, int(vp.visible))
+
+        resident_left = self._resident_base_index
+        resident_right_exclusive = self._resident_base_index + self._resident_size
+
+        left_margin = start - resident_left
+        right_margin = resident_right_exclusive - end
+
+        refill_threshold = max(150, min(visible // 2, 500))
+
+        need_left = self._has_more_left and left_margin <= refill_threshold
+        need_right = self._has_more_right and right_margin <= refill_threshold
+
+        if not need_left and not need_right:
+            return
+
+        center_global = start + (visible // 2)
+        center_global = max(0, min(center_global, self._dataset_count - 1))
+
+        center_ts_ms = self._global_index_to_ts_ms(center_global)
+        if center_ts_ms is None:
+            return
+
+        reason = "refill-left" if need_left and not need_right else (
+            "refill-right" if need_right and not need_left else "refill-both"
+        )
+        self.request_slice(center_ts_ms=center_ts_ms, reason=reason)
+
+    def _global_index_to_ts_ms(self, global_index: int) -> Optional[int]:
+        local = global_index - self._resident_base_index
+        candles = self._workspace.model.candles
+        if 0 <= local < len(candles):
+            try:
+                return int(candles[local].ts_ms)
+            except Exception:
+                return None
+        return None
 
     # ---------------- apply (GUI thread) ----------------
 
@@ -139,28 +228,43 @@ class HistoricalChartController(QObject):
             )
         ]
 
-        snap = ChartSnapshot(
-            symbol=self._symbol,
-            timeframe=self._timeframe,  # Literal type, but we pass canonical strings already
-            candles=candles,
-        )
-        self._workspace.apply_snapshot(snap)
+        # Preserve resident slice metadata for Phase 1 stabilization
+        self._resident_base_index = int(getattr(payload, "base_index", 0))
+        self._resident_size = len(candles)
+        self._has_more_left = bool(getattr(payload, "has_more_left", False))
+        self._has_more_right = bool(getattr(payload, "has_more_right", False))
 
-        # Ensure volume pane is visible for historical charts
-        self._workspace.set_volume_enabled(True)
+        self._suppress_viewport_refill = True
+        try:
+            self._workspace.apply_historical_slice(
+                symbol=self._symbol,
+                timeframe=self._timeframe,
+                candles=candles,
+                resident_base_index=self._resident_base_index,
+                dataset_total=self._dataset_count if self._dataset_count is not None else len(candles),
+            )
 
-        # Best-effort: show the latest ~1000 bars
-        self._set_viewport_to_latest(visible_target=1000)
+            # Ensure volume pane is visible for historical charts
+            self._workspace.set_volume_enabled(True)
+
+            # Initial load only: show the latest ~1000 bars.
+            # Do NOT reset viewport on every refill.
+            if not self._initial_view_applied:
+                self._set_viewport_to_latest(visible_target=1000)
+                self._initial_view_applied = True
+        finally:
+            self._suppress_viewport_refill = False
+            self._request_in_flight = False
 
     def _set_viewport_to_latest(self, *, visible_target: int) -> None:
         vp = self._workspace.viewport
-        n = len(self._workspace.model.candles)
-        if n <= 0:
+        total = self._dataset_count if self._dataset_count is not None else len(self._workspace.model.candles)
+        if total <= 0:
             return
 
-        visible = min(int(visible_target), n)
-        start = max(0, n - visible)
-        end = n
+        visible = min(int(visible_target), int(total))
+        start = max(0, int(total) - visible)
+        end = int(total)
 
         # Prefer explicit API if present
         if hasattr(vp, "set_window"):

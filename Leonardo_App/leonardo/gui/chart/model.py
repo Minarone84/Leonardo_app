@@ -40,6 +40,8 @@ class ChartModel(QObject):
         self._candles: List[Candle] = candles
         self._volume: List[float] = volume
 
+        self._resident_base_index: int = 0
+
         self._overlays: Dict[str, Series] = {}     # indicators drawn on price pane
         self._oscillators: Dict[str, Series] = {}  # panes below
         self._trades: List[TradeMarker] = []
@@ -53,6 +55,29 @@ class ChartModel(QObject):
     @property
     def volume(self) -> List[float]:
         return self._volume
+
+    @property
+    def resident_base_index(self) -> int:
+        return self._resident_base_index
+
+    def set_resident_base_index(self, base_index: int) -> None:
+        base = max(0, int(base_index))
+        if base == self._resident_base_index:
+            return
+        self._resident_base_index = base
+        self.changed.emit()
+
+    def global_to_local(self, global_index: int) -> Optional[int]:
+        local = int(global_index) - self._resident_base_index
+        if 0 <= local < len(self._candles):
+            return local
+        return None
+
+    def local_to_global(self, local_index: int) -> int:
+        return self._resident_base_index + int(local_index)
+
+    def has_global_index(self, global_index: int) -> bool:
+        return self.global_to_local(global_index) is not None
 
     def set_candles(self, candles: List[Candle]) -> None:
         # In-place update so any widget holding a reference keeps working.
@@ -74,6 +99,7 @@ class ChartModel(QObject):
             drop = len(self._candles) - maxlen
             del self._candles[:drop]
             del self._volume[:drop]
+            self._resident_base_index += drop
 
         self.changed.emit()
 

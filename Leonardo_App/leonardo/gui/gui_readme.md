@@ -1,646 +1,485 @@
-Leonardo GUI Overview (current state)
-High-level architecture
+Leonardo GUI Architecture (Current State)
+Overview
 
-The GUI is built around a single central workspace containing a stack of chart panes (price + optional volume + optional oscillators).
+The Leonardo GUI provides the visualization layer for both historical and real-time charting.
+It is built around a modular chart engine capable of rendering large datasets using resident slices and a global index model.
 
-The panes share:
+The GUI is composed of independent chart windows, each fully operational on its own.
+A separate Window Manager organizes these windows on screen.
 
-a ChartViewport (controls discrete X slot range: start/end/visible, pan/zoom, future padding)
+Each chart window contains a chart workspace composed of multiple stacked panes:
 
-a Crosshair (controls shared crosshair index and chart-hover state)
+Price pane (always present)
 
-The X-axis model is discrete and slot-based:
+Optional volume pane
 
-Each candle occupies exactly one slot.
+Optional oscillator panes
 
-Slot centers are used for rendering and crosshair alignment.
+Future construct panels
 
-Vertical grid lines align to slot boundaries.
+All panes share the same viewport and crosshair state.
 
-Zoom changes slot width but never shifts slot positions.
+Chart Window Model
+Independent Windows
 
-The app also includes:
+The system uses fully independent chart windows.
 
-a MainWindow with menus wired to workspace actions
+Examples:
 
-a Window Manager service (in core registry) used to open auxiliary windows (Signals, Windows Inspector)
+HistoricalChartWindow
 
-a WindowsInspectorWindow that polls core state to display open windows tracking
+RealtimeChartWindow
 
-Core GUI entry points
-leonardo/gui/main_window.py — MainWindow(QMainWindow)
+Each window owns its own:
 
-Role: Main UI shell: menus, status bar, central workspace, registry-driven actions.
+chart workspace
 
-Owns:
+controller/session
 
-ChartWorkspaceWidget as central widget
+viewport
 
-menu actions (volume toggle, add oscillator, realtime control, windows inspector, anchor zoom toggle)
+crosshair
 
-a CoreBridge reference to interact with the core loop
+pane configuration
 
-Calls into:
+status bar
 
-ChartWorkspaceWidget:
+symbol/timeframe state
 
-set_volume_enabled()
+These windows are self-contained and can operate alone.
 
-add_oscillator(), clear_oscillators()
+Window Manager
 
-set_asset_label(), set_studies_labels()
+Charts are organized by a Window Manager, not by embedding charts inside a container window.
 
-set_anchor_zoom_enabled()
+The Window Manager provides:
 
-Core state (async via CoreBridge.submit()):
+bring window to front
 
-ctx.state.window_open("main", "MainWindow", where="gui")
+collapse / expand
 
-ctx.state.window_close("main", where="gui")
+layout presets
 
-ctx.state.set_realtime_active(...)
+organize multiple charts
 
-ctx.state.is_realtime_active()
+manage screen placement
 
-Calls into window manager service:
+Typical layout presets:
 
-wm.open_windows_inspector()
+1 chart
 
-wm.open_signals(), wm.get_signals()
+2 charts side-by-side
 
-leonardo/gui/core_bridge.py — CoreBridge
+3 charts (1 top / 2 bottom)
 
-Role: Thread-safe bridge from Qt GUI thread to the async core loop.
+4 charts grid
 
-Used by:
+Both historical and realtime charts can be arranged using these layouts.
 
-MainWindow
+The system supports up to 4 independent chart windows simultaneously.
 
-WindowsInspectorWindow
+Chart Workspace Architecture
 
-Typical usage:
+ChartWorkspaceWidget
 
-submit(coro) returns a future-like result
+The workspace is the main chart container inside each chart window.
 
-emits status_changed into GUI thread
+It owns:
 
-Chart workspace & panes
-leonardo/gui/chart/workspace.py — ChartWorkspaceWidget(QWidget)
+ChartModel
 
-Role: The chart container: holds model, viewport, crosshair, and the vertical splitter stacking panes.
+ChartViewport
 
-Owns:
+Crosshair
 
-ChartModel (candles, volume, oscillator series)
+vertical splitter stacking panes
 
-ChartViewport (shared discrete X-axis state + future padding)
+ChartWorkspaceWidget
+    PricePane
+    VolumePane (optional)
+    OscillatorPane(s)
+Shared State Objects
+ChartViewport
 
-Crosshair (shared crosshair state)
+ChartViewport(QObject)
 
-QSplitter(Qt.Vertical) with:
-
-PricePane always
-
-optional VolumePane
-
-optional OscillatorPane instances
-
-Calls into:
-
-PricePane(viewport, model, crosshair)
-
-VolumePane(viewport, volume, crosshair) (created on toggle)
-
-OscillatorPane(title, viewport, values, crosshair) (created per spec)
-
-Public API (used by MainWindow):
-
-set_asset_label(text)
-
-set_studies_labels(indicators, oscillators)
-
-set_volume_enabled(True/False)
-
-add_oscillator(OscillatorSpec)
-
-clear_oscillators()
-
-set_anchor_zoom_enabled(True/False) → delegates to ChartViewport.set_anchor_zoom_enabled()
-
-leonardo/gui/chart/panes.py
-
-Contains the pane widgets and their overlays.
-
-_PaneOverlay(QWidget)
-
-Role: Small translucent overlay (top-left) with three labels:
-
-title
-
-line1
-
-line2
-
-Mouse-transparent so it doesn’t steal hover.
-
-Used by all panes.
-
-PricePane(QWidget)
-
-Role: Price pane container:
-
-hosts the ChartRenderSurface
-
-maintains overlay with:
-
-“ASSET · TF”
-
-OHLC at crosshair index
-
-indicator overlay values at crosshair index
-
-Owns:
-
-ChartRenderSurface(viewport, crosshair, candles)
-
-_PaneOverlay
-
-Reads from:
-
-crosshair.index to decide which candle to display
-
-ChartModel.overlays() for indicator values
-
-Subscribes to:
-
-viewport.viewport_changed
-
-crosshair.changed, crosshair.cleared
-
-VolumePane(QWidget)
-
-Role: Volume pane container:
-
-hosts VolumeRenderSurface
-
-overlay shows Vol: <value> at crosshair index
-
-Reads from:
-
-crosshair.index to display volume at that index
-
-Subscribes to:
-
-viewport + crosshair signals for repaint and overlay updates
-
-OscillatorPane(QWidget)
-
-Role: Oscillator pane container:
-
-hosts OscillatorRenderSurface
-
-overlay shows oscillator value at crosshair index
-
-Reads from:
-
-crosshair.index
-
-Subscribes to:
-
-viewport + crosshair signals
-
-Rendering surfaces (actual drawing + mouse interaction)
-leonardo/gui/chart/chart_render.py — ChartRenderSurface(QWidget)
-
-Role: Draws the candlestick chart + discrete grid + localized time axis + price axis + shared crosshair vertical line.
-
-Also supports:
-
-horizontal pan (drag inside plot)
-
-anchored horizontal zoom (wheel, anchored to slot center)
-
-future padding (scroll into empty slots when anchor OFF)
-
-optional non-anchored Y scaling when anchor zoom is OFF:
-
-right-axis drag = zoom Y
-
-shift + right-axis drag = pan Y
-
-Mouse behavior implemented:
-
-Crosshair vertical line is shared across all panes via Crosshair.index
-
-Horizontal line on chart is shown only when hovering the chart plot
-
-Crosshair index is updated from mouse X using slot-based index_from_x(...)
-
-Wheel zoom uses viewport.zoom_in_at/zoom_out_at anchored to slot center
-
-Axis interaction:
-
-only when anchor zoom OFF
-
-click/drag right axis = Y zoom
-
-shift + drag right axis = Y pan
-
-Additional rendering behavior:
-
-Candles are rendered strictly inside the plot rectangle (vertical clipping enforced)
-
-Time axis labels are localized (HH:MM, every 5 slots + first/last)
-
-Always-visible real-time price tag drawn on right legend (latest close)
-
-Calls into:
-
-ChartViewport.index_from_x(), x_from_index()
-
-ChartViewport.zoom_in_at() / zoom_out_at()
-
-ChartViewport.pan_left()/pan_right()
-
-Crosshair.set_index(...)
-
-Crosshair.set_hover_on_price(...)
-
-(Legacy Crosshair.set(idx, y_rel) no longer used.)
-
-leonardo/gui/chart/series_render.py
-
-Contains VolumeRenderSurface and OscillatorRenderSurface.
-
-VolumeRenderSurface(QWidget)
-
-Role: Draws volume bars + right-side legend tag.
-Handles mouse to update shared crosshair index and wheel zoom.
-
-Crosshair behavior:
-
-On mouse move inside plot:
-
-computes idx from mouse X (slot-based)
-
-sets shared Crosshair.index
-
-forces Crosshair.hover_on_price=False so chart horizontal line does not appear
-
-Draws:
-
-shared vertical line if index is visible
-
-horizontal line that follows volume[idx] (value-based)
-
-always-visible real-time volume tag (latest volume value)
-
-Bars are aligned to discrete slots.
-
-Calls into:
-
-viewport.index_from_x(), viewport.x_from_index()
-
-viewport.zoom_in_at()/zoom_out_at()
-
-crosshair.set_index()
-
-crosshair.set_hover_on_price(False)
-
-OscillatorRenderSurface(QWidget)
-
-Role: Draws oscillator line series + right-side legend tag.
-Handles mouse to update shared crosshair index and wheel zoom.
-
-Crosshair behavior:
-
-On mouse move inside plot:
-
-sets shared Crosshair.index
-
-forces Crosshair.hover_on_price=False
-
-Draws:
-
-shared vertical line if visible
-
-horizontal line at values[idx] (value-based)
-
-always-visible real-time oscillator tag (latest value)
-
-Polyline is aligned to discrete slot centers.
-
-Calls into:
-
-same viewport + crosshair methods as volume surface
-
-Shared state objects
-leonardo/gui/chart/viewport.py — ChartViewport(QObject)
-
-Role: Shared horizontal (time) viewport for all panes using a discrete slot model.
+Controls the horizontal slot-based viewport.
 
 State:
 
-_data_total (real candles count)
+_data_total      number of real candles in dataset
+_future_pad      empty slots to the right
+_total           data_total + future_pad
 
-_future_pad (empty slots to the right)
+_visible         number of visible slots
+_start           first visible slot
+_end             start + visible
 
-_total = data_total + future_pad
+Features:
 
-_visible
+slot-based discrete X axis
 
-_start
+pan left / right
 
-anchor_zoom_enabled flag
+zoom anchored at mouse
 
-Derived:
+future padding
 
-end = start + visible
+anchor zoom mode
 
-Provides:
+All panes share the same viewport.
 
-pan:
+Crosshair
 
-pan_left(step), pan_right(step)
+Crosshair(QObject)
 
-index mapping (slot-based):
-
-index_from_x(plot, x) → absolute slot index in [start, end-1]
-
-x_from_index(plot, idx) → slot-centered x pixel
-
-anchored zoom:
-
-zoom_in_at(anchor_idx, anchor_rel)
-
-zoom_out_at(anchor_idx, anchor_rel)
-
-_set_visible_anchored(...) internal helper
-
-Emits:
-
-viewport_changed whenever range changes (pan/zoom/total/etc.)
-
-Used by:
-
-ChartRenderSurface
-
-VolumeRenderSurface
-
-OscillatorRenderSurface
-
-panes overlays (for updates)
-
-leonardo/gui/chart/crosshair.py — Crosshair(QObject)
-
-Role: Shared crosshair state across panes.
+Shared crosshair state across panes.
 
 State:
 
-shared index → drives the vertical line everywhere
-
-hover_on_price → tells ChartRenderSurface whether to draw its horizontal line
+index           global dataset index
+hover_on_price  controls chart horizontal line
 
 Signals:
 
 changed
-
 cleared
-
-Used by:
-
-ChartRenderSurface
-
-VolumeRenderSurface
-
-OscillatorRenderSurface
-
-all panes overlays (to update values at index)
-
-Chart data model (GUI-local for now)
-leonardo/gui/chart/model.py — ChartModel
-
-Role: Holds:
-
-candles
-
-volume
-
-overlays (indicators)
-
-oscillators (series by key)
-
-Used by:
-
-ChartWorkspaceWidget (ownership)
-
-PricePane overlay reads overlays
-
-OscillatorPane uses oscillator series values
-
-leonardo/gui/chart/dummy_data.py
-
-Role: Generates fake data:
-
-make_dummy_candles()
-
-make_dummy_volume()
-
-make_dummy_oscillator()
-
-Used by:
-
-ChartWorkspaceWidget during initialization
-
-Auxiliary windows
-leonardo/gui/windows_inspector.py — WindowsInspectorWindow(QMainWindow)
-
-Role: Diagnostic window showing registry-truth list of open windows.
 
 Behavior:
 
-polls every 500ms
+vertical line shown on all panes
 
-calls core thread-safely via CoreBridge.submit()
+price pane horizontal line follows mouse Y
 
-uses ctx.state.windows_state() snapshot (copy)
+volume / oscillator panes show value-based horizontal lines
 
-renders into QTableWidget: Name / Type / Open
+Chart Model
 
-Calls into:
+ChartModel
 
-AppContext.state.windows_state()
+Stores GUI-side data series.
 
-Current interaction rules (canonical)
-Crosshair
+candles
+volume
+overlays      price indicators
+oscillators   oscillator series
+trades        future feature
 
-The vertical line is global: driven by Crosshair.index and drawn on all panes.
+For historical mode the model also stores:
 
-Slot-centered alignment guarantees stable positioning during zoom.
+resident_base_index
 
-The horizontal line:
+This represents the dataset index of the first resident candle.
 
-On chart: shown only when hovering chart plot (mouse Y)
+This allows translation between:
 
-On volume/osc: always value-based at series[idx] (not mouse Y)
+global dataset index
+resident slice index
+Historical Chart Engine
 
-Volume/osc horizontal lines are always shown when crosshair is active.
+Historical charts use a resident slice model.
 
-Zoom
+Large datasets are not loaded entirely into memory.
 
-Mouse wheel zoom changes X range via ChartViewport.zoom_*_at(...), anchored to slot center.
+Instead the chart loads partial slices around the visible region.
 
-This wheel zoom can be used on chart/volume/osc panes (same mechanics).
+Dataset vs Slice
+FULL DATASET
+|----------------------------------------------------------|
 
-Future padding allows scrolling into empty slots when anchor zoom is OFF.
+RESIDENT SLICE
+                 |---------------------------|
 
-Anchor Zoom toggle
+VIEWPORT
+                      |-----------|
 
-ON:
+Definitions:
 
-chart auto-scales Y to visible candles (TradingView-style anchored behavior)
+Term	Meaning
+Dataset	Entire historical data
+Resident slice	Portion currently loaded in memory
+Viewport	Visible part of dataset
+Global Index Model
 
-right edge snaps to latest real candle
+The chart engine uses dataset-global indexing.
 
-OFF:
+global_index = resident_base_index + local_index
 
-chart enters free Y mode:
+Rendering surfaces translate:
 
-drag right axis = Y zoom
+viewport global index
+→ resident local index
+→ candle / series value
 
-shift + drag right axis = Y pan
+This ensures the chart behaves like a continuous dataset.
 
-horizontal scroll can move into future padded slots
+Historical Controller
 
-volume/osc remain vertically auto-scaled.
+HistoricalChartController
 
-############################################################################
+The controller manages dataset interaction with the core layer.
 
-DEPENDENCY DIAGRAM GUI
+Responsibilities:
 
-gui/app.py (bootstrap)
-└─ MainWindow (QMainWindow)
-   ├─ ChartWorkspaceWidget (central widget)
-   │  ├─ ChartModel
-   │  │  ├─ candles (List[Candle])
-   │  │  ├─ volume (List[float])
-   │  │  ├─ overlays (Series dict)
-   │  │  └─ oscillators (Series dict)
-   │  ├─ ChartViewport (shared X viewport + anchor flag)
-   │  ├─ Crosshair (shared crosshair state)
-   │  └─ QSplitter (Vertical)
-   │     ├─ PricePane
-   │     │  ├─ ChartRenderSurface
-   │     │  └─ _PaneOverlay
-   │     ├─ VolumePane (optional)
-   │     │  ├─ VolumeRenderSurface
-   │     │  └─ _PaneOverlay
-   │     └─ OscillatorPane(s) (0..N)
-   │        ├─ OscillatorRenderSurface
-   │        └─ _PaneOverlay
-   ├─ Menu actions (QAction)
-   └─ QTimer (audit polling)
+open dataset
 
+request slices
 
-MainWindow
-├─ _on_toggle_volume(bool) ───────────────→ ChartWorkspaceWidget.set_volume_enabled()
-├─ _add_osc(key,title) ───────────────────→ ChartWorkspaceWidget.add_oscillator()
-├─ _clear_osc() ──────────────────────────→ ChartWorkspaceWidget.clear_oscillators()
-├─ _on_anchor_zoom_toggled(bool) ─────────→ ChartWorkspaceWidget.set_anchor_zoom_enabled()
-│                                           └→ ChartViewport.set_anchor_zoom_enabled()
-├─ on_core_started() ─────────────────────→ core state: ctx.state.window_open("main"...)
-├─ closeEvent() ──────────────────────────→ core state: ctx.state.window_close("main"...)
-│                                           └→ CoreBridge.stop()
-└─ _open_windows_inspector() ─────────────→ WindowManager.open_windows_inspector()
+apply slices to workspace
 
+trigger refills when navigating near slice edges
 
-ChartRenderSurface (price)
-├─ mouseMoveEvent
-│  ├─ ChartViewport.index_from_x(...) ─────→ idx (discrete slot index)
-│  └─ Crosshair.set_index(...)              → shared crosshair index updated
-├─ wheelEvent
-│  └─ ChartViewport.zoom_in_at/out_at(...) → updates start/visible → viewport_changed
-├─ axis drag (when anchor OFF)
-│  └─ modifies local _y_lo/_y_hi (free Y)  → update()
-└─ paintEvent
-   ├─ reads ChartViewport.start/end (slot-based window)
-   ├─ draws discrete vertical grid (slot aligned)
-   ├─ draws candles (slot centered)
-   ├─ draws localized time axis (HH:MM, every 5 slots)
-   ├─ draws right-axis price scale
-   ├─ draws real-time price tag (latest close)
-   └─ reads Crosshair.index / hover_on_price
-      ├─ draw shared vertical line (slot centered)
-      └─ draw price horizontal line (mouse Y only if hover_on_price)
+Slice Metadata
 
+Each slice payload provides:
+
+base_index
+has_more_left
+has_more_right
+
+Controller state tracks:
+
+resident_base_index
+resident_size
+dataset_count
+Refill on Pan
+
+When the viewport approaches slice boundaries the controller requests a new slice.
+
+Example logic:
+
+if left_margin <= threshold:
+    refill-left
+
+if right_margin <= threshold:
+    refill-right
+
+The refill is centered around the current viewport center.
+
+Viewport position is preserved.
+
+Rendering System
+
+Rendering is performed by specialized surfaces.
+
+Price Chart
+
+ChartRenderSurface
+
+Draws:
+
+candlesticks
+
+grid
+
+price axis
+
+time axis
+
+real-time price tag
+
+crosshair
+
+Supports:
+
+pan (drag)
+
+zoom (mouse wheel)
+
+optional free Y scaling when anchor zoom disabled
+
+Volume Pane
 
 VolumeRenderSurface
-├─ mouseMoveEvent
-│  ├─ ChartViewport.index_from_x(...) ─────→ idx
-│  └─ Crosshair.set_index(idx)
-│     └─ Crosshair.set_hover_on_price(False)
-├─ wheelEvent
-│  └─ ChartViewport.zoom_in_at/out_at(...)
-└─ paintEvent
-   ├─ reads ChartViewport.start/end
-   ├─ draws volume bars (slot aligned)
-   ├─ draws real-time volume tag (latest value)
-   └─ reads Crosshair.index
-      ├─ draw shared vertical line (index)
-      └─ draw horizontal line at volume[idx] (value-based)
 
+Draws:
+
+volume bars
+
+volume legend tag
+
+crosshair index line
+
+horizontal value line
+
+Oscillator Pane
 
 OscillatorRenderSurface
-├─ mouseMoveEvent
-│  ├─ ChartViewport.index_from_x(...) ─────→ idx
-│  └─ Crosshair.set_index(idx)
-│     └─ Crosshair.set_hover_on_price(False)
-├─ wheelEvent
-│  └─ ChartViewport.zoom_in_at/out_at(...)
-└─ paintEvent
-   ├─ reads ChartViewport.start/end
-   ├─ draws oscillator polyline (slot aligned)
-   ├─ draws real-time oscillator tag (latest value)
-   └─ reads Crosshair.index
-      ├─ draw shared vertical line (index)
-      └─ draw horizontal line at values[idx] (value-based)
 
+Draws:
 
-PricePane._update_overlay()
-└─ idx = Crosshair.index (fallback to last candle)
-   ├─ reads ChartModel.candles[idx] → OHLC line1
-   └─ reads ChartModel.overlays()[*].values[idx] → line2 (overlay indicators)
+oscillator polyline
 
+oscillator legend tag
 
-VolumePane._update_overlay()
-└─ idx = Crosshair.index (fallback last)
-   └─ reads volume[idx] → "Vol: ..."
+crosshair index line
 
+horizontal value line
 
-OscillatorPane._update_overlay()
-└─ idx = Crosshair.index (fallback last)
-   └─ reads values[idx] → "<val>"
+Pane System
 
+Each pane is composed of:
 
-ChartViewport.viewport_changed ─→ surfaces.update(), panes._update_overlay()
-Crosshair.changed / cleared     ─→ surfaces.update(), panes._update_overlay()
+Pane
+ ├─ RenderSurface
+ └─ Overlay
 
+Overlay displays:
 
-MainWindow.on_core_started()
-└─ CoreBridge.submit(ctx.state.window_open("main","MainWindow"...))
+title
 
+values at crosshair index
 
-MainWindow.closeEvent()
-└─ CoreBridge.submit(ctx.state.window_close("main"...))
+Pane types:
 
+PricePane
+VolumePane
+OscillatorPane
+Interaction Model
+Crosshair
 
-WindowsInspectorWindow.refresh() [timer every 500ms]
-└─ CoreBridge.submit(ctx.state.windows_state()) → snapshot
-   └─ renders table rows
+The crosshair vertical line is shared across all panes.
 
+Index is computed using discrete slot mapping.
 
-MainWindow._open_windows_inspector()
-└─ ctx.registry.get(SVC_GUI_WINDOW_MANAGER) → wm
-   └─ wm.open_windows_inspector() → creates WindowsInspectorWindow
-   
-      
+index = viewport.index_from_x(...)
+Zoom
+
+Mouse wheel zoom adjusts visible slot range:
+
+viewport.zoom_in_at(...)
+viewport.zoom_out_at(...)
+
+Zoom is anchored to slot center.
+
+Anchor Zoom Mode
+
+When anchor zoom is ON:
+
+Y axis auto-scales to visible candles
+
+viewport snaps to latest candle
+
+When OFF:
+
+right axis drag → Y zoom
+
+shift + drag → Y pan
+
+future padding accessible
+
+Phase Roadmap
+Phase 1 — Historical Engine Foundation (Completed)
+
+Implemented:
+
+dataset-global indexing
+
+resident slice management
+
+refill-on-pan
+
+viewport preservation
+
+crosshair compatibility
+
+rendering support for resident slices
+
+Phase 2 — Navigation Stability
+
+Goals:
+
+refine refill triggers
+
+stabilize crosshair across refills
+
+ensure smooth viewport continuity
+
+prevent refill request storms
+
+stress test navigation
+
+Phase 3 — Indicator Engine
+
+Indicators must handle historical slices correctly.
+
+Oscillators may require lookback beyond slice boundaries.
+
+Example:
+
+RSI(14)
+
+If a slice begins at index 5000, RSI requires data from earlier candles.
+
+Future solutions may include:
+
+indicator warmup windows
+
+extended slice requests
+
+cached indicator state
+
+Phase 4 — Real-Time Integration
+
+Realtime charts will reuse the same chart engine.
+
+Lifecycle:
+
+load historical slice
+switch to realtime stream
+append new candles
+maintain dataset continuity
+Dependency Overview
+ChartWindow
+ └─ ChartWorkspaceWidget
+     ├─ ChartModel
+     ├─ ChartViewport
+     ├─ Crosshair
+     └─ QSplitter
+         ├─ PricePane
+         │   └─ ChartRenderSurface
+         ├─ VolumePane
+         │   └─ VolumeRenderSurface
+         └─ OscillatorPane
+             └─ OscillatorRenderSurface
+Architectural Principles
+
+The chart engine is designed around the following invariants:
+
+Global dataset indexing
+
+Resident slice rendering
+
+Viewport continuity
+
+Pane independence
+
+Independent chart windows
+
+These principles ensure the chart behaves as if rendering a continuous dataset, even when only partial slices are loaded in memory.
+
+Key Rule
+
+All rendering and overlays must respect:
+
+global_index = resident_base_index + local_index
+
+Breaking this invariant will cause incorrect rendering during slice refills.
+
+Summary
+
+The Leonardo GUI chart system now provides:
+
+scalable historical dataset visualization
+
+modular pane architecture
+
+discrete slot-based viewport
+
+crosshair synchronization
+
+independent chart windows
+
+window-manager-based layout organization
+
+The architecture is ready for navigation stabilization (Phase 2) and future realtime integration.

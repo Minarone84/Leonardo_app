@@ -89,6 +89,10 @@ class ChartViewport(QObject):
         self._data_total = max(0, int(total))
         self._recompute_total_and_clamp(preserve_position=not self._anchor_zoom_enabled)
 
+    def set_total_preserve_position(self, total: int) -> None:
+        self._data_total = max(0, int(total))
+        self._recompute_total_and_clamp(preserve_position=True)
+
     def set_total_count(self, n: int) -> None:
         """
         Workspace calls this after snapshot/append.
@@ -97,6 +101,40 @@ class ChartViewport(QObject):
         """
         self._data_total = max(0, int(n))
         self._recompute_total_and_clamp(preserve_position=not self._anchor_zoom_enabled)
+
+    def set_total_count_preserve_position(self, n: int) -> None:
+        """
+        Historical-mode helper:
+        preserve the current viewport position regardless of anchor setting.
+        """
+        self._data_total = max(0, int(n))
+        self._recompute_total_and_clamp(preserve_position=True)
+
+    def set_window(self, start: int, end: int) -> None:
+        old_visible = self._visible
+        old_start = self._start
+
+        start_i = max(0, int(start))
+        end_i = max(start_i + 1, int(end))
+
+        end_i = min(end_i, self._total)
+        start_i = max(0, min(start_i, end_i - 1))
+
+        visible = max(1, end_i - start_i)
+        visible = min(visible, self._total)
+        start_i = max(0, min(start_i, self._total - visible))
+
+        self._visible = visible
+        self._start = start_i
+
+        if self._crosshair_index is not None and not (0 <= self._crosshair_index < self._total):
+            self._crosshair_index = None
+
+        if (self._visible != old_visible) or (self._start != old_start):
+            self.viewport_changed.emit()
+
+    def set_range(self, start: int, end: int) -> None:
+        self.set_window(start, end)
 
     def _recompute_total_and_clamp(self, *, preserve_position: bool) -> None:
         old_total = self._total

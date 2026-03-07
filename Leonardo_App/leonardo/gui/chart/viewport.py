@@ -191,13 +191,18 @@ class ChartViewport(QObject):
     def pan_left(self, step: int = 10) -> None:
         old_start = self._start
         self._start = max(0, self._start - int(step))
-        if self._start != old_start:
+    
+        at_left_boundary = (old_start == 0 and self._start == 0 and int(step) > 0)
+        if self._start != old_start or at_left_boundary:
             self.viewport_changed.emit()
-
+    
     def pan_right(self, step: int = 10) -> None:
         old_start = self._start
-        self._start = min(self._total - self._visible, self._start + int(step))
-        if self._start != old_start:
+        max_start = max(0, self._total - self._visible)
+        self._start = min(max_start, self._start + int(step))
+    
+        at_right_boundary = (old_start == max_start and self._start == max_start and int(step) > 0)
+        if self._start != old_start or at_right_boundary:
             self.viewport_changed.emit()
 
     # ---------------------------

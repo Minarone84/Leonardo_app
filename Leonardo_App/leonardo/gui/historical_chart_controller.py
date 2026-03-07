@@ -52,6 +52,11 @@ class HistoricalChartController(QObject):
         self._request_in_flight: bool = False
         self._suppress_viewport_refill: bool = False
 
+        # Vieport/slice policy constants
+        self._VISIBLE_TARGET = 500
+        self._BUFFER_LEFT = 250
+        self._BUFFER_RIGHT = 250
+        
         # Ensure UI mutations happen on the GUI thread
         self.slice_ready.connect(self._apply_slice)
 
@@ -102,9 +107,9 @@ class HistoricalChartController(QObject):
             request_id=request_id,
             dataset_id=self._dataset,
             center_ts_ms=center_ts_ms,
-            visible_max=1000,
-            buffer_left=500,
-            buffer_right=500,
+            visible_max=self._VISIBLE_TARGET,
+            buffer_left=self._BUFFER_LEFT,
+            buffer_right=self._BUFFER_RIGHT,
             reason=reason,
         )
 
@@ -171,7 +176,8 @@ class HistoricalChartController(QObject):
         left_margin = start - resident_left
         right_margin = resident_right_exclusive - end
 
-        refill_threshold = max(150, min(visible // 2, 500))
+        side_buffer = min(self._BUFFER_LEFT, self._BUFFER_RIGHT)
+        refill_threshold = max(50, min(side_buffer // 3, 100))
 
         need_left = self._has_more_left and left_margin <= refill_threshold
         need_right = self._has_more_right and right_margin <= refill_threshold
@@ -232,7 +238,6 @@ class HistoricalChartController(QObject):
             )
         ]
 
-        # Preserve resident slice metadata for Phase 1 stabilization
         self._resident_base_index = int(getattr(payload, "base_index", 0))
         self._resident_size = len(candles)
         self._has_more_left = bool(getattr(payload, "has_more_left", False))
@@ -248,17 +253,19 @@ class HistoricalChartController(QObject):
                 dataset_total=self._dataset_count if self._dataset_count is not None else len(candles),
             )
 
-            # Ensure volume pane is visible for historical charts
             self._workspace.set_volume_enabled(True)
 
-            # Initial load only: show the latest ~1000 bars.
-            # Do NOT reset viewport on every refill.
             if not self._initial_view_applied:
-                self._set_viewport_to_latest(visible_target=1000)
+                self._set_viewport_to_latest(visible_target=self._VISIBLE_TARGET)
                 self._initial_view_applied = True
         finally:
             self._suppress_viewport_refill = False
             self._request_in_flight = False
+
+        # Follow-up boundary check:
+        # if the viewport is still pressing a slice edge after apply,
+        # let the controller request the next refill immediately.
+        self._on_viewport_changed()
 
     def _set_viewport_to_latest(self, *, visible_target: int) -> None:
         vp = self._workspace.viewport

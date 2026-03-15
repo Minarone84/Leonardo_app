@@ -49,7 +49,7 @@ def draw_right_axis_value_tag(p: QPainter, axis: QRectF, y: float, text: str) ->
     p.setOpacity(0.5)
     p.drawRoundedRect(r, 6.0, 6.0)
     p.setOpacity(1.0)
-    p.setPen(QColor(0, 0, 0))        # black text
+    p.setPen(QColor(0, 0, 0))  # black text
     p.drawText(r, Qt.AlignCenter, text)
     p.restore()
 
@@ -92,6 +92,9 @@ class ChartRenderSurface(QWidget):
 
         self._y_lo: Optional[float] = None
         self._y_hi: Optional[float] = None
+        self._last_anchor_enabled: bool = bool(
+            getattr(self._viewport, "anchor_zoom_enabled", True)
+        )
 
         self._y_dragging = False
         self._y_drag_mode: str | None = None  # "zoom" | "pan"
@@ -169,29 +172,29 @@ class ChartRenderSurface(QWidget):
     def mouseMoveEvent(self, event: QMouseEvent) -> None:
         pt = event.position().toPoint()
         plot = self._plot_rect()
-    
+
         if self._y_dragging and not self._is_anchor_enabled():
             dy = float(event.position().y()) - self._y_drag_start_y
             self._apply_y_axis_drag(plot, dy)
             self.update()
             event.accept()
             return
-    
+
         # During horizontal pan-drag, prioritize panning over hover/crosshair updates.
         # This avoids crosshair jitter and overlay churn while the viewport is moving.
         if self._dragging and self._last_drag_x is not None and plot.contains(pt):
             self._crosshair.set_hover_on_price(False)
             self._mouse_pt = None
-    
+
             dx = pt.x() - self._last_drag_x
             if dx != 0:
                 self._pan_by_pixels(plot, dx)
                 self._last_drag_x = pt.x()
-    
+
             self.update()
             event.accept()
             return
-    
+
         if plot.contains(pt):
             idx = self._viewport.index_from_x(plot, float(pt.x()))
             self._crosshair.set_index(idx)
@@ -200,7 +203,7 @@ class ChartRenderSurface(QWidget):
         else:
             self._crosshair.set_hover_on_price(False)
             self._mouse_pt = None
-    
+
         self.update()
 
     def leaveEvent(self, event) -> None:
@@ -230,22 +233,39 @@ class ChartRenderSurface(QWidget):
         # Discrete-grid vertical lines must align to slots
         self._draw_grid(p, plot, start, slots)
 
-        # Build visible candle list *by global slots* (future/non-resident slots -> None)
+        if not self._candles:
+            self._draw_center_text(p, plot, "No data")
+            return
+
+        # Build visible candle list *by global slots*.
+        # Negative global indices = missing older data.
+        # Indices beyond resident range = future / non-resident slots.
         vis: List[Optional[Candle]] = []
         for gi in range(start, end):
             vis.append(self._candle_at_global(gi))
 
-        # Determine Y range from real candles only
         real_vis = [c for c in vis if c is not None]
-        if not real_vis:
-            self._draw_center_text(p, plot, "No data")
-            return
+        anchor_enabled = self._is_anchor_enabled()
 
-        if self._is_anchor_enabled():
-            lo, hi = self._visible_minmax(real_vis)
-            self._y_lo, self._y_hi = lo, hi
+        if real_vis:
+            if anchor_enabled:
+                lo, hi = self._visible_minmax(real_vis)
+                self._y_lo, self._y_hi = lo, hi
+            else:
+                if self._last_anchor_enabled:
+                    lo, hi = self._visible_minmax(real_vis)
+                    lo, hi = self._clamp_non_anchored_range(lo, hi)
+                    self._y_lo, self._y_hi = lo, hi
+                else:
+                    lo, hi = self._ensure_non_anchored_range(real_vis)
         else:
-            lo, hi = self._ensure_non_anchored_range(real_vis)
+            if anchor_enabled:
+                lo, hi = self._resident_minmax()
+                self._y_lo, self._y_hi = lo, hi
+            else:
+                lo, hi = self._ensure_non_anchored_range([])
+
+        self._last_anchor_enabled = anchor_enabled
 
         if hi <= lo:
             self._draw_center_text(p, plot, "Bad scale")
@@ -253,7 +273,6 @@ class ChartRenderSurface(QWidget):
 
         self._draw_price_axis(p, plot, lo, hi)
 
-        # ---- NEW: clip all plot drawing to prevent overlap into x-label gutter ----
         p.save()
         p.setClipRect(plot)
 
@@ -267,15 +286,22 @@ class ChartRenderSurface(QWidget):
             p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
 
         # price horizontal only while hovering (clipped)
-        if self._crosshair.hover_on_price and self._mouse_pt is not None and plot.contains(self._mouse_pt):
+        if (
+            self._crosshair.hover_on_price
+            and self._mouse_pt is not None
+            and plot.contains(self._mouse_pt)
+        ):
             y = self._mouse_pt.y()
             p.setPen(QPen(QColor(120, 120, 140)))
             p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
 
         p.restore()
-        # ---- end clip ----
 
-        # X axis time labels (first, every 5, every 10, ..., last)
+        # Left-side message only for missing historical data before index 0.
+        if start < 0:
+            self._draw_left_gap_message(p, plot, start, slots, "No older data")
+
+        # X axis time labels
         self._draw_time_axis(p, plot, start, vis)
 
         # ALWAYS latest price tag (latest resident value)
@@ -340,14 +366,31 @@ class ChartRenderSurface(QWidget):
             return None
         return last_ts + steps * tf
 
-    def _draw_time_axis(self, p: QPainter, plot: QRectF, start_idx: int, vis: List[Optional[Candle]]) -> None:
+    def _draw_time_axis(
+        self,
+        p: QPainter,
+        plot: QRectF,
+        start_idx: int,
+        vis: List[Optional[Candle]],
+    ) -> None:
         n = len(vis)
         if n <= 0:
             return
 
-        # indices: first, 5, 10, 15, ..., last (relative to the visible window)
+        # Adaptive label density for wider zoom ranges.
+        if n <= 120:
+            step = 5
+        elif n <= 250:
+            step = 10
+        elif n <= 500:
+            step = 25
+        elif n <= 1000:
+            step = 50
+        else:
+            step = 100
+
+        # indices: first, stepped labels, last
         label_rel: List[int] = [0]
-        step = 5
         for r in range(step, max(0, n - 1), step):
             label_rel.append(r)
         if (n - 1) not in label_rel:
@@ -391,18 +434,55 @@ class ChartRenderSurface(QWidget):
         span = max(1e-6, hi - lo)
         return (lo - 0.03 * span, hi + 0.03 * span)
 
+    def _resident_minmax(self) -> Tuple[float, float]:
+        if not self._candles:
+            return (0.0, 1.0)
+        lo = min(c.low for c in self._candles)
+        hi = max(c.high for c in self._candles)
+        span = max(1e-6, hi - lo)
+        return (lo - 0.03 * span, hi + 0.03 * span)
+
+    def _clamp_non_anchored_range(self, lo: float, hi: float) -> Tuple[float, float]:
+        full_lo, full_hi = self._resident_minmax()
+
+        if hi <= lo:
+            return (full_lo, full_hi)
+
+        span = hi - lo
+        full_span = full_hi - full_lo
+
+        if span >= full_span:
+            return (full_lo, full_hi)
+
+        if lo < full_lo:
+            lo = full_lo
+            hi = lo + span
+
+        if hi > full_hi:
+            hi = full_hi
+            lo = hi - span
+
+        return (lo, hi)
+
     def _ensure_non_anchored_range(self, vis: List[Candle]) -> Tuple[float, float]:
         if self._y_lo is None or self._y_hi is None or self._y_hi <= self._y_lo:
-            lo, hi = self._visible_minmax(vis)
+            if vis:
+                lo, hi = self._visible_minmax(vis)
+                lo, hi = self._clamp_non_anchored_range(lo, hi)
+            else:
+                lo, hi = self._resident_minmax()
             self._y_lo, self._y_hi = lo, hi
             return lo, hi
-        return self._y_lo, self._y_hi
+
+        lo, hi = self._clamp_non_anchored_range(self._y_lo, self._y_hi)
+        self._y_lo, self._y_hi = lo, hi
+        return lo, hi
 
     def _current_y_range_for_drag(self) -> Tuple[float, float]:
         start, end = self._viewport.start, self._viewport.end
         real = [c for gi in range(start, end) if (c := self._candle_at_global(gi)) is not None]
         if not real:
-            return (0.0, 1.0)
+            return self._ensure_non_anchored_range([])
         return self._ensure_non_anchored_range(real)
 
     def _apply_y_axis_drag(self, plot: QRectF, dy_pixels: float) -> None:
@@ -416,14 +496,16 @@ class ChartRenderSurface(QWidget):
             s = max(0.15, min(8.0, s))
             new_rng = rng0 * s
             mid = (lo0 + hi0) * 0.5
-            self._y_lo = mid - new_rng * 0.5
-            self._y_hi = mid + new_rng * 0.5
+            lo = mid - new_rng * 0.5
+            hi = mid + new_rng * 0.5
+            self._y_lo, self._y_hi = self._clamp_non_anchored_range(lo, hi)
             return
 
         if self._y_drag_mode == "pan":
             delta = (dy_pixels / h) * rng0
-            self._y_lo = lo0 - delta
-            self._y_hi = hi0 - delta
+            lo = lo0 - delta
+            hi = hi0 - delta
+            self._y_lo, self._y_hi = self._clamp_non_anchored_range(lo, hi)
             return
 
     def _y_for_price(self, plot: QRectF, price: float, lo: float, hi: float) -> float:
@@ -535,6 +617,28 @@ class ChartRenderSurface(QWidget):
         p.setFont(QFont("Segoe UI", 11))
         p.drawText(plot, Qt.AlignCenter, text)
 
+    def _draw_left_gap_message(
+        self,
+        p: QPainter,
+        plot: QRectF,
+        start_idx: int,
+        slots: int,
+        text: str,
+    ) -> None:
+        left_gap_slots = min(max(0, -start_idx), slots)
+        if left_gap_slots <= 0:
+            return
+
+        cell_w = plot.width() / max(1, slots)
+        gap_w = left_gap_slots * cell_w
+        msg_rect = QRectF(plot.left(), plot.top(), gap_w, plot.height())
+
+        p.save()
+        p.setPen(QPen(QColor(150, 150, 165)))
+        p.setFont(QFont("Segoe UI", 10))
+        p.drawText(msg_rect, Qt.AlignCenter, text)
+        p.restore()
+
     # ---------------- Horizontal pan/zoom ----------------
 
     def _pan_by_pixels(self, plot: QRectF, dx_pixels: int) -> None:
@@ -561,7 +665,6 @@ class ChartRenderSurface(QWidget):
             return
 
         anchor_idx = self._viewport.index_from_x(plot, mx)
-        # slot-centered anchor_rel (NOT continuous mouse-based)
         anchor_rel = (((anchor_idx - self._viewport.start) + 0.5) / max(1, self._viewport.visible))
 
         dy = event.angleDelta().y()

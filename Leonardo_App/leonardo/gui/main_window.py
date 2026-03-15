@@ -8,6 +8,7 @@ from PySide6.QtGui import QAction, QCloseEvent
 from PySide6.QtWidgets import QMainWindow
 
 from leonardo.core.context import AppContext
+from leonardo.core.registry_keys import SVC_GUI_WINDOW_MANAGER
 from leonardo.gui.core_bridge import CoreBridge
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget, OscillatorSpec
 
@@ -100,10 +101,10 @@ class MainWindow(QMainWindow):
         self._act_open_hist_download.triggered.connect(self._open_historical_download_manager)
         menu3.addAction(self._act_open_hist_download)
 
-        self._act_open_hist_chart = QAction("Historical Chart", self)
-        self._act_open_hist_chart.setEnabled(False)
-        self._act_open_hist_chart.triggered.connect(self._open_historical_chart)
-        menu3.addAction(self._act_open_hist_chart)
+        self._act_open_hist_manager = QAction("Historical Data Manager", self)
+        self._act_open_hist_manager.setEnabled(False)
+        self._act_open_hist_manager.triggered.connect(self._open_historical_data_manager)
+        menu3.addAction(self._act_open_hist_manager)
 
         # Studies overlay (kept)
         self._workspace.set_studies_labels(indicators=[], oscillators=[])
@@ -122,7 +123,7 @@ class MainWindow(QMainWindow):
     def on_core_started(self) -> None:
         self._act_open_windows_inspector.setEnabled(True)
         self._act_open_hist_download.setEnabled(True)
-        self._act_open_hist_chart.setEnabled(True)
+        self._act_open_hist_manager.setEnabled(True)
 
         self._ctx_ref = self._core.context
         self._core.submit(self._ctx().state.window_open("main", "MainWindow", where="gui"))
@@ -146,7 +147,11 @@ class MainWindow(QMainWindow):
         return self._ctx_ref
 
     def _wm(self):
-        # GUI-owned; set in gui/app.py
+        if self._ctx_ref is not None:
+            wm = self._ctx().registry.get(SVC_GUI_WINDOW_MANAGER)
+            if wm is not None:
+                return wm
+
         wm = getattr(self, "window_manager", None)
         if wm is None:
             wm = getattr(self._core, "window_manager", None)
@@ -215,16 +220,15 @@ class MainWindow(QMainWindow):
         if wm is None:
             self.statusBar().showMessage("Window manager missing")
             return
-        # WindowManager should own lifecycle; we pass core bridge + parent
         wm.open_historical_download_manager(core_bridge=self._core, parent=self)
 
-    def _open_historical_chart(self) -> None:
+    def _open_historical_data_manager(self) -> None:
         wm = self._wm()
         if wm is None:
             self.statusBar().showMessage("Window manager missing")
             return
-        # Stub: we will implement this window later and wire properly
-        wm.open_historical_chart(core_bridge=self._core, parent=self)
+        wm.open_historical_data_manager(core_bridge=self._core, parent=self)
+        self.statusBar().showMessage("Historical Data Manager opened")
 
     # ---- Realtime + Signals (registry/state driven) ----
 
@@ -245,14 +249,16 @@ class MainWindow(QMainWindow):
         if self._feed_future is None or self._feed_future.done():
             from leonardo.core.market_data.bybit_feed import run_bybit_chart_feed
 
-            self._feed_future = self._core.submit(run_bybit_chart_feed(
-                bridge=self._core,
-                market="linear",
-                symbol="BTCUSDT",
-                timeframe="30m",
-                limit=200,
-                testnet=False,
-            ))
+            self._feed_future = self._core.submit(
+                run_bybit_chart_feed(
+                    bridge=self._core,
+                    market="linear",
+                    symbol="BTCUSDT",
+                    timeframe="30m",
+                    limit=200,
+                    testnet=False,
+                )
+            )
 
         wm = self._wm()
         if wm is not None:

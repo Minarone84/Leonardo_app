@@ -1,42 +1,132 @@
 from __future__ import annotations
 
-from PySide6.QtWidgets import QWidget, QVBoxLayout
-from PySide6.QtCore import QTimer
+from typing import Optional
+
+from PySide6.QtCore import Signal
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QToolButton
 
 from leonardo.gui.core_bridge import CoreBridge
-from leonardo.gui.chart.workspace import ChartWorkspaceWidget
-from leonardo.gui.historical_chart_controller import HistoricalChartController
+from leonardo.gui.windows.historical_chart_panel import HistoricalChartPanel
 
 
 class HistoricalChartWindow(QWidget):
-    def __init__(self, *, core_bridge: CoreBridge, parent=None) -> None:
+    """
+    Floating shell window for a single HistoricalChartPanel.
+    """
+
+    dock_back_requested = Signal(object)
+
+    def __init__(self, *, core_bridge: CoreBridge, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._core = core_bridge
 
         self.setWindowTitle("Historical Chart")
-        self.resize(1200, 800)          # sensible default
-        self.setMinimumSize(900, 600)   # prevent “microscopic window” syndrome
+        self.resize(1200, 800)
+        self.setMinimumSize(900, 600)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        self._root = QVBoxLayout(self)
+        self._root.setContentsMargins(0, 0, 0, 0)
+        self._root.setSpacing(0)
 
-        self._workspace = ChartWorkspaceWidget(parent=self)
-        layout.addWidget(self._workspace)
+        self._toolbar = QWidget(self)
+        self._toolbar_layout = QHBoxLayout(self._toolbar)
+        self._toolbar_layout.setContentsMargins(6, 6, 6, 0)
+        self._toolbar_layout.setSpacing(6)
 
-        self._controller = HistoricalChartController(core_bridge=self._core, workspace=self._workspace, parent=self)
-        self._controller.error.connect(self._on_error)
+        self._dock_back_button = QToolButton(self._toolbar)
+        self._dock_back_button.setText("Dock Back")
+        self._dock_back_button.setToolTip("Dock this chart back into Historical Data Manager")
+        self._dock_back_button.clicked.connect(self._on_dock_back_clicked)
+        self._toolbar_layout.addStretch(1)
+        self._toolbar_layout.addWidget(self._dock_back_button)
 
-        self._autoload_done = False
+        self._root.addWidget(self._toolbar, 0)
 
-    def showEvent(self, event) -> None:
-        super().showEvent(event)
+        self._panel: Optional[HistoricalChartPanel] = None
 
-        if not self._autoload_done:
-            self._autoload_done = True
-            QTimer.singleShot(
-                0,
-                lambda: self._controller.open_dataset("bybit", "linear", "BTCUSDT", "1h"),
+    def panel(self) -> Optional[HistoricalChartPanel]:
+        return self._panel
+
+    def set_panel(self, panel: HistoricalChartPanel) -> None:
+        if self._panel is panel:
+            return
+
+        if self._panel is not None:
+            self._root.removeWidget(self._panel)
+            self._panel.setParent(None)
+
+        self._panel = panel
+        self._panel.setParent(self)
+        self._root.addWidget(self._panel, 1)
+        self._sync_title_from_panel()
+
+    def take_panel(self) -> Optional[HistoricalChartPanel]:
+        if self._panel is None:
+            return None
+
+        panel = self._panel
+        self._root.removeWidget(panel)
+        panel.setParent(None)
+        self._panel = None
+        self.setWindowTitle("Historical Chart")
+        return panel
+
+    def open_dataset(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> None:
+        self._ensure_panel()
+        assert self._panel is not None
+
+        self._panel.open_dataset(
+            exchange=exchange,
+            market_type=market_type,
+            symbol=symbol,
+            timeframe=timeframe,
+        )
+        self._sync_title_from_panel()
+
+    def _set_dataset_identity(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> None:
+        self._ensure_panel()
+        assert self._panel is not None
+
+        self._panel._set_dataset_identity(
+            exchange=exchange,
+            market_type=market_type,
+            symbol=symbol,
+            timeframe=timeframe,
+        )
+        self.setWindowTitle(
+            self._panel._build_dataset_title(
+                exchange=exchange,
+                market_type=market_type,
+                symbol=symbol,
+                timeframe=timeframe,
             )
+        )
 
-    def _on_error(self, msg: str) -> None:
-        print(f"[HistoricalChartWindow] {msg}")
+    def _ensure_panel(self) -> None:
+        if self._panel is None:
+            self.set_panel(HistoricalChartPanel(core_bridge=self._core, parent=self))
+
+    def _sync_title_from_panel(self) -> None:
+        if self._panel is None:
+            self.setWindowTitle("Historical Chart")
+            return
+
+        title = self._panel.dataset_title()
+        self.setWindowTitle(title if title else "Historical Chart")
+
+    def _on_dock_back_clicked(self) -> None:
+        self.dock_back_requested.emit(self)

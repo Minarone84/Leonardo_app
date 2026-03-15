@@ -80,12 +80,10 @@ class StateStore:
         st = self.windows_state()
 
         meta = st.get(name)
-        if not isinstance(meta, dict) or meta.get("is_open") is False:
+        if not isinstance(meta, dict):
             return
 
-        meta2 = dict(meta)
-        meta2["is_open"] = False
-        st[name] = meta2
+        st.pop(name, None)
         self._registry.set(RT_WINDOWS, st)
 
         await self._audit.emit(

@@ -25,6 +25,20 @@ class HistoricalChartController(QObject):
     error = Signal(str)
     slice_ready = Signal(object)  # SlicePayload
 
+    # Historical horizontal policy (same for all timeframes)
+    DEFAULT_VISIBLE_BARS = 500
+    MAX_VISIBLE_BARS = 2000
+    RESIDENT_TARGET_BARS = 3000
+
+    # Dataset-service request policy derived from the above:
+    # 2000 visible max + 500 left buffer + 500 right buffer = 3000 resident target
+    REQUEST_VISIBLE_MAX = MAX_VISIBLE_BARS
+    REQUEST_BUFFER_LEFT = (RESIDENT_TARGET_BARS - MAX_VISIBLE_BARS) // 2
+    REQUEST_BUFFER_RIGHT = (RESIDENT_TARGET_BARS - MAX_VISIBLE_BARS) // 2
+
+    # Refill threshold: start refilling when about half a side buffer is consumed.
+    REFILL_THRESHOLD = min(250, REQUEST_BUFFER_LEFT)
+
     def __init__(
         self,
         *,
@@ -42,7 +56,7 @@ class HistoricalChartController(QObject):
 
         self._latest_request_id: Optional[str] = None
 
-        # Historical session state (Phase 1 groundwork)
+        # Historical session state
         self._dataset_count: Optional[int] = None
         self._resident_base_index: int = 0
         self._resident_size: int = 0
@@ -52,15 +66,10 @@ class HistoricalChartController(QObject):
         self._request_in_flight: bool = False
         self._suppress_viewport_refill: bool = False
 
-        # Vieport/slice policy constants
-        self._VISIBLE_TARGET = 500
-        self._BUFFER_LEFT = 250
-        self._BUFFER_RIGHT = 250
-        
         # Ensure UI mutations happen on the GUI thread
         self.slice_ready.connect(self._apply_slice)
 
-        # Refill-on-pan trigger
+        # Refill-on-pan / refill-on-zoom trigger
         self._workspace.viewport.viewport_changed.connect(self._on_viewport_changed)
 
     # ---------------- API ----------------
@@ -107,9 +116,9 @@ class HistoricalChartController(QObject):
             request_id=request_id,
             dataset_id=self._dataset,
             center_ts_ms=center_ts_ms,
-            visible_max=self._VISIBLE_TARGET,
-            buffer_left=self._BUFFER_LEFT,
-            buffer_right=self._BUFFER_RIGHT,
+            visible_max=self.REQUEST_VISIBLE_MAX,
+            buffer_left=self.REQUEST_BUFFER_LEFT,
+            buffer_right=self.REQUEST_BUFFER_RIGHT,
             reason=reason,
         )
 
@@ -125,7 +134,6 @@ class HistoricalChartController(QObject):
             self.error.emit(f"open_dataset failed: {e!r}")
             return
 
-        # Preserve dataset-global size for Phase 1 stabilization
         try:
             self._dataset_count = int(meta.count)
         except Exception:
@@ -145,7 +153,7 @@ class HistoricalChartController(QObject):
         if payload.request_id != self._latest_request_id:
             return  # stale response
 
-        # Marshal to GUI thread (prevents Qt cross-thread parenting)
+        # Marshal to GUI thread
         self.slice_ready.emit(payload)
 
     # ---------------- viewport refill trigger (GUI thread) ----------------
@@ -166,26 +174,39 @@ class HistoricalChartController(QObject):
             return
 
         vp = self._workspace.viewport
-        start = int(vp.start)
-        end = int(vp.end)
+        raw_start = int(vp.start)
+        raw_end = int(vp.end)
         visible = max(1, int(vp.visible))
+
+        # Only the dataset-covered portion of the viewport should participate
+        # in refill logic. Future-pad slots to the right are intentional empty
+        # space, not missing historical data.
+        view_start = max(0, min(raw_start, self._dataset_count))
+        view_end = max(view_start, min(raw_end, self._dataset_count))
 
         resident_left = self._resident_base_index
         resident_right_exclusive = self._resident_base_index + self._resident_size
 
-        left_margin = start - resident_left
-        right_margin = resident_right_exclusive - end
+        left_margin = view_start - resident_left
+        right_margin = resident_right_exclusive - view_end
 
-        side_buffer = min(self._BUFFER_LEFT, self._BUFFER_RIGHT)
-        refill_threshold = max(50, min(side_buffer // 3, 100))
+        underflow_left = view_start < resident_left
+        underflow_right = view_end > resident_right_exclusive
 
-        need_left = self._has_more_left and left_margin <= refill_threshold
-        need_right = self._has_more_right and right_margin <= refill_threshold
+        need_left = self._has_more_left and (underflow_left or left_margin <= self.REFILL_THRESHOLD)
+        need_right = self._has_more_right and (underflow_right or right_margin <= self.REFILL_THRESHOLD)
 
         if not need_left and not need_right:
             return
 
-        center_global = start + (visible // 2)
+        # Pick the center from the real-data portion of the viewport, not from
+        # future-pad space.
+        if view_end > view_start:
+            center_global = view_start + ((view_end - view_start) // 2)
+        else:
+            # Degenerate case: viewport is entirely outside real data on the right.
+            center_global = self._dataset_count - 1
+
         center_global = max(0, min(center_global, self._dataset_count - 1))
 
         # Clamp to current resident slice so timestamp lookup always uses a resident candle.
@@ -253,18 +274,20 @@ class HistoricalChartController(QObject):
                 dataset_total=self._dataset_count if self._dataset_count is not None else len(candles),
             )
 
+            # Ensure volume pane is visible for historical charts
             self._workspace.set_volume_enabled(True)
 
+            # Initial load only: show the latest default window.
             if not self._initial_view_applied:
-                self._set_viewport_to_latest(visible_target=self._VISIBLE_TARGET)
+                self._set_viewport_to_latest(visible_target=self.DEFAULT_VISIBLE_BARS)
                 self._initial_view_applied = True
         finally:
             self._suppress_viewport_refill = False
             self._request_in_flight = False
 
-        # Follow-up boundary check:
-        # if the viewport is still pressing a slice edge after apply,
-        # let the controller request the next refill immediately.
+        # Follow-up boundary/coverage check:
+        # if zoom/pan still leaves us close to or beyond resident coverage,
+        # request the next slice immediately.
         self._on_viewport_changed()
 
     def _set_viewport_to_latest(self, *, visible_target: int) -> None:
@@ -277,13 +300,11 @@ class HistoricalChartController(QObject):
         start = max(0, int(total) - visible)
         end = int(total)
 
-        # Prefer explicit API if present
         if hasattr(vp, "set_window"):
             vp.set_window(start, end)  # type: ignore[attr-defined]
         elif hasattr(vp, "set_range"):
             vp.set_range(start, end)  # type: ignore[attr-defined]
         else:
-            # fallback
             if hasattr(vp, "start"):
                 try:
                     setattr(vp, "start", start)

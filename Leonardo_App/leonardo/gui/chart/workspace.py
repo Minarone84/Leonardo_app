@@ -78,11 +78,15 @@ class ChartWorkspaceWidget(QWidget):
     def set_anchor_zoom_enabled(self, enabled: bool) -> None:
         enabled = bool(enabled)
 
-        # allow future space only when anchor is OFF
-        self._viewport.set_future_padding(0 if enabled else 50)  # tweak as desired
-
+        # First switch viewport behavior mode.
         self._viewport.set_anchor_zoom_enabled(enabled)
 
+        # Then apply explicit future padding preference.
+        # In anchored mode: no visible future padding.
+        # In non-anchored mode: allow some future room; viewport policy will expand
+        # this as needed to support the legal right-pan range.
+        self._viewport.set_future_padding(0 if enabled else 50)
+        
     def set_volume_enabled(self, enabled: bool) -> None:
         if enabled and self._volume is None:
             self._volume = VolumePane(

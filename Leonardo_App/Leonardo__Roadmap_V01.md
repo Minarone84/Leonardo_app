@@ -1,6 +1,6 @@
 # Leonardo — Roadmap
 
-Version: v0.1  
+Version: v0.2  
 Status: Living document (expected to change)  
 
 ## Purpose
@@ -15,10 +15,13 @@ It is designed to be modular, auditable, and resilient, with a strong emphasis o
 **Responsibilities:**
 - Runtime lifecycle: startup/shutdown hooks, background task coordination
 - Global registry / runtime state (high-level): active sessions, running services, open UI contexts
+- Runtime state surface exposed to the GUI (window registry, realtime flags)
 - Configuration + environment management (profiles, feature flags)
 - Folder tree checks + bootstrap validation
 - Centralized error handling, crash reporting, safe recovery
 - Structured logging + audit trail plumbing (what happened, when, why)
+- Task supervision layer for background async workloads
+- Service registry allowing subsystems (GUI, feeds, data services) to be discovered safely
 
 ---
 
@@ -31,6 +34,7 @@ It is designed to be modular, auditable, and resilient, with a strong emphasis o
 - Pipeline execution: data → features → signals → risk checks → outputs
 - Dependency boundary enforcement (who can call what)
 - Concurrency model: thread/async separation, cancellation, timeouts
+- Coordination between GUI bridge and core runtime
 
 ---
 
@@ -38,11 +42,17 @@ It is designed to be modular, auditable, and resilient, with a strong emphasis o
 **Purpose:** User interaction and visualization. No trading logic inside.
 
 **Responsibilities:**
-- Charting: historical + real-time, overlays, indicators, multi-pane layouts
+- Charting system for historical and realtime data
+- Multi-pane chart layouts (price, volume, oscillators)
+- Shared viewport and crosshair interaction model
+- Historical data research workspace
+- Chart docking / floating window model
 - Trade workflow views: suggestions, rationale panel, trade management windows
 - Dashboards: watchlists, exposure, performance, risk summary, system health
 - UX persistence: layouts, preferences, workspaces
 - Notifications: alerts, warnings (stale feed, breached limits), toasts
+
+The GUI communicates with the async core runtime through a thread-safe bridge to ensure that Qt UI updates remain confined to the GUI thread.
 
 ---
 
@@ -55,6 +65,7 @@ It is designed to be modular, auditable, and resilient, with a strong emphasis o
 - Rate limiting, retry policies, circuit breakers
 - Credential handling integration (delegated to Security/Policy rules)
 - Connection health metrics surfaced to GUI/observability
+- Exchange adapter architecture supporting multiple exchanges
 
 ---
 
@@ -62,11 +73,16 @@ It is designed to be modular, auditable, and resilient, with a strong emphasis o
 **Purpose:** Single source of truth for datasets used for plotting and calculations.
 
 **Responsibilities:**
-- Storage layer: DB/files, caching strategy, retention rules
-- Normalization: symbols, timeframes, timezone alignment, corporate actions
-- Retrieval APIs for GUI + analytics (fast, consistent)
+- Historical dataset storage architecture
+- Canonical dataset paths (exchange / market / symbol / timeframe)
+- CSV-based OHLCV storage layer
+- Dataset discovery and retrieval APIs
+- Slice generation for chart visualization
+- Normalization: symbols, timeframes, timezone alignment
 - Data quality checks: gaps, duplicates, outliers, stale data detection
 - Dataset versioning metadata (enables reproducible backtests/advice)
+
+The historical dataset subsystem acts as the foundation for visualization, research, and future analytics.
 
 ---
 
@@ -154,20 +170,31 @@ It is designed to be modular, auditable, and resilient, with a strong emphasis o
 ## V1 Milestones (initial target)
 1. **Project skeleton + CORE registry**
    - Standard folder layout, config loading, logging/audit plumbing, folder checks
+
 2. **CONNECTION minimal**
    - One data source, stable websocket/retry policy, basic health indicators
+
 3. **DATA MANAGEMENT minimal**
-   - Store/retrieve OHLCV for a small universe, caching, basic quality checks
+   - Store/retrieve OHLCV datasets, dataset discovery, caching, integrity checks
+
 4. **FINANCIAL TOOLS minimal**
    - A small indicator set + signal primitives, unit tests
+
 5. **BACKTESTING baseline**
    - Simple backtester with costs/slippage placeholders + results report
+
 6. **GUI baseline**
-   - Plot historical + basic real-time chart, show a strategy signal + explanation
+   - Historical chart engine implemented
+   - Multi-pane chart visualization (price + volume)
+   - Crosshair + viewport synchronization
+   - Historical data manager workspace
+
 7. **USER POLICY baseline**
    - Local auth (if needed), permissions stubs, risk profile constraints
+
 8. **OBSERVABILITY baseline**
    - Health dashboard + diagnostics export
+
 9. **Installer baseline**
    - Reproducible environment + “doctor” command
 
@@ -175,3 +202,4 @@ It is designed to be modular, auditable, and resilient, with a strong emphasis o
 
 ## Change log
 - v0.1: Initial roadmap with CORE/GUI/CONNECTION/FINANCIAL TOOLS/DATA MANAGEMENT/USER POLICY/INSTALLER plus ENGINE, BACKTESTING, SECURITY, OBSERVABILITY.
+- v0.2: Introduced runtime state surface, historical dataset architecture, and the chart visualization subsystem.

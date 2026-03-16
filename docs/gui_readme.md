@@ -8,15 +8,15 @@ It is built around a modular chart engine capable of rendering large datasets us
 
 The GUI now supports two chart deployment models:
 
-• Embedded historical chart panels managed by a workspace window  
+• Embedded historical chart panels managed by a workspace window
 • Independent top-level chart windows (floating historical charts and future realtime charts)
 
 Both models use the same underlying chart engine.
 
 The GUI architecture separates three concerns:
 
-• chart session (data + viewport + rendering)  
-• workspace management (layout of multiple charts)  
+• chart session (data + viewport + rendering)
+• workspace management (layout of multiple charts)
 • shell window (top-level OS window behavior)
 
 This separation allows charts to move between embedded and floating states without losing session state.
@@ -28,7 +28,7 @@ Historical charts are primarily managed inside a dedicated window:
 
 HistoricalDataManagerWindow
 
-This window hosts a workspace capable of managing up to **four simultaneous historical charts**.
+This window hosts a workspace capable of managing up to four simultaneous historical charts.
 
 Each chart is implemented as a reusable component called:
 
@@ -36,14 +36,14 @@ HistoricalChartPanel
 
 The panel contains:
 
-• chart workspace  
-• chart controller  
-• dataset identity  
+• chart workspace
+• chart controller
+• dataset identity
 • local chart actions
 
 Panels can exist in two modes:
 
-Embedded Mode  
+Embedded Mode
 Floating Mode
 
 
@@ -59,12 +59,12 @@ HistoricalWorkspaceWidget manages layout automatically.
 
 Layout policy:
 
-1 chart → full workspace  
-2 charts → split left/right  
-3 charts → 2x2 grid with one empty slot  
+1 chart → full workspace
+2 charts → split left/right
+3 charts → 2x2 grid with one empty slot
 4 charts → full 2x2 grid
 
-Charts can be removed using a **Close** action on the chart panel.
+Charts can be removed using a Close action on the chart panel.
 
 
 Floating Mode
@@ -73,10 +73,10 @@ An embedded chart can be detached from the workspace.
 
 Flow:
 
-HistoricalChartPanel  
-→ Float action  
-→ panel removed from workspace  
-→ panel reparented into a new HistoricalChartWindow  
+HistoricalChartPanel
+→ Float action
+→ panel removed from workspace
+→ panel reparented into a new HistoricalChartWindow
 
 The floating window becomes a standard top-level GUI window.
 
@@ -89,10 +89,10 @@ Floating charts can return to the workspace.
 
 Flow:
 
-HistoricalChartWindow  
-→ Dock Back action  
-→ WindowManager retrieves chart panel  
-→ panel reinserted into HistoricalWorkspaceWidget  
+HistoricalChartWindow
+→ Dock Back action
+→ WindowManager retrieves chart panel
+→ panel reinserted into HistoricalWorkspaceWidget
 
 The floating window closes automatically.
 
@@ -105,22 +105,22 @@ WindowManager is responsible for managing all top-level windows.
 
 Tracked windows include:
 
-MainWindow  
-HistoricalDataManagerWindow  
-HistoricalChartWindow (floating)  
-RealtimeChartWindow (future)  
-WindowsInspectorWindow  
-HistoricalDownloadWindow  
-SignalsWindow  
+MainWindow
+HistoricalDataManagerWindow
+HistoricalChartWindow (floating)
+RealtimeChartWindow (future)
+WindowsInspectorWindow
+HistoricalDownloadWindow
+SignalsWindow
 
 The manager is responsible for:
 
-• window creation  
-• window lifetime  
-• window registration in runtime state  
-• floating chart lifecycle  
+• window creation
+• window lifetime
+• window registration in runtime state
+• floating chart lifecycle
 
-Embedded chart panels are **not** windows and are therefore not tracked by the Window Manager.
+Embedded chart panels are not windows and are therefore not tracked by the Window Manager.
 
 
 Chart Session Architecture
@@ -131,14 +131,14 @@ HistoricalChartPanel
 
 The panel owns:
 
-• ChartWorkspaceWidget  
-• HistoricalChartController  
-• dataset identity  
-• chart status bar  
+• ChartWorkspaceWidget
+• HistoricalChartController
+• dataset identity
+• chart status bar
 
 The panel can exist inside different shells:
 
-Embedded inside HistoricalWorkspaceWidget  
+Embedded inside HistoricalWorkspaceWidget
 Floating inside HistoricalChartWindow
 
 The panel itself is shell-agnostic.
@@ -150,16 +150,16 @@ ChartWorkspaceWidget is the main chart container used by both historical and fut
 
 It owns:
 
-ChartModel  
-ChartViewport  
-Crosshair  
+ChartModel
+ChartViewport
+Crosshair
 Pane stack (via vertical splitter)
 
 Structure:
 
-ChartWorkspaceWidget  
-    PricePane  
-    VolumePane (optional)  
+ChartWorkspaceWidget
+    PricePane
+    VolumePane (optional)
     OscillatorPane(s)
 
 All panes share the same viewport and crosshair.
@@ -175,21 +175,22 @@ Controls the horizontal slot-based viewport.
 
 State:
 
-_data_total      number of real candles in dataset  
-_future_pad      empty slots to the right  
-_total           data_total + future_pad  
+_data_total      number of real candles in dataset
+_future_pad      empty slots to the right
+_total           data_total + future_pad
 
-_visible         number of visible slots  
-_start           first visible slot  
-_end             start + visible  
+_visible         number of visible slots
+_start           first visible slot
+_end             start + visible
+
 
 Features:
 
-• slot-based discrete X axis  
-• pan left / right  
-• zoom anchored at mouse  
-• future padding  
-• anchor zoom mode  
+• slot-based discrete X axis
+• pan left / right
+• zoom anchored at mouse
+• future padding
+• optional anchor zoom mode
 
 All panes share the same viewport.
 
@@ -202,30 +203,30 @@ Shared crosshair state across panes.
 
 State:
 
-index           global dataset index  
-hover_on_price  controls chart horizontal line  
+index           global dataset index
+hover_on_price  controls chart horizontal line
 
 Signals:
 
-changed  
-cleared  
+changed
+cleared
 
 Behavior:
 
-• vertical line shown on all panes  
-• price pane horizontal line follows mouse Y  
-• volume / oscillator panes show value-based horizontal lines  
+• vertical line shown on all panes
+• price pane horizontal line follows mouse Y
+• volume / oscillator panes show value-based horizontal lines
 
 
 Chart Model
 
 ChartModel stores GUI-side data series.
 
-candles  
-volume  
-overlays      price indicators  
-oscillators   oscillator series  
-trades        future feature  
+candles
+volume
+overlays      price indicators
+oscillators   oscillator series
+trades        future feature
 
 For historical mode the model also stores:
 
@@ -235,13 +236,13 @@ This represents the dataset index of the first resident candle.
 
 This allows translation between:
 
-global dataset index  
-resident slice index  
+global dataset index
+resident slice index
 
 
 Historical Chart Engine
 
-Historical charts use a **resident slice model**.
+Historical charts use a resident slice model.
 
 Large datasets are not loaded entirely into memory.
 
@@ -250,25 +251,25 @@ Instead the chart loads partial slices around the visible region.
 
 Dataset vs Slice
 
-FULL DATASET  
+FULL DATASET
 |----------------------------------------------------------|
 
-RESIDENT SLICE  
+RESIDENT SLICE
                  |---------------------------|
 
-VIEWPORT  
+VIEWPORT
                       |-----------|
 
 
 Definitions
 
-Dataset  
+Dataset
 Entire historical dataset stored on disk.
 
-Resident slice  
+Resident slice
 Portion currently loaded in memory.
 
-Viewport  
+Viewport
 Visible portion of the dataset.
 
 
@@ -280,9 +281,9 @@ global_index = resident_base_index + local_index
 
 Rendering surfaces translate:
 
-viewport global index  
-→ resident local index  
-→ candle / series value  
+viewport global index
+→ resident local index
+→ candle / series value
 
 This allows the chart to behave as if the full dataset were loaded.
 
@@ -293,25 +294,25 @@ HistoricalChartController manages dataset interaction with the core layer.
 
 Responsibilities:
 
-• open dataset  
-• request slices  
-• apply slices to workspace  
-• trigger refills when navigating near slice edges  
+• open dataset
+• request slices
+• apply slices to workspace
+• trigger refills when navigating near slice edges
 
 
 Slice Metadata
 
 Each slice payload provides:
 
-base_index  
-has_more_left  
-has_more_right  
+base_index
+has_more_left
+has_more_right
 
 Controller state tracks:
 
-resident_base_index  
-resident_size  
-dataset_count  
+resident_base_index
+resident_size
+dataset_count
 
 
 Refill on Pan
@@ -320,11 +321,11 @@ When the viewport approaches slice boundaries the controller requests a new slic
 
 Example logic:
 
-if left_margin <= threshold  
-    refill-left  
+if left_margin <= threshold
+    refill-left
 
-if right_margin <= threshold  
-    refill-right  
+if right_margin <= threshold
+    refill-right
 
 The refill is centered around the current viewport center.
 
@@ -335,24 +336,25 @@ Rendering System
 
 Rendering is performed by specialized surfaces.
 
+
 Price Chart
 
 ChartRenderSurface
 
 Draws:
 
-• candlesticks  
-• grid  
-• price axis  
-• time axis  
-• realtime price tag  
-• crosshair  
+• candlesticks
+• grid
+• price axis
+• time axis
+• realtime price tag
+• crosshair
 
 Supports:
 
-• pan (drag)  
-• zoom (mouse wheel)  
-• optional free Y scaling when anchor zoom disabled  
+• pan (drag)
+• zoom (mouse wheel)
+• optional free Y scaling when anchor zoom disabled
 
 
 Volume Pane
@@ -361,10 +363,10 @@ VolumeRenderSurface
 
 Draws:
 
-• volume bars  
-• volume legend tag  
-• crosshair index line  
-• horizontal value line  
+• volume bars
+• volume legend tag
+• crosshair index line
+• horizontal value line
 
 
 Oscillator Pane
@@ -373,33 +375,34 @@ OscillatorRenderSurface
 
 Draws:
 
-• oscillator polyline  
-• oscillator legend tag  
-• crosshair index line  
-• horizontal value line  
+• oscillator polyline
+• oscillator legend tag
+• crosshair index line
+• horizontal value line
 
 
 Pane System
 
 Each pane consists of:
 
-Pane  
- ├─ RenderSurface  
- └─ Overlay  
+Pane
+ ├─ RenderSurface
+ └─ Overlay
 
 Overlay displays:
 
-• pane title  
-• values at crosshair index  
+• pane title
+• values at crosshair index
 
 Pane types:
 
-PricePane  
-VolumePane  
-OscillatorPane  
+PricePane
+VolumePane
+OscillatorPane
 
 
 Interaction Model
+
 
 Crosshair
 
@@ -414,53 +417,66 @@ Zoom
 
 Mouse wheel zoom adjusts visible slot range.
 
-viewport.zoom_in_at(...)  
+viewport.zoom_in_at(...)
 viewport.zoom_out_at(...)
 
-Zoom is anchored to slot center.
+Zoom is anchored to the slot under the mouse cursor.
 
 
 Anchor Zoom Mode
 
+Anchor zoom modifies how zoom and scaling behave.
+
 When anchor zoom is ON:
 
-• Y axis auto-scales to visible candles  
-• viewport snaps to latest candle  
+• Y axis auto-scales to visible candles
+• wheel zoom keeps the latest candle aligned when the viewport is at the right edge
+• historical exploration away from the right edge is preserved
 
-When OFF:
+When anchor zoom is OFF:
 
-• right axis drag → Y zoom  
-• shift + drag → Y pan  
-• future padding accessible  
+• right axis drag → Y zoom
+• shift + drag → Y pan
+• future padding accessible
+• vertical range is controlled manually
+
+
+Important Behavior
+
+Enabling anchor zoom does not teleport the viewport.
+
+The current historical position is preserved when the mode is toggled.
+
+Latest alignment is only maintained when the viewport is already positioned at the latest candle.
 
 
 Dependency Overview
 
-HistoricalDataManagerWindow  
- └─ HistoricalWorkspaceWidget  
-     ├─ HistoricalChartPanel  
-     │   └─ ChartWorkspaceWidget  
-     │       ├─ ChartModel  
-     │       ├─ ChartViewport  
-     │       ├─ Crosshair  
-     │       └─ QSplitter  
-     │           ├─ PricePane  
-     │           │   └─ ChartRenderSurface  
-     │           ├─ VolumePane  
-     │           │   └─ VolumeRenderSurface  
-     │           └─ OscillatorPane  
-     │               └─ OscillatorRenderSurface  
+HistoricalDataManagerWindow
+ └─ HistoricalWorkspaceWidget
+     ├─ HistoricalChartPanel
+     │   └─ ChartWorkspaceWidget
+     │       ├─ ChartModel
+     │       ├─ ChartViewport
+     │       ├─ Crosshair
+     │       └─ QSplitter
+     │           ├─ PricePane
+     │           │   └─ ChartRenderSurface
+     │           ├─ VolumePane
+     │           │   └─ VolumeRenderSurface
+     │           └─ OscillatorPane
+     │               └─ OscillatorRenderSurface
 
 
 Architectural Principles
 
 The chart engine is designed around the following invariants:
 
-• global dataset indexing  
-• resident slice rendering  
-• viewport continuity  
-• pane independence  
-• shell-agnostic chart sessions  
+• global dataset indexing
+• resident slice rendering
+• viewport continuity
+• pane independence
+• shell-agnostic chart sessions
 
 
 Key Rule
@@ -476,16 +492,16 @@ Summary
 
 The Leonardo GUI chart system now provides:
 
-• scalable historical dataset visualization  
-• reusable chart session architecture  
-• deterministic workspace layout for up to 4 charts  
-• detachable floating chart windows  
-• dock-back capability for floating charts  
-• modular pane architecture  
-• discrete slot-based viewport  
-• crosshair synchronization  
+• scalable historical dataset visualization
+• reusable chart session architecture
+• deterministic workspace layout for up to 4 charts
+• detachable floating chart windows
+• dock-back capability for floating charts
+• modular pane architecture
+• discrete slot-based viewport
+• crosshair synchronization
 
 The architecture now supports both:
 
-• multi-chart workspace workflows  
+• multi-chart workspace workflows
 • multi-monitor floating chart workflows

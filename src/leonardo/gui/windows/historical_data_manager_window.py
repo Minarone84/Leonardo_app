@@ -61,7 +61,7 @@ class HistoricalChartSelectionDialog(QDialog):
         self.setModal(True)
         self.resize(460, 240)
 
-        self._historical_root = Path(__file__).resolve().parents[3] / "data" / "historical"
+        self._historical_root = Path(__file__).resolve().parents[4] / "data" / "historical"
 
         self._exchange_combo: Optional[QComboBox] = None
         self._market_type_combo: Optional[QComboBox] = None

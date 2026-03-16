@@ -34,6 +34,7 @@ htmlcov/
 # ----------------------------
 runs/*.log
 runs/*.tmp
+runs/*.jsonl
 
 # ----------------------------
 # Local historical datasets

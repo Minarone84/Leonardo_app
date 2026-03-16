@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from PySide6.QtCore import QObject, Signal, QRectF
+from PySide6.QtCore import QObject, QRectF, Signal
 
 
 class ChartViewport(QObject):
@@ -29,8 +29,7 @@ class ChartViewport(QObject):
         max_visible = min(self.MAX_VISIBLE_BARS, self._total)
         self._visible = max(1, min(int(visible_count), max_visible))
 
-        # Rightmost initial position:
-        # youngest real bar may be the only visible real bar on the left.
+        # Initial position at latest.
         self._start = self._max_start()
 
     # ---------------------------
@@ -76,8 +75,9 @@ class ChartViewport(QObject):
 
         self._anchor_zoom_enabled = enabled
 
-        # Horizontal pan policy must remain identical regardless of anchor mode.
-        # Anchor affects zoom behavior, not legal left/right movement.
+        # IMPORTANT:
+        # Toggling anchor mode must NOT teleport the viewport to latest.
+        # Preserve the current historical position and only change the zoom policy.
         self._recompute_total_and_clamp(preserve_position=True)
         self.viewport_changed.emit()
 
@@ -119,12 +119,28 @@ class ChartViewport(QObject):
 
     def _effective_future_pad(self) -> int:
         """
-        Stable future capacity regardless of anchor mode.
+        Effective right-side future capacity.
 
-        Always reserve enough right-side space so the youngest real bar can be
-        the only visible real bar at the far-right legal boundary.
+        Anchor zoom ON:
+            no future padding should be visible while right-aligned latest zoom
+            is active.
+
+        Anchor zoom OFF:
+            reserve enough right-side space so the youngest real bar can be the
+            only visible real bar at the far-right legal boundary.
         """
+        if self._anchor_zoom_enabled:
+            return 0
         return max(self._future_pad, self.MAX_VISIBLE_BARS - 1)
+
+    def _latest_aligned_start(self) -> int:
+        """
+        Start index that keeps the latest real candle at the right edge
+        of the visible window.
+        """
+        if self._data_total <= 0:
+            return 0
+        return max(0, self._data_total - self._visible)
 
     def _min_start(self) -> int:
         """
@@ -141,13 +157,35 @@ class ChartViewport(QObject):
         """
         Maximum legal viewport start.
 
-        Allow panning into a right-side future zone until the youngest real bar
-        is the only visible real bar on the left side of the chart.
+        Anchor zoom ON:
+            clamp to latest-aligned real-data window.
+
+        Anchor zoom OFF:
+            allow panning into a right-side future zone until the youngest real
+            bar is the only visible real bar on the left side of the chart.
         """
+        if self._anchor_zoom_enabled:
+            return self._latest_aligned_start()
+
         if self._data_total <= 0:
             return max(0, self._total - 1)
 
         return self._data_total - 1
+
+    def _min_index(self) -> int:
+        """
+        Minimum legal slot index visible on the x axis.
+        """
+        return self._min_start()
+
+    def _max_index(self) -> int:
+        """
+        Maximum legal slot index visible on the x axis.
+
+        This is NOT the same as _max_start(). _max_start() bounds the viewport
+        window origin, while this bounds individual slot indices.
+        """
+        return self._total - 1
 
     def set_window(self, start: int, end: int) -> None:
         old_visible = self._visible
@@ -203,16 +241,13 @@ class ChartViewport(QObject):
 
     def _snap_right_to_data(self) -> None:
         """
-        Legacy helper retained for compatibility.
-
-        New policy: the rightmost legal position is the far-right boundary where
-        the youngest real bar is the only visible real bar on the left side.
+        Snap the viewport to the latest legal right position for the current mode.
         """
         self._start = self._max_start()
 
     def _is_right_aligned_to_data(self) -> bool:
         """
-        True when the current viewport is at the far-right legal boundary.
+        True when the current viewport is at the mode-appropriate right boundary.
         """
         return self._start == self._max_start()
 
@@ -221,20 +256,28 @@ class ChartViewport(QObject):
     # ---------------------------
 
     def pan_left(self, step: int = 10) -> None:
+        step = int(step)
+        if step <= 0:
+            return
+
         old_start = self._start
         min_start = self._min_start()
-        self._start = max(min_start, self._start - int(step))
+        self._start = max(min_start, self._start - step)
 
-        at_left_boundary = (old_start == min_start and self._start == min_start and int(step) > 0)
+        at_left_boundary = (old_start == min_start and self._start == min_start)
         if self._start != old_start or at_left_boundary:
             self.viewport_changed.emit()
 
     def pan_right(self, step: int = 10) -> None:
+        step = int(step)
+        if step <= 0:
+            return
+
         old_start = self._start
         max_start = self._max_start()
-        self._start = min(max_start, self._start + int(step))
+        self._start = min(max_start, self._start + step)
 
-        at_right_boundary = (old_start == max_start and self._start == max_start and int(step) > 0)
+        at_right_boundary = (old_start == max_start and self._start == max_start)
         if self._start != old_start or at_right_boundary:
             self.viewport_changed.emit()
 
@@ -295,21 +338,32 @@ class ChartViewport(QObject):
     def _set_visible_anchored(self, new_visible: int, anchor_idx: int, anchor_rel: float) -> None:
         old_visible = self._visible
         old_start = self._start
+        was_right_aligned = self._is_right_aligned_to_data()
+
+        self._total = max(1, self._data_total + self._effective_future_pad())
 
         max_visible = min(self.MAX_VISIBLE_BARS, self._total)
         new_visible = max(1, min(int(new_visible), max_visible))
-
         self._visible = new_visible
-        self._total = max(1, self._data_total + self._effective_future_pad())
 
         anchor_rel = max(0.0, min(1.0, float(anchor_rel)))
-        anchor_idx = max(self._min_start(), min(self._max_start(), int(anchor_idx)))
 
-        pos = int(round(anchor_rel * max(1, new_visible - 1)))
-        new_start = anchor_idx - pos
-        new_start = max(self._min_start(), min(new_start, self._max_start()))
+        # anchor_idx is a SLOT INDEX under the cursor, not a viewport start.
+        anchor_idx = max(self._min_index(), min(int(anchor_idx), self._max_index()))
 
-        self._start = new_start
+        if self._anchor_zoom_enabled and was_right_aligned:
+            # Keep latest alignment only when the user was already at the latest edge.
+            self._start = self._max_start()
+        else:
+            # Historical exploration must preserve the actual slot anchor
+            # instead of teleporting to latest.
+            pos = int(round(anchor_rel * max(1, new_visible - 1)))
+            new_start = anchor_idx - pos
+            new_start = max(self._min_start(), min(new_start, self._max_start()))
+            self._start = new_start
+
+        if self._crosshair_index is not None and not (0 <= self._crosshair_index < self._total):
+            self._crosshair_index = None
 
         if (self._visible != old_visible) or (self._start != old_start):
             self.viewport_changed.emit()

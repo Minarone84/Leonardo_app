@@ -1,28 +1,47 @@
 from __future__ import annotations
 
+from bisect import bisect_left
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import List, Optional, Tuple
-from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from PySide6.QtCore import Qt, QPoint, QRectF
+from PySide6.QtCore import QPoint, QRectF, Qt
 from PySide6.QtGui import (
+    QBrush,
     QColor,
     QFont,
+    QFontMetricsF,
     QMouseEvent,
     QPainter,
     QPen,
-    QBrush,
     QWheelEvent,
-    QFontMetricsF,
 )
 from PySide6.QtWidgets import QWidget
 
 from leonardo.common.market_types import Candle
-from leonardo.gui.chart.viewport import ChartViewport
 from leonardo.gui.chart.crosshair import Crosshair
+from leonardo.gui.chart.viewport import ChartViewport
 
 
-def draw_right_axis_value_tag(p: QPainter, axis: QRectF, y: float, text: str) -> None:
+DAY_MS = 24 * 60 * 60 * 1000
+
+
+@dataclass(frozen=True)
+class TimeAxisTick:
+    gi: int
+    ts_ms: int
+    x: float
+    label: str
+    priority: int  # 0=regular, 1=day, 2=month, 3=year
+
+
+def draw_right_axis_value_tag(
+    p: QPainter,
+    axis: QRectF,
+    y: float,
+    text: str,
+) -> None:
     """
     Draw a right-side floating label INSIDE the axis/legend gutter at vertical position y.
     Style: orange box, 50% opacity, black text.
@@ -45,11 +64,11 @@ def draw_right_axis_value_tag(p: QPainter, axis: QRectF, y: float, text: str) ->
 
     p.save()
     p.setPen(Qt.NoPen)
-    p.setBrush(QColor(255, 165, 0))  # orange
+    p.setBrush(QColor(255, 165, 0))
     p.setOpacity(0.5)
     p.drawRoundedRect(r, 6.0, 6.0)
     p.setOpacity(1.0)
-    p.setPen(QColor(0, 0, 0))  # black text
+    p.setPen(QColor(0, 0, 0))
     p.drawText(r, Qt.AlignCenter, text)
     p.restore()
 
@@ -82,11 +101,11 @@ class ChartRenderSurface(QWidget):
         self._pad_right = 64
         self._pad_bottom = 18
 
-        self._grid_v = 10
         self._grid_h = 8
 
         self._dragging = False
         self._last_drag_x: int | None = None
+        self._last_drag_y: int | None = None
 
         self._mouse_pt: Optional[QPoint] = None
 
@@ -132,11 +151,15 @@ class ChartRenderSurface(QWidget):
     def mousePressEvent(self, event: QMouseEvent) -> None:
         plot = self._plot_rect()
 
-        if event.button() == Qt.LeftButton and self._axis_rect(plot).contains(event.position()):
+        if event.button() == Qt.LeftButton and self._axis_rect(plot).contains(
+            event.position()
+        ):
             if not self._is_anchor_enabled():
                 lo, hi = self._current_y_range_for_drag()
                 self._y_dragging = True
-                self._y_drag_mode = "pan" if (event.modifiers() & Qt.ShiftModifier) else "zoom"
+                self._y_drag_mode = (
+                    "pan" if (event.modifiers() & Qt.ShiftModifier) else "zoom"
+                )
                 self._y_drag_start_y = float(event.position().y())
                 self._y_drag_start_lo = lo
                 self._y_drag_start_hi = hi
@@ -149,6 +172,7 @@ class ChartRenderSurface(QWidget):
         if event.button() == Qt.LeftButton and plot.contains(event.position()):
             self._dragging = True
             self._last_drag_x = int(event.position().x())
+            self._last_drag_y = int(event.position().y())
             event.accept()
             return
 
@@ -164,6 +188,7 @@ class ChartRenderSurface(QWidget):
         if event.button() == Qt.LeftButton:
             self._dragging = False
             self._last_drag_x = None
+            self._last_drag_y = None
             event.accept()
             return
 
@@ -180,8 +205,6 @@ class ChartRenderSurface(QWidget):
             event.accept()
             return
 
-        # During horizontal pan-drag, prioritize panning over hover/crosshair updates.
-        # This avoids crosshair jitter and overlay churn while the viewport is moving.
         if self._dragging and self._last_drag_x is not None and plot.contains(pt):
             self._crosshair.set_hover_on_price(False)
             self._mouse_pt = None
@@ -190,6 +213,12 @@ class ChartRenderSurface(QWidget):
             if dx != 0:
                 self._pan_by_pixels(plot, dx)
                 self._last_drag_x = pt.x()
+
+            if not self._is_anchor_enabled() and self._last_drag_y is not None:
+                dy = pt.y() - self._last_drag_y
+                if dy != 0:
+                    self._pan_y_by_pixels(plot, dy)
+                    self._last_drag_y = pt.y()
 
             self.update()
             event.accept()
@@ -230,16 +259,13 @@ class ChartRenderSurface(QWidget):
         start, end = self._viewport.start, self._viewport.end
         slots = max(1, end - start)
 
-        # Discrete-grid vertical lines must align to slots
-        self._draw_grid(p, plot, start, slots)
+        time_ticks = self._build_time_axis_ticks(plot, start, slots)
+        self._draw_grid(p, plot, time_ticks)
 
         if not self._candles:
             self._draw_center_text(p, plot, "No data")
             return
 
-        # Build visible candle list *by global slots*.
-        # Negative global indices = missing older data.
-        # Indices beyond resident range = future / non-resident slots.
         vis: List[Optional[Candle]] = []
         for gi in range(start, end):
             vis.append(self._candle_at_global(gi))
@@ -278,14 +304,12 @@ class ChartRenderSurface(QWidget):
 
         self._draw_candles(p, plot, start, vis, lo, hi)
 
-        # shared vertical (clipped)
         idx2 = self._crosshair.index
         if idx2 is not None and start <= idx2 < end:
             x = self._viewport.x_from_index(plot, idx2)
             p.setPen(QPen(QColor(120, 120, 140)))
             p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
 
-        # price horizontal only while hovering (clipped)
         if (
             self._crosshair.hover_on_price
             and self._mouse_pt is not None
@@ -297,14 +321,14 @@ class ChartRenderSurface(QWidget):
 
         p.restore()
 
-        # Left-side message only for missing historical data before index 0.
         if start < 0:
             self._draw_left_gap_message(p, plot, start, slots, "No older data")
 
-        # X axis time labels
-        self._draw_time_axis(p, plot, start, vis)
+        self._draw_time_axis(p, plot, time_ticks)
 
-        # ALWAYS latest price tag (latest resident value)
+        if idx2 is not None and start <= idx2 < end:
+            self._draw_crosshair_time_tag(p, plot, idx2)
+
         last = self._candles[-1]
         y_price = self._y_for_price(plot, last.close, lo, hi)
         p.setFont(QFont("Consolas", 9))
@@ -325,11 +349,6 @@ class ChartRenderSurface(QWidget):
 
     # ---------------- Time axis ----------------
 
-    def _fmt_time_hhmm(self, ts_ms: int) -> str:
-        dt_utc = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc)
-        dt_local = dt_utc.astimezone(self._tz)
-        return dt_local.strftime("%H:%M")
-
     def _infer_tf_ms(self) -> Optional[int]:
         """
         Infer timeframe in ms from the last two real candles.
@@ -337,11 +356,14 @@ class ChartRenderSurface(QWidget):
         """
         if len(self._candles) < 2:
             return None
+
         a = self._candles[-2].ts_ms
         b = self._candles[-1].ts_ms
         dt = int(b - a)
+
         if dt <= 0:
             return None
+
         return dt
 
     def _slot_ts_ms(self, gi: int) -> Optional[int]:
@@ -362,65 +384,346 @@ class ChartRenderSurface(QWidget):
         last_global_idx = self._local_to_global(last_local_idx)
         last_ts = int(self._candles[last_local_idx].ts_ms)
         steps = gi - last_global_idx
+
         if steps <= 0:
             return None
+
         return last_ts + steps * tf
+
+    def _slot_dt_local(self, gi: int) -> Optional[datetime]:
+        ts = self._slot_ts_ms(gi)
+        if ts is None:
+            return None
+
+        dt_utc = datetime.fromtimestamp(ts / 1000.0, tz=timezone.utc)
+        return dt_utc.astimezone(self._tz)
+
+    def _fmt_crosshair_time(self, ts_ms: int) -> str:
+        dt_local = datetime.fromtimestamp(ts_ms / 1000.0, tz=timezone.utc).astimezone(
+            self._tz
+        )
+        return dt_local.strftime("%d %b %Y %H:%M")
+
+    def _time_tick_priority(self, prev_dt: Optional[datetime], cur_dt: datetime) -> int:
+        if prev_dt is None:
+            return 3
+        if cur_dt.year != prev_dt.year:
+            return 3
+        if cur_dt.month != prev_dt.month:
+            return 2
+        if cur_dt.date() != prev_dt.date():
+            return 1
+        return 0
+
+    def _regular_label_for_interval(self, dt: datetime, interval_ms: int) -> str:
+        if interval_ms >= 365 * DAY_MS:
+            return dt.strftime("%Y")
+        if interval_ms >= 28 * DAY_MS:
+            return dt.strftime("%b %Y")
+        if interval_ms >= DAY_MS:
+            return dt.strftime("%d %b")
+        return dt.strftime("%H:%M")
+
+    def _format_tick_label(
+        self,
+        prev_dt: Optional[datetime],
+        cur_dt: datetime,
+        interval_ms: int,
+    ) -> Tuple[str, int]:
+        priority = self._time_tick_priority(prev_dt, cur_dt)
+
+        if priority >= 3:
+            return cur_dt.strftime("%Y %b"), 3
+        if priority == 2:
+            return cur_dt.strftime("%b %d"), 2
+        if priority == 1:
+            return cur_dt.strftime("%d %H:%M"), 1
+
+        return self._regular_label_for_interval(cur_dt, interval_ms), 0
+
+    def _nice_interval_multipliers(self) -> Tuple[int, ...]:
+        return (
+            1,
+            2,
+            3,
+            5,
+            10,
+            15,
+            20,
+            30,
+            60,
+            120,
+            180,
+            240,
+            360,
+            480,
+            720,
+            1440,
+            2880,
+            4320,
+            10080,
+            20160,
+            43200,
+            86400,
+            172800,
+            259200,
+            518400,
+        )
+
+    def _choose_major_interval_ms(
+        self,
+        base_tf_ms: int,
+        visible_span_ms: int,
+        plot_width: float,
+    ) -> int:
+        target_px = 120.0
+        desired_tick_count = max(2.0, plot_width / target_px)
+        target_interval_ms = max(
+            base_tf_ms,
+            int(visible_span_ms / max(1.0, desired_tick_count)),
+        )
+
+        for mult in self._nice_interval_multipliers():
+            interval_ms = max(base_tf_ms, base_tf_ms * mult)
+            if interval_ms >= target_interval_ms:
+                return interval_ms
+
+        return max(base_tf_ms, base_tf_ms * self._nice_interval_multipliers()[-1])
+
+    def _floor_local_time_to_interval(
+        self,
+        dt_local: datetime,
+        interval_ms: int,
+    ) -> datetime:
+        if interval_ms < DAY_MS:
+            midnight = dt_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            elapsed_ms = int((dt_local - midnight).total_seconds() * 1000.0)
+            floored_ms = (elapsed_ms // interval_ms) * interval_ms
+            return midnight + timedelta(milliseconds=floored_ms)
+
+        if interval_ms < 28 * DAY_MS:
+            midnight = dt_local.replace(hour=0, minute=0, second=0, microsecond=0)
+            day_step = max(1, interval_ms // DAY_MS)
+            epoch_day = datetime(1970, 1, 1, tzinfo=self._tz)
+            days_since_epoch = (midnight.date() - epoch_day.date()).days
+            floored_days = (days_since_epoch // day_step) * day_step
+            return epoch_day + timedelta(days=floored_days)
+
+        month_step = max(1, interval_ms // (28 * DAY_MS))
+        month_index = dt_local.year * 12 + (dt_local.month - 1)
+        floored_month_index = (month_index // month_step) * month_step
+        year = floored_month_index // 12
+        month = (floored_month_index % 12) + 1
+        return datetime(year, month, 1, tzinfo=self._tz)
+
+    def _visible_slot_time_points(
+        self,
+        start_idx: int,
+        slots: int,
+    ) -> List[Tuple[int, int]]:
+        points: List[Tuple[int, int]] = []
+        for gi in range(start_idx, start_idx + slots):
+            ts = self._slot_ts_ms(gi)
+            if ts is None:
+                continue
+            points.append((gi, ts))
+        return points
+
+    def _nearest_visible_gi_for_ts(
+        self,
+        ts_ms: int,
+        visible_points: List[Tuple[int, int]],
+    ) -> Optional[int]:
+        if not visible_points:
+            return None
+
+        ts_values = [ts for _, ts in visible_points]
+        pos = bisect_left(ts_values, ts_ms)
+
+        candidates: List[Tuple[int, int]] = []
+        if pos < len(visible_points):
+            candidates.append(visible_points[pos])
+        if pos > 0:
+            candidates.append(visible_points[pos - 1])
+
+        if not candidates:
+            return None
+
+        gi, nearest_ts = min(candidates, key=lambda item: abs(item[1] - ts_ms))
+        tolerance_ms = max(1, self._infer_tf_ms() or 1)
+        return gi if abs(nearest_ts - ts_ms) <= tolerance_ms else None
+
+    def _build_time_axis_ticks(
+        self,
+        plot: QRectF,
+        start_idx: int,
+        slots: int,
+    ) -> List[TimeAxisTick]:
+        if slots <= 0 or plot.width() <= 1.0:
+            return []
+
+        base_tf_ms = self._infer_tf_ms()
+        if base_tf_ms is None or base_tf_ms <= 0:
+            return []
+
+        visible_points = self._visible_slot_time_points(start_idx, slots)
+        if len(visible_points) < 2:
+            return []
+
+        start_ts = visible_points[0][1]
+        end_ts = visible_points[-1][1]
+        visible_span_ms = max(base_tf_ms, end_ts - start_ts)
+
+        major_interval_ms = self._choose_major_interval_ms(
+            base_tf_ms=base_tf_ms,
+            visible_span_ms=visible_span_ms,
+            plot_width=plot.width(),
+        )
+
+        first_dt = datetime.fromtimestamp(start_ts / 1000.0, tz=timezone.utc).astimezone(
+            self._tz
+        )
+        tick_dt = self._floor_local_time_to_interval(first_dt, major_interval_ms)
+
+        if int(tick_dt.timestamp() * 1000) < start_ts:
+            while int(tick_dt.timestamp() * 1000) < start_ts:
+                tick_dt += timedelta(milliseconds=major_interval_ms)
+            tick_dt -= timedelta(milliseconds=major_interval_ms)
+
+        ticks: List[TimeAxisTick] = []
+        prev_tick_dt: Optional[datetime] = None
+        seen_gi: set[int] = set()
+
+        last_limit_ts = end_ts + major_interval_ms
+
+        while int(tick_dt.timestamp() * 1000) <= last_limit_ts:
+            tick_ts = int(tick_dt.timestamp() * 1000)
+            gi = self._nearest_visible_gi_for_ts(tick_ts, visible_points)
+
+            if gi is not None and start_idx <= gi < (start_idx + slots) and gi not in seen_gi:
+                actual_dt = self._slot_dt_local(gi)
+                if actual_dt is not None:
+                    label, priority = self._format_tick_label(
+                        prev_dt=prev_tick_dt,
+                        cur_dt=actual_dt,
+                        interval_ms=major_interval_ms,
+                    )
+                    x = self._viewport.x_from_index(plot, gi)
+
+                    ticks.append(
+                        TimeAxisTick(
+                            gi=gi,
+                            ts_ms=tick_ts,
+                            x=x,
+                            label=label,
+                            priority=priority,
+                        )
+                    )
+                    seen_gi.add(gi)
+                    prev_tick_dt = actual_dt
+
+            tick_dt += timedelta(milliseconds=major_interval_ms)
+
+        font = QFont("Consolas", 8)
+        fm = QFontMetricsF(font)
+
+        filtered: List[TimeAxisTick] = []
+        last_right = float("-inf")
+        min_sep = 10.0
+
+        for tick in ticks:
+            text_w = fm.horizontalAdvance(tick.label)
+            left = tick.x - (text_w / 2.0)
+            right = tick.x + (text_w / 2.0)
+
+            if left >= (last_right + min_sep):
+                filtered.append(tick)
+                last_right = right
+                continue
+
+            if filtered and tick.priority > filtered[-1].priority:
+                prev = filtered[-1]
+                prev_w = fm.horizontalAdvance(prev.label)
+                prev_left = prev.x - (prev_w / 2.0)
+                if left >= prev_left:
+                    filtered[-1] = tick
+                    last_right = right
+
+        return filtered
 
     def _draw_time_axis(
         self,
         p: QPainter,
         plot: QRectF,
-        start_idx: int,
-        vis: List[Optional[Candle]],
+        ticks: List[TimeAxisTick],
     ) -> None:
-        n = len(vis)
-        if n <= 0:
+        if not ticks:
             return
 
-        # Adaptive label density for wider zoom ranges.
-        if n <= 120:
-            step = 5
-        elif n <= 250:
-            step = 10
-        elif n <= 500:
-            step = 25
-        elif n <= 1000:
-            step = 50
-        else:
-            step = 100
+        p.save()
+        p.setFont(QFont("Consolas", 8))
+        fm = QFontMetricsF(p.font())
+        y = int(plot.bottom() + 14)
 
-        # indices: first, stepped labels, last
-        label_rel: List[int] = [0]
-        for r in range(step, max(0, n - 1), step):
-            label_rel.append(r)
-        if (n - 1) not in label_rel:
-            label_rel.append(n - 1)
+        for tick in ticks:
+            p.setPen(QPen(QColor(70, 70, 82)))
+            p.drawLine(
+                int(tick.x),
+                int(plot.bottom()),
+                int(tick.x),
+                int(plot.bottom() + 4),
+            )
+
+            if tick.priority >= 2:
+                p.setPen(QPen(QColor(205, 205, 220)))
+            elif tick.priority == 1:
+                p.setPen(QPen(QColor(185, 185, 205)))
+            else:
+                p.setPen(QPen(QColor(170, 170, 185)))
+
+            tw = fm.horizontalAdvance(tick.label)
+            p.drawText(int(tick.x - tw / 2), y, tick.label)
+
+        p.restore()
+
+    def _draw_crosshair_time_tag(
+        self,
+        p: QPainter,
+        plot: QRectF,
+        gi: int,
+    ) -> None:
+        ts = self._slot_ts_ms(gi)
+        if ts is None:
+            return
+
+        text = self._fmt_crosshair_time(ts)
+        x = self._viewport.x_from_index(plot, gi)
 
         p.save()
         p.setFont(QFont("Consolas", 8))
 
         fm = QFontMetricsF(p.font())
-        y = int(plot.bottom() + 14)
+        pad_x = 7.0
+        pad_y = 3.0
 
-        for r in label_rel:
-            gi = start_idx + r
+        text_w = fm.horizontalAdvance(text)
+        text_h = fm.height()
 
-            ts = self._slot_ts_ms(gi)
-            if ts is None:
-                continue
+        tag_w = text_w + 2 * pad_x
+        tag_h = text_h + 2 * pad_y
 
-            x = self._viewport.x_from_index(plot, gi)
+        x_left = x - (tag_w / 2.0)
+        x_left = max(plot.left(), min(plot.right() - tag_w, x_left))
 
-            # tick
-            p.setPen(QPen(QColor(70, 70, 82)))
-            p.drawLine(int(x), int(plot.bottom()), int(x), int(plot.bottom() + 4))
+        y_top = plot.bottom() + 2.0
+        r = QRectF(x_left, y_top, tag_w, tag_h)
 
-            # label
-            p.setPen(QPen(QColor(170, 170, 185)))
-            t = self._fmt_time_hhmm(ts)
-            tw = fm.horizontalAdvance(t)
-            p.drawText(int(x - tw / 2), y, t)
+        p.setPen(Qt.NoPen)
+        p.setBrush(QColor(225, 225, 225))
+        p.drawRoundedRect(r, 4.0, 4.0)
 
+        p.setPen(QColor(0, 0, 0))
+        p.drawText(r, Qt.AlignCenter, text)
         p.restore()
 
     # ---------------- Y-scale logic ----------------
@@ -437,6 +740,7 @@ class ChartRenderSurface(QWidget):
     def _resident_minmax(self) -> Tuple[float, float]:
         if not self._candles:
             return (0.0, 1.0)
+
         lo = min(c.low for c in self._candles)
         hi = max(c.high for c in self._candles)
         span = max(1e-6, hi - lo)
@@ -471,6 +775,7 @@ class ChartRenderSurface(QWidget):
                 lo, hi = self._clamp_non_anchored_range(lo, hi)
             else:
                 lo, hi = self._resident_minmax()
+
             self._y_lo, self._y_hi = lo, hi
             return lo, hi
 
@@ -480,7 +785,11 @@ class ChartRenderSurface(QWidget):
 
     def _current_y_range_for_drag(self) -> Tuple[float, float]:
         start, end = self._viewport.start, self._viewport.end
-        real = [c for gi in range(start, end) if (c := self._candle_at_global(gi)) is not None]
+        real = [
+            c
+            for gi in range(start, end)
+            if (c := self._candle_at_global(gi)) is not None
+        ]
         if not real:
             return self._ensure_non_anchored_range([])
         return self._ensure_non_anchored_range(real)
@@ -508,46 +817,79 @@ class ChartRenderSurface(QWidget):
             self._y_lo, self._y_hi = self._clamp_non_anchored_range(lo, hi)
             return
 
+    def _pan_y_by_pixels(self, plot: QRectF, dy_pixels: int) -> None:
+        lo, hi = self._current_y_range_for_drag()
+        rng = max(1e-9, hi - lo)
+        h = max(1.0, plot.height())
+
+        delta = (float(dy_pixels) / h) * rng
+        new_lo = lo - delta
+        new_hi = hi - delta
+        self._y_lo, self._y_hi = self._clamp_non_anchored_range(new_lo, new_hi)
+
     def _y_for_price(self, plot: QRectF, price: float, lo: float, hi: float) -> float:
         t = (price - lo) / (hi - lo)
         return plot.bottom() - t * plot.height()
 
     # ---------------- Drawing ----------------
 
-    def _draw_grid(self, p: QPainter, plot: QRectF, start_idx: int, slots: int) -> None:
-        """
-        Vertical grid is DISCRETE and aligned to candle slots.
-        Horizontal grid stays proportional (unchanged).
-        """
-        # --- vertical grid (slot aligned) ---
+    def _draw_grid(
+        self,
+        p: QPainter,
+        plot: QRectF,
+        time_ticks: List[TimeAxisTick],
+    ) -> None:
         grid_pen = QPen(QColor(40, 40, 48))
         grid_pen.setWidth(1)
         p.setPen(grid_pen)
 
-        # Aim for ~10 vertical lines, but aligned to discrete slots
-        step = max(1, int(round(slots / max(1, self._grid_v))))
-        for r in range(0, slots + 1, step):
-            gi = start_idx + r
-            # boundary line: left edge of slot r (for r==slots it's right edge)
-            if r == slots:
-                x = plot.right()
-            else:
-                # boundary is at center - 0.5 cell; we can reconstruct via x_from_index
-                cx = self._viewport.x_from_index(plot, gi)
-                cell_w = plot.width() / max(1, slots)
-                x = cx - 0.5 * cell_w
-            p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
+        for tick in time_ticks:
+            p.drawLine(int(tick.x), int(plot.top()), int(tick.x), int(plot.bottom()))
 
-        # --- horizontal grid (as before) ---
         for i in range(1, self._grid_h):
             y = plot.top() + (i / self._grid_h) * plot.height()
             p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
 
-        # border
         border_pen = QPen(QColor(70, 70, 82))
         border_pen.setWidth(1)
         p.setPen(border_pen)
         p.drawRect(plot)
+
+    def _draw_compressed_candle(
+        self,
+        p: QPainter,
+        x_px: int,
+        open_price: float,
+        high_price: float,
+        low_price: float,
+        close_price: float,
+        lo: float,
+        hi: float,
+        plot: QRectF,
+    ) -> None:
+        y_o = self._y_for_price(plot, open_price, lo, hi)
+        y_c = self._y_for_price(plot, close_price, lo, hi)
+        y_h = self._y_for_price(plot, high_price, lo, hi)
+        y_l = self._y_for_price(plot, low_price, lo, hi)
+
+        wick_pen = QPen(QColor(200, 200, 210))
+        wick_pen.setWidth(1)
+        p.setPen(wick_pen)
+        p.drawLine(x_px, int(y_h), x_px, int(y_l))
+
+        top = min(y_o, y_c)
+        bot = max(y_o, y_c)
+        body_h = max(1.0, bot - top)
+        rect = QRectF(float(x_px), top, 1.0, body_h)
+
+        if close_price >= open_price:
+            p.fillRect(rect, QBrush(QColor(0, 170, 120)))
+            p.setPen(QPen(QColor(0, 220, 160)))
+            p.drawRect(rect)
+        else:
+            p.fillRect(rect, QBrush(QColor(210, 70, 70)))
+            p.setPen(QPen(QColor(240, 110, 110)))
+            p.drawRect(rect)
 
     def _draw_candles(
         self,
@@ -560,6 +902,68 @@ class ChartRenderSurface(QWidget):
     ) -> None:
         slots = max(1, len(candles))
         cell_w = plot.width() / slots
+
+        if cell_w < 2.0:
+            agg_x: Optional[int] = None
+            agg_open: Optional[float] = None
+            agg_high: Optional[float] = None
+            agg_low: Optional[float] = None
+            agg_close: Optional[float] = None
+
+            def flush_bucket() -> None:
+                if (
+                    agg_x is None
+                    or agg_open is None
+                    or agg_high is None
+                    or agg_low is None
+                    or agg_close is None
+                ):
+                    return
+
+                self._draw_compressed_candle(
+                    p=p,
+                    x_px=agg_x,
+                    open_price=agg_open,
+                    high_price=agg_high,
+                    low_price=agg_low,
+                    close_price=agg_close,
+                    lo=lo,
+                    hi=hi,
+                    plot=plot,
+                )
+
+            for i, c in enumerate(candles):
+                gi = start_idx + i
+                if c is None:
+                    continue
+
+                cx = self._viewport.x_from_index(plot, gi)
+                x_px = int(cx)
+
+                if agg_x is None:
+                    agg_x = x_px
+                    agg_open = c.open
+                    agg_high = c.high
+                    agg_low = c.low
+                    agg_close = c.close
+                    continue
+
+                if x_px != agg_x:
+                    flush_bucket()
+                    agg_x = x_px
+                    agg_open = c.open
+                    agg_high = c.high
+                    agg_low = c.low
+                    agg_close = c.close
+                    continue
+
+                agg_high = max(float(agg_high), c.high)
+                agg_low = min(float(agg_low), c.low)
+                agg_close = c.close
+
+            flush_bucket()
+            return
+
         body_w = max(1.0, max(3.0, cell_w) * 0.65)
 
         up_brush = QBrush(QColor(0, 170, 120))
@@ -644,6 +1048,7 @@ class ChartRenderSurface(QWidget):
     def _pan_by_pixels(self, plot: QRectF, dx_pixels: int) -> None:
         if dx_pixels == 0:
             return
+
         step = int(abs(dx_pixels) / max(1.0, plot.width()) * self._viewport.visible)
         step = max(1, step)
 
@@ -665,7 +1070,9 @@ class ChartRenderSurface(QWidget):
             return
 
         anchor_idx = self._viewport.index_from_x(plot, mx)
-        anchor_rel = (((anchor_idx - self._viewport.start) + 0.5) / max(1, self._viewport.visible))
+        anchor_rel = ((anchor_idx - self._viewport.start) + 0.5) / max(
+            1, self._viewport.visible
+        )
 
         dy = event.angleDelta().y()
         if dy > 0:

@@ -7,9 +7,9 @@ from PySide6.QtCore import QObject, Signal, Slot
 
 from leonardo.common.market_types import Candle as GuiCandle
 from leonardo.core.registry_keys import SVC_HISTORICAL_DATASET
-from leonardo.data.historical.dataset_service import DatasetId, SliceRequest, SlicePayload
-from leonardo.gui.core_bridge import CoreBridge
+from leonardo.data.historical.dataset_service import DatasetId, SlicePayload, SliceRequest
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget
+from leonardo.gui.core_bridge import CoreBridge
 
 
 class HistoricalChartController(QObject):
@@ -176,7 +176,6 @@ class HistoricalChartController(QObject):
         vp = self._workspace.viewport
         raw_start = int(vp.start)
         raw_end = int(vp.end)
-        visible = max(1, int(vp.visible))
 
         # Only the dataset-covered portion of the viewport should participate
         # in refill logic. Future-pad slots to the right are intentional empty
@@ -209,10 +208,10 @@ class HistoricalChartController(QObject):
 
         center_global = max(0, min(center_global, self._dataset_count - 1))
 
-        # Clamp to current resident slice so timestamp lookup always uses a resident candle.
-        resident_right_inclusive = resident_right_exclusive - 1
-        center_global = max(resident_left, min(center_global, resident_right_inclusive))
-
+        # IMPORTANT:
+        # Do NOT clamp center_global back into the current resident slice.
+        # That makes refills chase the old slice instead of following the
+        # viewport's actual global target during historical navigation.
         center_ts_ms = self._global_index_to_ts_ms(center_global)
         if center_ts_ms is None:
             return
@@ -222,14 +221,55 @@ class HistoricalChartController(QObject):
         )
         self.request_slice(center_ts_ms=center_ts_ms, reason=reason)
 
-    def _global_index_to_ts_ms(self, global_index: int) -> Optional[int]:
-        local = global_index - self._resident_base_index
+    def _infer_resident_tf_ms(self) -> Optional[int]:
         candles = self._workspace.model.candles
+        if len(candles) < 2:
+            return None
+
+        try:
+            prev_ts = int(candles[-2].ts_ms)
+            last_ts = int(candles[-1].ts_ms)
+        except Exception:
+            return None
+
+        tf_ms = last_ts - prev_ts
+        if tf_ms <= 0:
+            return None
+
+        return tf_ms
+
+    def _global_index_to_ts_ms(self, global_index: int) -> Optional[int]:
+        candles = self._workspace.model.candles
+        if not candles:
+            return None
+
+        local = int(global_index) - self._resident_base_index
         if 0 <= local < len(candles):
             try:
                 return int(candles[local].ts_ms)
             except Exception:
                 return None
+
+        tf_ms = self._infer_resident_tf_ms()
+        if tf_ms is None:
+            return None
+
+        try:
+            first_ts = int(candles[0].ts_ms)
+            last_local = len(candles) - 1
+            last_global = self._resident_base_index + last_local
+            last_ts = int(candles[last_local].ts_ms)
+        except Exception:
+            return None
+
+        if global_index < self._resident_base_index:
+            steps = int(global_index) - self._resident_base_index
+            return first_ts + (steps * tf_ms)
+
+        if global_index > last_global:
+            steps = int(global_index) - last_global
+            return last_ts + (steps * tf_ms)
+
         return None
 
     # ---------------- apply (GUI thread) ----------------

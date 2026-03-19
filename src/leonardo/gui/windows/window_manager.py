@@ -182,8 +182,8 @@ class WindowManager(QObject):
         win = HistoricalChartWindow(core_bridge=self._core, parent=None)
         win.setAttribute(Qt.WA_DeleteOnClose, True)
         win.setObjectName(window_id)
+        setattr(win, "_dock_handler", lambda win_obj, wid=window_id: self._on_dock_back_requested(wid, win_obj))
         win.set_panel(panel)
-        win.dock_back_requested.connect(lambda win_obj, wid=window_id: self._on_dock_back_requested(wid, win_obj))
         win.destroyed.connect(lambda _=None, wid=window_id: self._on_floating_historical_chart_destroyed(wid))
 
         self._floating_historical_charts[window_id] = win

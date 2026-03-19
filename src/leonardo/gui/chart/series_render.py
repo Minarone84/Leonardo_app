@@ -14,6 +14,7 @@ from PySide6.QtGui import (
 )
 from PySide6.QtWidgets import QWidget
 
+from leonardo.common.market_types import Candle
 from leonardo.gui.chart.viewport import ChartViewport
 from leonardo.gui.chart.crosshair import Crosshair
 
@@ -55,11 +56,13 @@ class VolumeRenderSurface(QWidget):
         self,
         viewport: ChartViewport,
         crosshair: Crosshair,
+        candles: List[Candle],
         volume: List[float],
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._viewport = viewport
+        self._candles = candles
         self._volume = volume
         self._crosshair = crosshair
 
@@ -75,6 +78,10 @@ class VolumeRenderSurface(QWidget):
         self._pad_top = 6
         self._pad_right = 64
         self._pad_bottom = 14
+
+    def set_candles(self, candles: List[Candle]) -> None:
+        self._candles = candles
+        self.update()
 
     def set_volume(self, volume: List[float]) -> None:
         self._volume = volume
@@ -95,6 +102,14 @@ class VolumeRenderSurface(QWidget):
         if local is None:
             return None
         return float(self._volume[local])
+
+    def _candle_at_global(self, global_index: int) -> Optional[Candle]:
+        local = self._global_to_local(global_index)
+        if local is None:
+            return None
+        if 0 <= local < len(self._candles):
+            return self._candles[local]
+        return None
 
     def _plot_rect(self) -> QRectF:
         w = self.width()
@@ -184,9 +199,12 @@ class VolumeRenderSurface(QWidget):
         bar_w = max(2.0, plot.width() / max(1, n))
         body_w = max(1.0, bar_w * 0.8)
 
-        brush = QBrush(QColor(80, 120, 220))
-        p.setPen(QPen(QColor(80, 120, 220)))
-        p.setBrush(brush)
+        bull_fill = QColor(14, 203, 129)
+        bull_line = QColor(38, 226, 160)
+        bear_fill = QColor(246, 70, 93)
+        bear_line = QColor(255, 110, 128)
+        neutral_fill = QColor(80, 120, 220)
+        neutral_line = QColor(80, 120, 220)
 
         p.save()
         p.setClipRect(plot)
@@ -194,9 +212,27 @@ class VolumeRenderSurface(QWidget):
         for i, v in enumerate(vis):
             if v is None:
                 continue
+
+            global_index = start + i
+            candle = self._candle_at_global(global_index)
+
+            if candle is not None:
+                if candle.close >= candle.open:
+                    fill_color = bull_fill
+                    line_color = bull_line
+                else:
+                    fill_color = bear_fill
+                    line_color = bear_line
+            else:
+                fill_color = neutral_fill
+                line_color = neutral_line
+
             cx = plot.left() + (i + 0.5) * bar_w
             t = v / vmax if vmax > 0 else 0.0
             bar_h = t * plot.height()
+
+            p.setPen(QPen(line_color))
+            p.setBrush(QBrush(fill_color))
             p.drawRect(cx - body_w / 2, plot.bottom() - bar_h, body_w, bar_h)
 
         if self._crosshair.active and self._crosshair.index is not None:

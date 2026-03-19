@@ -4,12 +4,13 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from leonardo.data.naming import CanonicalMarket, canonicalize
+from leonardo.data.naming import MarketId, canonicalize
 
 DatasetType = Literal[
     "ohlcv",
     "indicators",
     "oscillators",
+    "constructs",
     "trade_signal",
     "signal_elaboration",
 ]
@@ -34,21 +35,21 @@ class HistoricalPaths:
 
     root: Path
 
-    def partition_dir(self, m: CanonicalMarket) -> Path:
+    def partition_dir(self, m: MarketId) -> Path:
         return self.root / m.exchange / m.market_type / m.symbol / m.timeframe
 
-    def dataset_dir(self, m: CanonicalMarket, dataset: DatasetType) -> Path:
+    def dataset_dir(self, m: MarketId, dataset: DatasetType) -> Path:
         return self.partition_dir(m) / dataset
 
-    def ensure_dataset_dir(self, m: CanonicalMarket, dataset: DatasetType) -> Path:
+    def ensure_dataset_dir(self, m: MarketId, dataset: DatasetType) -> Path:
         p = self.dataset_dir(m, dataset)
         p.mkdir(parents=True, exist_ok=True)
         return p
 
-    def ohlcv_dir(self, m: CanonicalMarket) -> Path:
+    def ohlcv_dir(self, m: MarketId) -> Path:
         return self.dataset_dir(m, "ohlcv")
 
-    def ensure_ohlcv_dir(self, m: CanonicalMarket) -> Path:
+    def ensure_ohlcv_dir(self, m: MarketId) -> Path:
         return self.ensure_dataset_dir(m, "ohlcv")
 
 
@@ -66,9 +67,9 @@ def build_market_and_paths(
     symbol: str,
     timeframe: str,
     root: Path | None = None,
-) -> tuple[CanonicalMarket, HistoricalPaths]:
+) -> tuple[MarketId, HistoricalPaths]:
     """
-    Canonicalize inputs (Option A) and return (CanonicalMarket, HistoricalPaths).
+    Canonicalize inputs (Option A) and return (MarketId, HistoricalPaths).
     """
     m = canonicalize(exchange, market_type, symbol, timeframe)
     paths = HistoricalPaths(root=root or default_historical_root())
@@ -83,9 +84,9 @@ def build_ohlcv_partition(
     timeframe: str,
     root: Path | None = None,
     ensure: bool = True,
-) -> tuple[CanonicalMarket, Path]:
+) -> tuple[MarketId, Path]:
     """
-    Convenience helper returning (CanonicalMarket, <ohlcv_dir>).
+    Convenience helper returning (MarketId, <ohlcv_dir>).
     """
     m, paths = build_market_and_paths(
         exchange=exchange,

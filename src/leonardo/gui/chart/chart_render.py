@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import math
 from bisect import bisect_left
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import List, Optional, Tuple
+from typing import Iterable, List, Optional, Tuple
 from zoneinfo import ZoneInfo
 
 from PySide6.QtCore import QPoint, QRectF, Qt
@@ -121,6 +122,15 @@ class ChartRenderSurface(QWidget):
         self._y_drag_start_lo: float = 0.0
         self._y_drag_start_hi: float = 0.0
 
+        self._overlay_palette: Tuple[QColor, ...] = (
+            QColor(255, 165, 0),   # orange
+            QColor(0, 200, 255),   # cyan
+            QColor(186, 104, 200), # purple
+            QColor(255, 214, 102), # amber
+            QColor(76, 175, 80),   # green
+            QColor(239, 83, 80),   # red
+        )
+
     def set_candles(self, candles: List[Candle]) -> None:
         self._candles = candles
         self._y_lo = None
@@ -145,6 +155,56 @@ class ChartRenderSurface(QWidget):
         if local is None:
             return None
         return self._candles[local]
+
+    def _overlay_series(self) -> List[object]:
+        """
+        Compatibility bridge for the current architecture.
+
+        PricePane owns ChartModel and creates this render surface as its child.
+        We read overlays from the parent pane's model so we can render them
+        without changing pane construction in this step.
+        """
+        parent = self.parent()
+        if parent is None:
+            return []
+
+        model = getattr(parent, "_model", None)
+        if model is None:
+            return []
+
+        overlays_fn = getattr(model, "overlays", None)
+        if not callable(overlays_fn):
+            return []
+
+        try:
+            overlays = overlays_fn()
+        except Exception:
+            return []
+
+        if isinstance(overlays, dict):
+            return list(overlays.values())
+
+        return []
+
+    def _iter_finite_overlay_values_in_view(self, start: int, end: int) -> Iterable[float]:
+        for series in self._overlay_series():
+            values = getattr(series, "values", None)
+            if not isinstance(values, list):
+                continue
+
+            for gi in range(start, end):
+                local = self._global_to_local(gi)
+                if local is None or local >= len(values):
+                    continue
+
+                raw = values[local]
+                try:
+                    val = float(raw)
+                except Exception:
+                    continue
+
+                if math.isfinite(val):
+                    yield val
 
     # ---------------- Mouse ----------------
 
@@ -276,10 +336,24 @@ class ChartRenderSurface(QWidget):
         if real_vis:
             if anchor_enabled:
                 lo, hi = self._visible_minmax(real_vis)
+                overlay_vals = list(self._iter_finite_overlay_values_in_view(start, end))
+                if overlay_vals:
+                    lo = min(lo, min(overlay_vals))
+                    hi = max(hi, max(overlay_vals))
+                    span = max(1e-6, hi - lo)
+                    lo -= 0.03 * span
+                    hi += 0.03 * span
                 self._y_lo, self._y_hi = lo, hi
             else:
                 if self._last_anchor_enabled:
                     lo, hi = self._visible_minmax(real_vis)
+                    overlay_vals = list(self._iter_finite_overlay_values_in_view(start, end))
+                    if overlay_vals:
+                        lo = min(lo, min(overlay_vals))
+                        hi = max(hi, max(overlay_vals))
+                        span = max(1e-6, hi - lo)
+                        lo -= 0.03 * span
+                        hi += 0.03 * span
                     lo, hi = self._clamp_non_anchored_range(lo, hi)
                     self._y_lo, self._y_hi = lo, hi
                 else:
@@ -303,6 +377,7 @@ class ChartRenderSurface(QWidget):
         p.setClipRect(plot)
 
         self._draw_candles(p, plot, start, vis, lo, hi)
+        self._draw_overlays(p, plot, start, end, lo, hi)
 
         idx2 = self._crosshair.index
         if idx2 is not None and start <= idx2 < end:
@@ -747,25 +822,14 @@ class ChartRenderSurface(QWidget):
         return (lo - 0.03 * span, hi + 0.03 * span)
 
     def _clamp_non_anchored_range(self, lo: float, hi: float) -> Tuple[float, float]:
-        full_lo, full_hi = self._resident_minmax()
+        """
+        In non-anchored mode, vertical navigation is manual and should not be
+        clamped back into the resident candle envelope.
 
+        This helper now only guarantees a valid, non-degenerate range.
+        """
         if hi <= lo:
-            return (full_lo, full_hi)
-
-        span = hi - lo
-        full_span = full_hi - full_lo
-
-        if span >= full_span:
-            return (full_lo, full_hi)
-
-        if lo < full_lo:
-            lo = full_lo
-            hi = lo + span
-
-        if hi > full_hi:
-            hi = full_hi
-            lo = hi - span
-
+            return self._resident_minmax()
         return (lo, hi)
 
     def _ensure_non_anchored_range(self, vis: List[Candle]) -> Tuple[float, float]:
@@ -812,8 +876,8 @@ class ChartRenderSurface(QWidget):
 
         if self._y_drag_mode == "pan":
             delta = (dy_pixels / h) * rng0
-            lo = lo0 - delta
-            hi = hi0 - delta
+            lo = lo0 + delta
+            hi = hi0 + delta
             self._y_lo, self._y_hi = self._clamp_non_anchored_range(lo, hi)
             return
 
@@ -823,8 +887,8 @@ class ChartRenderSurface(QWidget):
         h = max(1.0, plot.height())
 
         delta = (float(dy_pixels) / h) * rng
-        new_lo = lo - delta
-        new_hi = hi - delta
+        new_lo = lo + delta
+        new_hi = hi + delta
         self._y_lo, self._y_hi = self._clamp_non_anchored_range(new_lo, new_hi)
 
     def _y_for_price(self, plot: QRectF, price: float, lo: float, hi: float) -> float:
@@ -1002,6 +1066,75 @@ class ChartRenderSurface(QWidget):
                 p.drawRect(rect)
 
             p.setPen(wick_pen)
+
+    def _draw_overlay_segment_points(
+        self,
+        p: QPainter,
+        points: List[Tuple[float, float]],
+    ) -> None:
+        if len(points) < 2:
+            return
+
+        for i in range(1, len(points)):
+            x1, y1 = points[i - 1]
+            x2, y2 = points[i]
+            p.drawLine(int(x1), int(y1), int(x2), int(y2))
+
+    def _draw_overlays(
+        self,
+        p: QPainter,
+        plot: QRectF,
+        start_idx: int,
+        end_idx: int,
+        lo: float,
+        hi: float,
+    ) -> None:
+        overlays = self._overlay_series()
+        if not overlays:
+            return
+
+        p.save()
+        p.setRenderHint(QPainter.Antialiasing, True)
+
+        for series_index, series in enumerate(overlays):
+            values = getattr(series, "values", None)
+            if not isinstance(values, list) or not values:
+                continue
+
+            color = self._overlay_palette[series_index % len(self._overlay_palette)]
+            pen = QPen(color)
+            pen.setWidth(2)
+            p.setPen(pen)
+
+            segment_points: List[Tuple[float, float]] = []
+
+            for gi in range(start_idx, end_idx):
+                local = self._global_to_local(gi)
+                if local is None or local >= len(values):
+                    self._draw_overlay_segment_points(p, segment_points)
+                    segment_points = []
+                    continue
+
+                raw = values[local]
+                try:
+                    val = float(raw)
+                except Exception:
+                    self._draw_overlay_segment_points(p, segment_points)
+                    segment_points = []
+                    continue
+
+                if not math.isfinite(val):
+                    self._draw_overlay_segment_points(p, segment_points)
+                    segment_points = []
+                    continue
+
+                x = self._viewport.x_from_index(plot, gi)
+                y = self._y_for_price(plot, val, lo, hi)
+                segment_points.append((x, y))
+
+            self._draw_overlay_segment_points(p, segment_points)
+
+        p.restore()
 
     def _draw_price_axis(self, p: QPainter, plot: QRectF, lo: float, hi: float) -> None:
         p.setPen(QPen(QColor(170, 170, 185)))

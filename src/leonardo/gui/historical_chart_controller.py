@@ -1,13 +1,21 @@
 from __future__ import annotations
 
 import uuid
-from typing import Optional
+from pathlib import Path
+from typing import Any, Dict, Optional
 
+import pandas as pd
 from PySide6.QtCore import QObject, Signal, Slot
 
 from leonardo.common.market_types import Candle as GuiCandle
 from leonardo.core.registry_keys import SVC_HISTORICAL_DATASET
 from leonardo.data.historical.dataset_service import DatasetId, SlicePayload, SliceRequest
+from leonardo.data.historical.derived_store_csv import DerivedCsvStore
+from leonardo.data.historical.paths import default_historical_root
+from leonardo.data.naming import canonicalize
+from leonardo.financial_tools.indicators.indicators import Indicators, IndicatorRequest
+from leonardo.financial_tools.oscillators.oscillators import Oscillators, OscillatorRequest
+from leonardo.gui.chart.model import Series as ChartSeries
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget
 from leonardo.gui.core_bridge import CoreBridge
 
@@ -24,6 +32,10 @@ class HistoricalChartController(QObject):
 
     error = Signal(str)
     slice_ready = Signal(object)  # SlicePayload
+
+    apply_succeeded = Signal(dict)
+    save_succeeded = Signal(dict)
+    save_failed = Signal(dict)
 
     # Historical horizontal policy (same for all timeframes)
     DEFAULT_VISIBLE_BARS = 500
@@ -53,6 +65,8 @@ class HistoricalChartController(QObject):
         self._dataset: Optional[DatasetId] = None
         self._symbol: str = ""
         self._timeframe: str = ""
+        self._exchange: str = ""
+        self._market_type: str = ""
 
         self._latest_request_id: Optional[str] = None
 
@@ -66,10 +80,7 @@ class HistoricalChartController(QObject):
         self._request_in_flight: bool = False
         self._suppress_viewport_refill: bool = False
 
-        # Ensure UI mutations happen on the GUI thread
         self.slice_ready.connect(self._apply_slice)
-
-        # Refill-on-pan / refill-on-zoom trigger
         self._workspace.viewport.viewport_changed.connect(self._on_viewport_changed)
 
     # ---------------- API ----------------
@@ -77,10 +88,11 @@ class HistoricalChartController(QObject):
     def open_dataset(self, exchange: str, market_type: str, symbol: str, timeframe: str) -> None:
         dataset = DatasetId(exchange, market_type, symbol, timeframe)
         self._dataset = dataset
+        self._exchange = exchange
+        self._market_type = market_type
         self._symbol = symbol
         self._timeframe = timeframe
 
-        # Reset per-dataset historical session state
         self._dataset_count = None
         self._resident_base_index = 0
         self._resident_size = 0
@@ -125,7 +137,185 @@ class HistoricalChartController(QObject):
         fut = self._core.submit(svc.get_slice(req))
         fut.add_done_callback(self._on_slice_ready)
 
-    # ---------------- callbacks (may execute off the GUI thread) ----------------
+    def apply_financial_tool(self, payload: Dict[str, Any]) -> None:
+        """
+        Apply a financial tool to the current historical chart.
+
+        IMPORTANT for this phase:
+        - Computation uses the current resident candle slice already loaded in memory.
+        - It does NOT persist anything to disk.
+        - It does NOT yet compute on the full historical dataset on disk.
+        """
+        if not payload:
+            self.error.emit("Empty financial tool payload.")
+            return
+
+        tool_type = str(payload.get("tool_type", "")).strip().lower()
+        tool_key = str(payload.get("tool_key", "")).strip().lower()
+        tool_title = str(payload.get("tool_title", tool_key)).strip() or tool_key
+        params = payload.get("params", {})
+
+        if not tool_type or not tool_key:
+            self.error.emit("Invalid financial tool payload: missing tool_type or tool_key.")
+            return
+
+        dcd_df = self._build_resident_dataframe()
+        if dcd_df is None or dcd_df.empty:
+            self.error.emit("Cannot apply financial tool: no resident historical candles loaded.")
+            return
+
+        try:
+            if tool_type == "indicator":
+                result = Indicators.calculate(
+                    IndicatorRequest(name=tool_key, data=dcd_df, params=params)
+                )
+                self.apply_succeeded.emit(
+                    self._build_apply_payload(
+                        result,
+                        tool_type=tool_type,
+                        tool_key=tool_key,
+                        tool_title=tool_title,
+                        params=params,
+                    )
+                )
+                return
+
+            if tool_type == "oscillator":
+                result = Oscillators.calculate(
+                    OscillatorRequest(name=tool_key, data=dcd_df, params=params)
+                )
+                self.apply_succeeded.emit(
+                    self._build_apply_payload(
+                        result,
+                        tool_type=tool_type,
+                        tool_key=tool_key,
+                        tool_title=tool_title,
+                        params=params,
+                    )
+                )
+                return
+
+            if tool_type == "construct":
+                self.error.emit("Construct application is not implemented yet.")
+                return
+
+            self.error.emit(f"Unsupported financial tool type: {tool_type}")
+        except Exception as e:
+            self.error.emit(f"apply_financial_tool failed: {e!r}")
+
+    def save_financial_tool(self, payload: Dict[str, Any]) -> None:
+        """
+        Persist a financial tool result computed on the FULL canonical historical dataset.
+
+        Save semantics are intentionally different from Apply:
+        - Apply uses current resident candles for quick display.
+        - Save loads the full dataset from disk for analysis-grade persistence.
+        """
+        if not payload:
+            self.error.emit("Empty financial tool payload.")
+            return
+
+        tool_type = str(payload.get("tool_type", "")).strip().lower()
+        tool_key = str(payload.get("tool_key", "")).strip().lower()
+        tool_title = str(payload.get("tool_title", tool_key)).strip() or tool_key
+        params = payload.get("params", {})
+
+        if not tool_type or not tool_key:
+            self.error.emit("Invalid save payload: missing tool_type or tool_key.")
+            return
+
+        save_meta: Dict[str, Any] = {
+            "tool_type": tool_type,
+            "tool_title": tool_title,
+            "tool_key": tool_key,
+            "exchange": self._exchange,
+            "market_type": self._market_type,
+            "symbol": self._symbol,
+            "timeframe": self._timeframe,
+            "params": dict(params),
+            "saved_path": "",
+            "error": "",
+        }
+
+        if tool_type == "construct":
+            save_meta["error"] = "Construct saving is not implemented yet."
+            self.save_failed.emit(save_meta)
+            self.error.emit(save_meta["error"])
+            return
+
+        try:
+            market = canonicalize(
+                exchange=self._exchange,
+                market_type=self._market_type,
+                symbol=self._symbol,
+                timeframe=self._timeframe,
+            )
+        except Exception as e:
+            save_meta["error"] = f"Failed to canonicalize market for save: {e!r}"
+            self.save_failed.emit(save_meta)
+            self.error.emit(save_meta["error"])
+            return
+
+        try:
+            full_df = self._load_full_dataset_dataframe()
+        except Exception as e:
+            save_meta["error"] = f"Failed to load full historical dataset for save: {e!r}"
+            self.save_failed.emit(save_meta)
+            self.error.emit(save_meta["error"])
+            return
+
+        if full_df.empty:
+            save_meta["error"] = "Cannot save financial tool: full historical dataset is empty."
+            self.save_failed.emit(save_meta)
+            self.error.emit(save_meta["error"])
+            return
+
+        try:
+            if tool_type == "indicator":
+                result = Indicators.calculate(
+                    IndicatorRequest(name=tool_key, data=full_df, params=params)
+                )
+                kind = "indicators"
+            elif tool_type == "oscillator":
+                result = Oscillators.calculate(
+                    OscillatorRequest(name=tool_key, data=full_df, params=params)
+                )
+                kind = "oscillators"
+            else:
+                save_meta["error"] = f"Unsupported save tool type: {tool_type}"
+                self.save_failed.emit(save_meta)
+                self.error.emit(save_meta["error"])
+                return
+        except Exception as e:
+            save_meta["error"] = f"Failed to compute financial tool for save: {e!r}"
+            self.save_failed.emit(save_meta)
+            self.error.emit(save_meta["error"])
+            return
+
+        try:
+            result_df = self._result_to_dataframe(result)
+            instance_key = self._build_instance_key(params)
+            historical_root = default_historical_root()
+            store = DerivedCsvStore(historical_root=historical_root)
+
+            path = store.save_dataframe(
+                market=market,
+                kind=kind,  # type: ignore[arg-type]
+                tool_key=tool_key,
+                instance_key=instance_key,
+                df=result_df,
+            )
+            save_meta["saved_path"] = str(path)
+        except Exception as e:
+            save_meta["error"] = f"Failed to persist financial tool: {e!r}"
+            self.save_failed.emit(save_meta)
+            self.error.emit(save_meta["error"])
+            return
+
+        self.save_succeeded.emit(save_meta)
+        self.error.emit(f"Saved {tool_key} to {path}")
+
+    # ---------------- callbacks ----------------
 
     def _on_dataset_opened(self, fut) -> None:
         try:
@@ -139,7 +329,6 @@ class HistoricalChartController(QObject):
         except Exception:
             self._dataset_count = None
 
-        # Initial slice centered at newest candle
         self.request_slice(center_ts_ms=meta.last_ts_ms, reason="initial")
 
     def _on_slice_ready(self, fut) -> None:
@@ -151,12 +340,11 @@ class HistoricalChartController(QObject):
             return
 
         if payload.request_id != self._latest_request_id:
-            return  # stale response
+            return
 
-        # Marshal to GUI thread
         self.slice_ready.emit(payload)
 
-    # ---------------- viewport refill trigger (GUI thread) ----------------
+    # ---------------- viewport refill trigger ----------------
 
     @Slot()
     def _on_viewport_changed(self) -> None:
@@ -177,9 +365,6 @@ class HistoricalChartController(QObject):
         raw_start = int(vp.start)
         raw_end = int(vp.end)
 
-        # Only the dataset-covered portion of the viewport should participate
-        # in refill logic. Future-pad slots to the right are intentional empty
-        # space, not missing historical data.
         view_start = max(0, min(raw_start, self._dataset_count))
         view_end = max(view_start, min(raw_end, self._dataset_count))
 
@@ -198,20 +383,13 @@ class HistoricalChartController(QObject):
         if not need_left and not need_right:
             return
 
-        # Pick the center from the real-data portion of the viewport, not from
-        # future-pad space.
         if view_end > view_start:
             center_global = view_start + ((view_end - view_start) // 2)
         else:
-            # Degenerate case: viewport is entirely outside real data on the right.
             center_global = self._dataset_count - 1
 
         center_global = max(0, min(center_global, self._dataset_count - 1))
 
-        # IMPORTANT:
-        # Do NOT clamp center_global back into the current resident slice.
-        # That makes refills chase the old slice instead of following the
-        # viewport's actual global target during historical navigation.
         center_ts_ms = self._global_index_to_ts_ms(center_global)
         if center_ts_ms is None:
             return
@@ -272,7 +450,158 @@ class HistoricalChartController(QObject):
 
         return None
 
-    # ---------------- apply (GUI thread) ----------------
+    # ---------------- financial tool helpers ----------------
+
+    def _build_resident_dataframe(self) -> Optional[pd.DataFrame]:
+        candles = self._workspace.model.candles
+        if not candles:
+            return None
+
+        rows: list[dict[str, Any]] = []
+        for c in candles:
+            rows.append(
+                {
+                    "ts_ms": int(c.ts_ms),
+                    "time": int(c.ts_ms),
+                    "timeframe": self._timeframe,
+                    "open": float(c.open),
+                    "high": float(c.high),
+                    "low": float(c.low),
+                    "close": float(c.close),
+                    "volume": float(c.volume),
+                    "Volume": float(c.volume),
+                }
+            )
+
+        return pd.DataFrame(rows)
+
+    def _load_full_dataset_dataframe(self) -> pd.DataFrame:
+        if self._dataset is None:
+            raise RuntimeError("No historical dataset is currently open.")
+
+        svc = self._core.context.registry.get(SVC_HISTORICAL_DATASET)
+        if svc is None:
+            raise RuntimeError("HistoricalDatasetService not found in ctx.registry")
+
+        data_root = Path(getattr(svc, "_data_root"))
+        candles_path = (
+            data_root
+            / "historical"
+            / self._dataset.exchange
+            / self._dataset.market_type
+            / self._dataset.symbol
+            / self._dataset.timeframe
+            / "ohlcv"
+            / "candles.csv"
+        )
+
+        if not candles_path.exists():
+            raise FileNotFoundError(f"Candles CSV not found: {candles_path}")
+
+        df = pd.read_csv(candles_path)
+        if df.empty:
+            return df
+
+        # Normalize columns for downstream financial tools.
+        required_cols = ["ts_ms", "open", "high", "low", "close", "volume"]
+        missing = [c for c in required_cols if c not in df.columns]
+        if missing:
+            raise ValueError(f"Full candles dataset missing required columns: {missing}")
+
+        out = df.copy()
+        out["time"] = out["ts_ms"]
+        out["timeframe"] = self._timeframe
+        out["Volume"] = out["volume"]
+        return out
+
+    def _build_param_signature(self, params: Dict[str, Any]) -> str:
+        if not params:
+            return "default"
+
+        parts: list[str] = []
+        for key in sorted(params.keys()):
+            val = params[key]
+            parts.append(f"{key}={val}")
+        return ",".join(parts)
+
+    def _build_instance_key(self, params: Dict[str, Any]) -> str:
+        if not params:
+            return "default"
+
+        parts: list[str] = []
+        for key in sorted(params.keys()):
+            val = str(params[key]).strip().lower()
+            val = val.replace(" ", "-")
+            val = val.replace("=", "-")
+            val = val.replace(",", "-")
+            parts.append(f"{key}-{val}")
+        return "__".join(parts)
+
+    def _build_series_key(self, *, tool_key: str, params: Dict[str, Any], line_key: str) -> str:
+        param_sig = self._build_param_signature(params)
+        return f"{tool_key}|{param_sig}|{line_key}"
+
+    def _build_series_title(self, *, tool_title: str, params: Dict[str, Any], line_title: str) -> str:
+        param_sig = self._build_param_signature(params)
+        return f"{tool_title} [{param_sig}] · {line_title}"
+
+    def _build_apply_payload(
+        self,
+        result,
+        *,
+        tool_type: str,
+        tool_key: str,
+        tool_title: str,
+        params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        series_list: list[ChartSeries] = []
+
+        for line in result.lines:
+            values = [float(v) if pd.notna(v) else float("nan") for v in line.values.tolist()]
+            series_list.append(
+                ChartSeries(
+                    key=self._build_series_key(tool_key=tool_key, params=params, line_key=line.key),
+                    title=self._build_series_title(tool_title=tool_title, params=params, line_title=line.title),
+                    values=values,
+                )
+            )
+
+        return {
+            "tool_type": tool_type,
+            "tool_key": tool_key,
+            "tool_title": tool_title,
+            "display_name": getattr(result, "title", tool_title) or tool_title,
+            "params": dict(getattr(result, "params", params) or params),
+            "series_list": series_list,
+        }
+
+    def _result_to_dataframe(self, result) -> pd.DataFrame:
+        df = pd.DataFrame(index=result.index)
+
+        if getattr(result, "time", None) is not None:
+            df["time"] = result.time
+        if getattr(result, "timeframe", None) is not None:
+            df["timeframe"] = result.timeframe
+
+        for line in result.lines:
+            series = line.values.reindex(result.index)
+            if pd.api.types.is_numeric_dtype(series):
+                df[line.key] = series.astype("float32")
+            else:
+                df[line.key] = series
+
+        if "time" not in df.columns:
+            if "ts_ms" in df.columns:
+                df["time"] = df["ts_ms"]
+            else:
+                df["time"] = list(range(len(df)))
+
+        if "timeframe" not in df.columns:
+            df["timeframe"] = self._timeframe
+
+        return df.reset_index(drop=True)
+
+    # ---------------- apply historical slice ----------------
 
     @Slot(object)
     def _apply_slice(self, payload_obj: object) -> None:
@@ -314,10 +643,8 @@ class HistoricalChartController(QObject):
                 dataset_total=self._dataset_count if self._dataset_count is not None else len(candles),
             )
 
-            # Ensure volume pane is visible for historical charts
             self._workspace.set_volume_enabled(True)
 
-            # Initial load only: show the latest default window.
             if not self._initial_view_applied:
                 self._set_viewport_to_latest(visible_target=self.DEFAULT_VISIBLE_BARS)
                 self._initial_view_applied = True
@@ -325,9 +652,6 @@ class HistoricalChartController(QObject):
             self._suppress_viewport_refill = False
             self._request_in_flight = False
 
-        # Follow-up boundary/coverage check:
-        # if zoom/pan still leaves us close to or beyond resident coverage,
-        # request the next slice immediately.
         self._on_viewport_changed()
 
     def _set_viewport_to_latest(self, *, visible_target: int) -> None:

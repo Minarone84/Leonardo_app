@@ -13,8 +13,10 @@ from leonardo.data.historical.dataset_service import DatasetId, SlicePayload, Sl
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore
 from leonardo.data.historical.paths import default_historical_root
 from leonardo.data.naming import canonicalize
+from leonardo.financial_tools.constructs.constructs import Constructs, ConstructRequest
 from leonardo.financial_tools.indicators.indicators import Indicators, IndicatorRequest
 from leonardo.financial_tools.oscillators.oscillators import Oscillators, OscillatorRequest
+from leonardo.financial_tools.specs import ToolSpec, get_tool_spec
 from leonardo.gui.chart.model import Series as ChartSeries
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget
 from leonardo.gui.core_bridge import CoreBridge
@@ -145,6 +147,10 @@ class HistoricalChartController(QObject):
         - Computation uses the current resident candle slice already loaded in memory.
         - It does NOT persist anything to disk.
         - It does NOT yet compute on the full historical dataset on disk.
+
+        Construct note for this phase:
+        - The payload contract is now behavior-aware.
+        - Construct family dispatch is now live for dummy constructs.
         """
         if not payload:
             self.error.emit("Empty financial tool payload.")
@@ -153,10 +159,16 @@ class HistoricalChartController(QObject):
         tool_type = str(payload.get("tool_type", "")).strip().lower()
         tool_key = str(payload.get("tool_key", "")).strip().lower()
         tool_title = str(payload.get("tool_title", tool_key)).strip() or tool_key
-        params = payload.get("params", {})
+        params = payload.get("params", {}) or {}
 
         if not tool_type or not tool_key:
             self.error.emit("Invalid financial tool payload: missing tool_type or tool_key.")
+            return
+
+        try:
+            spec = self._resolve_tool_spec(tool_key=tool_key)
+        except Exception as e:
+            self.error.emit(f"Invalid financial tool payload: failed to resolve spec: {e!r}")
             return
 
         dcd_df = self._build_resident_dataframe()
@@ -172,6 +184,7 @@ class HistoricalChartController(QObject):
                 self.apply_succeeded.emit(
                     self._build_apply_payload(
                         result,
+                        spec=spec,
                         tool_type=tool_type,
                         tool_key=tool_key,
                         tool_title=tool_title,
@@ -187,6 +200,7 @@ class HistoricalChartController(QObject):
                 self.apply_succeeded.emit(
                     self._build_apply_payload(
                         result,
+                        spec=spec,
                         tool_type=tool_type,
                         tool_key=tool_key,
                         tool_title=tool_title,
@@ -196,7 +210,19 @@ class HistoricalChartController(QObject):
                 return
 
             if tool_type == "construct":
-                self.error.emit("Construct application is not implemented yet.")
+                result = Constructs.calculate(
+                    ConstructRequest(name=tool_key, data=dcd_df, params=dict(params))
+                )
+                self.apply_succeeded.emit(
+                    self._build_apply_payload(
+                        result,
+                        spec=spec,
+                        tool_type=tool_type,
+                        tool_key=tool_key,
+                        tool_title=tool_title,
+                        params=params,
+                    )
+                )
                 return
 
             self.error.emit(f"Unsupported financial tool type: {tool_type}")
@@ -218,7 +244,7 @@ class HistoricalChartController(QObject):
         tool_type = str(payload.get("tool_type", "")).strip().lower()
         tool_key = str(payload.get("tool_key", "")).strip().lower()
         tool_title = str(payload.get("tool_title", tool_key)).strip() or tool_key
-        params = payload.get("params", {})
+        params = payload.get("params", {}) or {}
 
         if not tool_type or not tool_key:
             self.error.emit("Invalid save payload: missing tool_type or tool_key.")
@@ -452,6 +478,34 @@ class HistoricalChartController(QObject):
 
     # ---------------- financial tool helpers ----------------
 
+    def _resolve_tool_spec(self, *, tool_key: str) -> ToolSpec:
+        return get_tool_spec(tool_key)
+
+    def _serialize_behavior_spec(self, spec: ToolSpec) -> Dict[str, Any]:
+        return {
+            "output_mode": spec.behavior.output_mode,
+            "chart_renderable": bool(spec.behavior.chart_renderable),
+            "supports_style": bool(spec.behavior.supports_style),
+            "supports_pane_layout": bool(spec.behavior.supports_pane_layout),
+            "supports_last_value": bool(spec.behavior.supports_last_value),
+        }
+
+    def _serialize_output_spec(self, spec: ToolSpec, *, params: Dict[str, Any]) -> Dict[str, Any]:
+        output_names: list[str] = []
+        format_values = dict(params)
+
+        for name in spec.output.output_names:
+            try:
+                output_names.append(str(name).format(**format_values))
+            except Exception:
+                output_names.append(str(name))
+
+        return {
+            "structure": spec.output.structure,
+            "output_names": output_names,
+            "accepts_empty_render_output": bool(spec.output.accepts_empty_render_output),
+        }
+
     def _build_resident_dataframe(self) -> Optional[pd.DataFrame]:
         candles = self._workspace.model.candles
         if not candles:
@@ -549,6 +603,7 @@ class HistoricalChartController(QObject):
         self,
         result,
         *,
+        spec: ToolSpec,
         tool_type: str,
         tool_key: str,
         tool_title: str,
@@ -566,13 +621,17 @@ class HistoricalChartController(QObject):
                 )
             )
 
+        effective_params = dict(getattr(result, "params", params) or params)
+
         return {
             "tool_type": tool_type,
             "tool_key": tool_key,
             "tool_title": tool_title,
             "display_name": getattr(result, "title", tool_title) or tool_title,
-            "params": dict(getattr(result, "params", params) or params),
+            "params": effective_params,
             "series_list": series_list,
+            "behavior": self._serialize_behavior_spec(spec),
+            "output": self._serialize_output_spec(spec, params=effective_params),
         }
 
     def _result_to_dataframe(self, result) -> pd.DataFrame:

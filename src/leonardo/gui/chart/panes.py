@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (
 
 from leonardo.common.market_types import Candle
 from leonardo.gui.chart.viewport import ChartViewport
-from leonardo.gui.chart.model import ChartModel
+from leonardo.gui.chart.model import ChartModel, Series
 
 from leonardo.gui.chart.chart_render import ChartRenderSurface
 from leonardo.gui.chart.series_render import VolumeRenderSurface, OscillatorRenderSurface
@@ -24,6 +24,7 @@ class _PaneOverlay(QWidget):
     """
     Generic floating overlay container.
     """
+
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
 
@@ -44,6 +45,11 @@ class _PaneOverlay(QWidget):
             "QToolButton:hover {"
             "  background: rgba(255, 255, 255, 36);"
             "}"
+            "QToolButton:disabled {"
+            "  color: rgba(255, 255, 255, 90);"
+            "  background: rgba(255, 255, 255, 10);"
+            "  border: 1px solid rgba(255, 255, 255, 20);"
+            "}"
         )
 
     @property
@@ -55,6 +61,7 @@ class _HeaderInfoBlock(QWidget):
     """
     Title + OHLC block used at the top of the price overlay card.
     """
+
     def __init__(self, parent: QWidget) -> None:
         super().__init__(parent)
 
@@ -75,6 +82,7 @@ class _HeaderInfoBlock(QWidget):
 
 
 class _StudyRow(QWidget):
+    style_requested = Signal(str)
     edit_requested = Signal(str)
     remove_requested = Signal(str)
 
@@ -84,8 +92,14 @@ class _StudyRow(QWidget):
 
         self._label = QLabel("", self)
 
+        self._style_btn = QToolButton(self)
+        self._style_btn.setText("Style")
+        self._style_btn.setToolTip("Edit display style")
+        self._style_btn.clicked.connect(self._emit_style)
+
         self._edit_btn = QToolButton(self)
         self._edit_btn.setText("Edit")
+        self._edit_btn.setToolTip("Edit computation parameters")
         self._edit_btn.clicked.connect(self._emit_edit)
 
         self._remove_btn = QToolButton(self)
@@ -97,6 +111,7 @@ class _StudyRow(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addWidget(self._label, 1)
+        layout.addWidget(self._style_btn, 0)
         layout.addWidget(self._edit_btn, 0)
         layout.addWidget(self._remove_btn, 0)
 
@@ -106,6 +121,9 @@ class _StudyRow(QWidget):
 
     def set_text(self, text: str) -> None:
         self._label.setText(text)
+
+    def _emit_style(self) -> None:
+        self.style_requested.emit(self._series_key)
 
     def _emit_edit(self) -> None:
         self.edit_requested.emit(self._series_key)
@@ -122,6 +140,7 @@ class PricePane(QWidget):
     - Interactive study rows for active overlays
     """
 
+    study_style_requested = Signal(str)
     study_edit_requested = Signal(str)
     study_remove_requested = Signal(str)
 
@@ -229,6 +248,7 @@ class PricePane(QWidget):
             return row
 
         row = _StudyRow(series_key, self._study_rows_host)
+        row.style_requested.connect(self.study_style_requested)
         row.edit_requested.connect(self.study_edit_requested)
         row.remove_requested.connect(self.study_remove_requested)
         self._study_rows_layout.addWidget(row)
@@ -286,6 +306,7 @@ class VolumePane(QWidget):
     - "Volume" (title)
     - "Vol: <value>" at crosshair index (line1)
     """
+
     def __init__(
         self,
         viewport: ChartViewport,
@@ -400,40 +421,114 @@ class VolumePane(QWidget):
 
 class OscillatorPane(QWidget):
     """
-    Oscillator pane overlay:
-    - Oscillator title (title)
-    - "<value>" at crosshair index (line1)
+    Managed oscillator pane.
+
+    Current phase goals:
+    - chart-local study controls from inside the pane
+    - pane move controls
+    - study-level identity for pane actions
+    - future-ready support for multi-line oscillator studies
+
+    Rendering remains backward-compatible with the current single-series
+    OscillatorRenderSurface. Once the render surface is upgraded, this pane can
+    pass the full series list instead of only the primary series values.
     """
+
+    study_style_requested = Signal(str)
+    study_edit_requested = Signal(str)
+    study_remove_requested = Signal(str)
+    pane_move_up_requested = Signal(str)
+    pane_move_down_requested = Signal(str)
+
     def __init__(
         self,
         title: str,
         viewport: ChartViewport,
-        values: List[float],
         crosshair: Crosshair,
+        values: Optional[List[float]] = None,
+        *,
+        study_instance_id: str = "",
+        series_list: Optional[List[Series]] = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
 
-        self._title_text = title
+        self._title_text = str(title).strip() or "Oscillator"
+        self._study_instance_id = str(study_instance_id).strip()
         self._viewport = viewport
         self._crosshair = crosshair
-        self._values = values
         self._resident_base_index = 0
 
+        if series_list:
+            self._series_list: List[Series] = [
+                Series(
+                    key=str(series.key),
+                    title=str(series.title),
+                    values=list(series.values),
+                    style=series.style,
+                )
+                for series in series_list
+            ]
+        else:
+            self._series_list = [
+                Series(
+                    key="__oscillator__",
+                    title=self._title_text,
+                    values=list(values or []),
+                )
+            ]
+
         self._surface = OscillatorRenderSurface(
-            title=title,
+            title=self._title_text,
             viewport=self._viewport,
             crosshair=self._crosshair,
-            values=self._values,
+            values=self._primary_values(),
             parent=self,
         )
         self._overlay = _PaneOverlay(self)
 
-        self._title = QLabel(self._title_text, self._overlay)
+        self._header_host = QWidget(self._overlay)
+        self._header_layout = QHBoxLayout(self._header_host)
+        self._header_layout.setContentsMargins(0, 0, 0, 0)
+        self._header_layout.setSpacing(4)
+
+        self._title = QLabel(self._title_text, self._header_host)
+        self._header_layout.addWidget(self._title, 1)
+
+        self._move_up_btn = QToolButton(self._header_host)
+        self._move_up_btn.setText("↑")
+        self._move_up_btn.setToolTip("Move oscillator pane up")
+        self._move_up_btn.clicked.connect(self._emit_move_up)
+        self._header_layout.addWidget(self._move_up_btn, 0)
+
+        self._move_down_btn = QToolButton(self._header_host)
+        self._move_down_btn.setText("↓")
+        self._move_down_btn.setToolTip("Move oscillator pane down")
+        self._move_down_btn.clicked.connect(self._emit_move_down)
+        self._header_layout.addWidget(self._move_down_btn, 0)
+
+        self._style_btn = QToolButton(self._header_host)
+        self._style_btn.setText("Style")
+        self._style_btn.setToolTip("Edit display style")
+        self._style_btn.clicked.connect(self._emit_style)
+        self._header_layout.addWidget(self._style_btn, 0)
+
+        self._edit_btn = QToolButton(self._header_host)
+        self._edit_btn.setText("Edit")
+        self._edit_btn.setToolTip("Edit computation parameters")
+        self._edit_btn.clicked.connect(self._emit_edit)
+        self._header_layout.addWidget(self._edit_btn, 0)
+
+        self._remove_btn = QToolButton(self._header_host)
+        self._remove_btn.setText("X")
+        self._remove_btn.setToolTip("Remove oscillator study from chart")
+        self._remove_btn.clicked.connect(self._emit_remove)
+        self._header_layout.addWidget(self._remove_btn, 0)
+
         self._line1 = QLabel("", self._overlay)
 
         overlay_layout = self._overlay.layout_box
-        overlay_layout.addWidget(self._title)
+        overlay_layout.addWidget(self._header_host)
         overlay_layout.addWidget(self._line1)
 
         layout = QVBoxLayout(self)
@@ -447,25 +542,92 @@ class OscillatorPane(QWidget):
         self._sync_surface_state()
         self._update_overlay()
 
+    @property
+    def study_instance_id(self) -> str:
+        return self._study_instance_id
+
     def resizeEvent(self, event) -> None:
         super().resizeEvent(event)
         self._overlay.move(12, 12)
         self._overlay.adjustSize()
 
-    def set_values(self, values: List[float]) -> None:
-        self._values = values
+    def set_study_instance_id(self, study_instance_id: str) -> None:
+        self._study_instance_id = str(study_instance_id).strip()
+
+    def set_title(self, title: str) -> None:
+        self._title_text = str(title).strip() or "Oscillator"
+        self._title.setText(self._title_text)
         self._sync_surface_state()
         self._update_overlay()
+
+    def set_series_list(self, series_list: List[Series]) -> None:
+        self._series_list = [
+            Series(
+                key=str(series.key),
+                title=str(series.title),
+                values=list(series.values),
+                style=series.style,
+            )
+            for series in series_list
+        ]
+        self._sync_surface_state()
+        self._update_overlay()
+
+    def set_values(self, values: List[float]) -> None:
+        if self._series_list:
+            primary = self._series_list[0]
+            self._series_list[0] = Series(
+                key=primary.key,
+                title=primary.title,
+                values=list(values),
+                style=primary.style,
+            )
+        else:
+            self._series_list = [
+                Series(
+                    key="__oscillator__",
+                    title=self._title_text,
+                    values=list(values),
+                )
+            ]
+        self._sync_surface_state()
+        self._update_overlay()
+
+    def set_move_capabilities(self, *, can_move_up: bool, can_move_down: bool) -> None:
+        self._move_up_btn.setEnabled(bool(can_move_up))
+        self._move_down_btn.setEnabled(bool(can_move_down))
 
     def set_resident_base_index(self, base_index: int) -> None:
         self._resident_base_index = max(0, int(base_index))
         self._sync_surface_state()
         self._update_overlay()
 
+    def _primary_series(self) -> Optional[Series]:
+        if not self._series_list:
+            return None
+        return self._series_list[0]
+
+    def _primary_values(self) -> List[float]:
+        primary = self._primary_series()
+        if primary is None:
+            return []
+        return list(primary.values)
+
     def _sync_surface_state(self) -> None:
-        if hasattr(self._surface, "set_values"):
+        if hasattr(self._surface, "set_title"):
             try:
-                self._surface.set_values(self._values)
+                self._surface.set_title(self._title_text)
+            except Exception:
+                pass
+
+        if hasattr(self._surface, "set_series_list"):
+            try:
+                self._surface.set_series_list(self._series_list)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+        elif hasattr(self._surface, "set_values"):
+            try:
+                self._surface.set_values(self._primary_values())
             except Exception:
                 pass
 
@@ -475,31 +637,98 @@ class OscillatorPane(QWidget):
             except Exception:
                 pass
 
+        if hasattr(self._surface, "update"):
+            try:
+                self._surface.update()
+            except Exception:
+                pass
+
     def _global_to_local(self, global_index: int) -> Optional[int]:
+        primary = self._primary_series()
+        if primary is None:
+            return None
+
         local = int(global_index) - self._resident_base_index
-        if 0 <= local < len(self._values):
+        if 0 <= local < len(primary.values):
             return local
         return None
 
     def _overlay_index_local(self) -> Optional[int]:
-        if not self._values:
+        primary = self._primary_series()
+        if primary is None or not primary.values:
             return None
 
         idx = self._crosshair.index
         local = self._global_to_local(idx) if idx is not None else None
         if local is None:
-            local = len(self._values) - 1
+            local = len(primary.values) - 1
         return local
 
+    def _series_label_for_overlay(self, series: Series) -> str:
+        full = str(series.title).strip()
+        if not full:
+            return "Value"
+
+        if "·" in full:
+            tail = full.rsplit("·", 1)[-1].strip()
+            if tail:
+                return tail
+
+        if "[" in full and "]" in full:
+            head = full.split("]", 1)[-1].strip()
+            if head:
+                return head
+
+        return full
+
+    def _format_value(self, value: float) -> str:
+        try:
+            numeric = float(value)
+        except Exception:
+            return "—"
+
+        if numeric != numeric:
+            return "—"
+
+        return f"{numeric:.2f}"
+
     def _update_overlay(self) -> None:
-        if not self._values:
+        local_idx = self._overlay_index_local()
+        if local_idx is None:
             self._line1.setText("—")
             self._overlay.adjustSize()
             return
 
-        local_idx = self._overlay_index_local()
-        if local_idx is None or local_idx < 0 or local_idx >= len(self._values):
-            local_idx = len(self._values) - 1
+        fragments: List[str] = []
+        for idx, series in enumerate(self._series_list):
+            if local_idx >= len(series.values):
+                continue
 
-        self._line1.setText(f"{self._values[local_idx]:.2f}")
+            value_text = self._format_value(series.values[local_idx])
+            if len(self._series_list) == 1 and idx == 0:
+                fragments.append(value_text)
+            else:
+                fragments.append(f"{self._series_label_for_overlay(series)}: {value_text}")
+
+        self._line1.setText("  |  ".join(fragments) if fragments else "—")
         self._overlay.adjustSize()
+
+    def _emit_style(self) -> None:
+        if self._study_instance_id:
+            self.study_style_requested.emit(self._study_instance_id)
+
+    def _emit_edit(self) -> None:
+        if self._study_instance_id:
+            self.study_edit_requested.emit(self._study_instance_id)
+
+    def _emit_remove(self) -> None:
+        if self._study_instance_id:
+            self.study_remove_requested.emit(self._study_instance_id)
+
+    def _emit_move_up(self) -> None:
+        if self._study_instance_id:
+            self.pane_move_up_requested.emit(self._study_instance_id)
+
+    def _emit_move_down(self) -> None:
+        if self._study_instance_id:
+            self.pane_move_down_requested.emit(self._study_instance_id)

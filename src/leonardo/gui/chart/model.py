@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import QObject, Signal
@@ -9,10 +9,23 @@ from leonardo.common.market_types import Candle
 
 
 @dataclass(frozen=True)
+class SeriesStyle:
+    """
+    Chart-local display style for a renderable series.
+
+    This is intentionally separate from computation parameters.
+    """
+    color: Optional[str] = None
+    line_width: int = 2
+    line_style: str = "solid"  # solid | dotted | dashed | dash_dot
+
+
+@dataclass(frozen=True)
 class Series:
     key: str
     title: str
     values: List[float]
+    style: SeriesStyle = field(default_factory=SeriesStyle)
 
 
 @dataclass(frozen=True)

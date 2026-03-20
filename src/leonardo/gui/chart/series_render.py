@@ -17,6 +17,7 @@ from PySide6.QtWidgets import QWidget
 from leonardo.common.market_types import Candle
 from leonardo.gui.chart.viewport import ChartViewport
 from leonardo.gui.chart.crosshair import Crosshair
+from leonardo.gui.chart.model import Series
 
 
 def draw_right_axis_value_tag(p: QPainter, axis: QRectF, y: float, text: str) -> None:
@@ -42,11 +43,11 @@ def draw_right_axis_value_tag(p: QPainter, axis: QRectF, y: float, text: str) ->
 
     p.save()
     p.setPen(Qt.NoPen)
-    p.setBrush(QColor(255, 165, 0))  # orange
+    p.setBrush(QColor(255, 165, 0))
     p.setOpacity(0.5)
     p.drawRoundedRect(r, 6.0, 6.0)
     p.setOpacity(1.0)
-    p.setPen(QColor(0, 0, 0))        # black text
+    p.setPen(QColor(0, 0, 0))
     p.drawText(r, Qt.AlignCenter, text)
     p.restore()
 
@@ -156,7 +157,6 @@ class VolumeRenderSurface(QWidget):
             return
 
         anchor_idx = self._viewport.index_from_x(plot, mx)
-        # slot-centered anchor_rel (NOT continuous mouse-based)
         anchor_rel = ((anchor_idx - self._viewport.start) + 0.5) / max(1, self._viewport.visible)
 
         dy = event.angleDelta().y()
@@ -287,10 +287,18 @@ class OscillatorRenderSurface(QWidget):
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
-        self._title = title
+        self._title = str(title).strip() or "Oscillator"
         self._viewport = viewport
         self._crosshair = crosshair
-        self._values = values
+        self._values = list(values)
+
+        self._series_list: List[Series] = [
+            Series(
+                key="__oscillator__",
+                title=self._title,
+                values=list(values),
+            )
+        ]
 
         self._resident_base_index = 0
 
@@ -305,25 +313,75 @@ class OscillatorRenderSurface(QWidget):
         self._pad_right = 64
         self._pad_bottom = 14
 
+    def set_title(self, title: str) -> None:
+        self._title = str(title).strip() or "Oscillator"
+        self.update()
+
     def set_values(self, values: List[float]) -> None:
-        self._values = values
+        self._values = list(values)
+
+        if self._series_list:
+            primary = self._series_list[0]
+            self._series_list[0] = Series(
+                key=primary.key,
+                title=primary.title,
+                values=list(values),
+                style=primary.style,
+            )
+        else:
+            self._series_list = [
+                Series(
+                    key="__oscillator__",
+                    title=self._title,
+                    values=list(values),
+                )
+            ]
+
+        self.update()
+
+    def set_series_list(self, series_list: List[Series]) -> None:
+        normalized: List[Series] = []
+        for series in series_list:
+            normalized.append(
+                Series(
+                    key=str(series.key),
+                    title=str(series.title),
+                    values=list(series.values),
+                    style=series.style,
+                )
+            )
+
+        self._series_list = normalized
+        primary = self._primary_series()
+        self._values = list(primary.values) if primary is not None else []
         self.update()
 
     def set_resident_base_index(self, base_index: int) -> None:
         self._resident_base_index = max(0, int(base_index))
         self.update()
 
-    def _global_to_local(self, global_index: int) -> Optional[int]:
+    def _primary_series(self) -> Optional[Series]:
+        if not self._series_list:
+            return None
+        return self._series_list[0]
+
+    def _global_to_local(self, global_index: int, values: List[float]) -> Optional[int]:
         local = int(global_index) - self._resident_base_index
-        if 0 <= local < len(self._values):
+        if 0 <= local < len(values):
             return local
         return None
 
-    def _value_at_global(self, global_index: int) -> Optional[float]:
-        local = self._global_to_local(global_index)
+    def _value_at_global_for_values(self, global_index: int, values: List[float]) -> Optional[float]:
+        local = self._global_to_local(global_index, values)
         if local is None:
             return None
-        return float(self._values[local])
+        try:
+            numeric = float(values[local])
+        except Exception:
+            return None
+        if numeric != numeric:
+            return None
+        return numeric
 
     def _plot_rect(self) -> QRectF:
         w = self.width()
@@ -337,6 +395,37 @@ class OscillatorRenderSurface(QWidget):
 
     def _axis_rect(self, plot: QRectF) -> QRectF:
         return QRectF(plot.right(), plot.top(), float(self._pad_right), plot.height())
+
+    def _pen_for_series(self, series: Series) -> QPen:
+        color_text = ""
+        line_width = 1
+        line_style = "solid"
+
+        if getattr(series, "style", None) is not None:
+            color_text = str(getattr(series.style, "color", "") or "").strip()
+            try:
+                line_width = max(1, int(getattr(series.style, "line_width", 1)))
+            except Exception:
+                line_width = 1
+            line_style = str(getattr(series.style, "line_style", "solid") or "solid").strip().lower()
+
+        color = QColor(color_text) if color_text else QColor(0, 200, 255)
+        if not color.isValid():
+            color = QColor(0, 200, 255)
+
+        pen = QPen(color)
+        pen.setWidth(line_width)
+
+        if line_style == "dotted":
+            pen.setStyle(Qt.DotLine)
+        elif line_style == "dashed":
+            pen.setStyle(Qt.DashLine)
+        elif line_style == "dash_dot":
+            pen.setStyle(Qt.DashDotLine)
+        else:
+            pen.setStyle(Qt.SolidLine)
+
+        return pen
 
     def mouseMoveEvent(self, e) -> None:
         plot = self._plot_rect()
@@ -370,7 +459,6 @@ class OscillatorRenderSurface(QWidget):
             return
 
         anchor_idx = self._viewport.index_from_x(plot, mx)
-        # slot-centered anchor_rel (NOT continuous mouse-based)
         anchor_rel = ((anchor_idx - self._viewport.start) + 0.5) / max(1, self._viewport.visible)
 
         dy = event.angleDelta().y()
@@ -400,9 +488,18 @@ class OscillatorRenderSurface(QWidget):
         p.drawRect(plot)
 
         start, end = self._viewport.start, self._viewport.end
-        vis: List[Optional[float]] = [self._value_at_global(gi) for gi in range(start, end)]
-        real_vis = [v for v in vis if v is not None]
-        if len(real_vis) < 2:
+
+        visible_series: List[tuple[Series, List[Optional[float]]]] = []
+        real_vis: List[float] = []
+
+        for series in self._series_list:
+            vis = [self._value_at_global_for_values(gi, series.values) for gi in range(start, end)]
+            usable = [v for v in vis if v is not None]
+            if usable:
+                visible_series.append((series, vis))
+                real_vis.extend(usable)
+
+        if not real_vis:
             return
 
         ymin = min(real_vis)
@@ -410,12 +507,11 @@ class OscillatorRenderSurface(QWidget):
         if ymax <= ymin:
             ymax = ymin + 1.0
 
-        n = len(vis)
-        dx = plot.width() / max(1, (n - 1))
+        n = max(0, end - start)
+        if n <= 0:
+            return
 
-        pen = QPen(QColor(0, 200, 255))
-        pen.setWidth(1)
-        p.setPen(pen)
+        dx = plot.width() / max(1, (n - 1))
 
         def y_to_px(v: float) -> float:
             t = (v - ymin) / (ymax - ymin)
@@ -424,21 +520,34 @@ class OscillatorRenderSurface(QWidget):
         p.save()
         p.setClipRect(plot)
 
-        prev_x: float | None = None
-        prev_y: float | None = None
-        for i, v in enumerate(vis):
-            if v is None:
-                prev_x = None
-                prev_y = None
-                continue
+        for series, vis in visible_series:
+            pen = self._pen_for_series(series)
+            p.setPen(pen)
 
-            x = plot.left() + i * dx
-            y = y_to_px(v)
+            prev_x: Optional[float] = None
+            prev_y: Optional[float] = None
+            valid_points = 0
+            last_point: Optional[tuple[float, float]] = None
 
-            if prev_x is not None and prev_y is not None:
-                p.drawLine(int(prev_x), int(prev_y), int(x), int(y))
+            for i, v in enumerate(vis):
+                if v is None:
+                    prev_x = None
+                    prev_y = None
+                    continue
 
-            prev_x, prev_y = x, y
+                x = plot.left() + i * dx
+                y = y_to_px(v)
+                valid_points += 1
+                last_point = (x, y)
+
+                if prev_x is not None and prev_y is not None:
+                    p.drawLine(int(prev_x), int(prev_y), int(x), int(y))
+
+                prev_x, prev_y = x, y
+
+            if valid_points == 1 and last_point is not None:
+                point_x, point_y = last_point
+                p.drawEllipse(QRectF(point_x - 2.0, point_y - 2.0, 4.0, 4.0))
 
         if self._crosshair.active and self._crosshair.index is not None:
             idx = self._crosshair.index
@@ -448,19 +557,34 @@ class OscillatorRenderSurface(QWidget):
                 p.setPen(QPen(QColor(120, 120, 140)))
                 p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
 
-            v_cross = self._value_at_global(idx)
-            if v_cross is not None:
-                y = y_to_px(v_cross)
-                p.setPen(QPen(QColor(120, 120, 140)))
-                p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
+            primary = self._primary_series()
+            if primary is not None:
+                v_cross = self._value_at_global_for_values(idx, primary.values)
+                if v_cross is not None:
+                    y = y_to_px(v_cross)
+                    p.setPen(QPen(QColor(120, 120, 140)))
+                    p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
 
         p.restore()
 
-        if self._values:
-            v_last = float(self._values[-1])
-            y_tag = y_to_px(v_last)
-            p.setFont(QFont("Consolas", 9))
-            draw_right_axis_value_tag(p, axis, y_tag, f"{v_last:.2f}")
+        primary = self._primary_series()
+        if primary is not None and primary.values:
+            v_last = self._value_at_global_for_values(
+                self._resident_base_index + len(primary.values) - 1,
+                primary.values,
+            )
+            if v_last is None:
+                try:
+                    raw_last = float(primary.values[-1])
+                    if raw_last == raw_last:
+                        v_last = raw_last
+                except Exception:
+                    v_last = None
+
+            if v_last is not None:
+                y_tag = y_to_px(v_last)
+                p.setFont(QFont("Consolas", 9))
+                draw_right_axis_value_tag(p, axis, y_tag, f"{v_last:.2f}")
 
         p.setPen(QPen(QColor(170, 170, 185)))
         p.setFont(QFont("Consolas", 9))

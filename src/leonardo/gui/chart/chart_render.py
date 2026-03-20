@@ -206,6 +206,58 @@ class ChartRenderSurface(QWidget):
                 if math.isfinite(val):
                     yield val
 
+    def _coerce_color(self, value: object, fallback: QColor) -> QColor:
+        if isinstance(value, QColor):
+            return value
+
+        if value is None:
+            return fallback
+
+        text = str(value).strip()
+        if not text:
+            return fallback
+
+        candidate = QColor(text)
+        if candidate.isValid():
+            return candidate
+
+        return fallback
+
+    def _qt_pen_style_for_series(self, series: object) -> Qt.PenStyle:
+        style_obj = getattr(series, "style", None)
+        if style_obj is None:
+            return Qt.SolidLine
+
+        line_style = str(getattr(style_obj, "line_style", "solid") or "solid").strip().lower()
+
+        if line_style == "dotted":
+            return Qt.DotLine
+        if line_style == "dashed":
+            return Qt.DashLine
+        if line_style == "dash_dot":
+            return Qt.DashDotLine
+        return Qt.SolidLine
+
+    def _pen_width_for_series(self, series: object) -> int:
+        style_obj = getattr(series, "style", None)
+        if style_obj is None:
+            return 2
+
+        try:
+            width = int(getattr(style_obj, "line_width", 2))
+        except Exception:
+            width = 2
+
+        return max(1, min(8, width))
+
+    def _pen_color_for_series(self, series: object, series_index: int) -> QColor:
+        fallback = self._overlay_palette[series_index % len(self._overlay_palette)]
+        style_obj = getattr(series, "style", None)
+        if style_obj is None:
+            return fallback
+
+        return self._coerce_color(getattr(style_obj, "color", None), fallback)
+
     # ---------------- Mouse ----------------
 
     def mousePressEvent(self, event: QMouseEvent) -> None:
@@ -1101,9 +1153,10 @@ class ChartRenderSurface(QWidget):
             if not isinstance(values, list) or not values:
                 continue
 
-            color = self._overlay_palette[series_index % len(self._overlay_palette)]
+            color = self._pen_color_for_series(series, series_index)
             pen = QPen(color)
-            pen.setWidth(2)
+            pen.setWidth(self._pen_width_for_series(series))
+            pen.setStyle(self._qt_pen_style_for_series(series))
             p.setPen(pen)
 
             segment_points: List[Tuple[float, float]] = []

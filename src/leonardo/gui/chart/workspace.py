@@ -15,8 +15,17 @@ from leonardo.gui.chart.crosshair import Crosshair
 
 @dataclass(frozen=True)
 class OscillatorSpec:
-    key: str    # unique id, e.g. "rsi_14"
-    title: str  # e.g. "RSI(14)"
+    key: str
+    title: str
+
+
+@dataclass
+class OscillatorPaneState:
+    pane_id: str
+    study_instance_id: str
+    title: str
+    render_keys: List[str]
+    preferred_height: int = 220
 
 
 class ChartWorkspaceWidget(QWidget):
@@ -55,13 +64,22 @@ class ChartWorkspaceWidget(QWidget):
 
         # Optional panes (not shown by default)
         self._volume: Optional[VolumePane] = None
+
+        # Legacy compatibility map: series key -> pane
+        # This is ONLY for legacy one-series-per-pane oscillator flows.
         self._oscillators: Dict[str, OscillatorPane] = {}
+
+        # Managed oscillator pane state
+        self._oscillator_panes_by_id: Dict[str, OscillatorPane] = {}
+        self._oscillator_states_by_id: Dict[str, OscillatorPaneState] = {}
+        self._oscillator_pane_order: List[str] = []
+        self._study_to_pane_id: Dict[str, str] = {}
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self._splitter)
 
-        self._apply_default_sizes()
+        self._apply_default_sizes(force=True)
 
     # -------- Public API (MainWindow / controller calls these) --------
 
@@ -90,19 +108,20 @@ class ChartWorkspaceWidget(QWidget):
             )
             self._splitter.addWidget(self._volume)
             self._refresh_aux_pane_bindings()
-            self._apply_default_sizes()
+            self._apply_default_sizes(force=True)
         elif not enabled and self._volume is not None:
+            self._capture_managed_pane_heights()
             self._remove_widget(self._volume)
             self._volume.deleteLater()
             self._volume = None
-            self._apply_default_sizes()
+            self._apply_default_sizes(force=True)
 
     def add_oscillator(self, spec: OscillatorSpec) -> None:
         """
-        Create a pane for an already-existing oscillator series in the model.
+        Legacy compatibility path.
 
-        This method no longer creates dummy data. A real oscillator series must
-        already exist in the model before a pane is added.
+        Create a pane for an already-existing oscillator series in the model.
+        This remains series-based and should be avoided by new code.
         """
         if spec.key in self._oscillators:
             return
@@ -121,26 +140,45 @@ class ChartWorkspaceWidget(QWidget):
         self._oscillators[spec.key] = pane
         self._splitter.addWidget(pane)
         self._refresh_aux_pane_bindings()
-        self._apply_default_sizes()
+        self._apply_default_sizes(force=True)
 
     def remove_oscillator(self, key: str) -> None:
         pane = self._oscillators.pop(key, None)
         if pane is None:
             return
+
+        self._capture_managed_pane_heights()
         self._remove_widget(pane)
         pane.deleteLater()
         self._model.remove_oscillator(key)
-        self._apply_default_sizes()
+        self._apply_default_sizes(force=True)
 
     def clear_oscillators(self) -> None:
-        for key in list(self._oscillators.keys()):
-            pane = self._oscillators.pop(key, None)
+        self._capture_managed_pane_heights()
+
+        # Remove legacy panes only. Managed panes are owned separately below.
+        legacy_panes = self._legacy_oscillator_panes_in_order()
+        self._oscillators.clear()
+
+        for pane in legacy_panes:
+            self._remove_widget(pane)
+            pane.deleteLater()
+
+        # Remove managed panes once, through managed ownership only.
+        for pane_id in list(self._oscillator_pane_order):
+            pane = self._oscillator_panes_by_id.pop(pane_id, None)
             if pane is not None:
                 self._remove_widget(pane)
                 pane.deleteLater()
+
+        self._oscillator_states_by_id.clear()
+        self._oscillator_pane_order.clear()
+        self._study_to_pane_id.clear()
+
         for key in list(self._model.oscillators().keys()):
             self._model.remove_oscillator(key)
-        self._apply_default_sizes()
+
+        self._apply_default_sizes(force=True)
 
     def clear_overlays(self) -> None:
         for key in list(self._model.overlays().keys()):
@@ -173,7 +211,10 @@ class ChartWorkspaceWidget(QWidget):
 
     def apply_oscillator_series(self, series: Series) -> None:
         """
+        Legacy compatibility path.
+
         Apply or replace an oscillator series and ensure its pane exists.
+        New code should prefer apply_oscillator_study().
         """
         self._model.set_oscillator(series)
 
@@ -197,15 +238,143 @@ class ChartWorkspaceWidget(QWidget):
 
         self._refresh_aux_pane_bindings()
         self._refresh_studies_labels()
-        self._apply_default_sizes()
+        self._apply_default_sizes(force=True)
 
     def remove_oscillator_series(self, key: str) -> None:
         """
-        Remove an oscillator series and its pane.
+        Remove an oscillator series.
+
+        This method supports both:
+        - legacy series-level panes
+        - managed study-level panes containing the series
         """
-        self.remove_oscillator(key)
+        pane_id = self._pane_id_for_render_key(key)
+        if pane_id:
+            state = self._oscillator_states_by_id.get(pane_id)
+            if state is not None:
+                self.remove_oscillator_study(state.study_instance_id)
+        else:
+            self.remove_oscillator(key)
+
         self._refresh_aux_pane_bindings()
         self._refresh_studies_labels()
+
+    def apply_oscillator_study(
+        self,
+        *,
+        study_instance_id: str,
+        title: str,
+        series_list: List[Series],
+    ) -> None:
+        """
+        Apply or replace a managed oscillator study.
+
+        One study maps to one pane in this phase.
+        A study may contain multiple render series.
+        """
+        normalized_study_id = str(study_instance_id).strip()
+        if not normalized_study_id:
+            return
+
+        normalized_series = [
+            Series(
+                key=str(series.key),
+                title=str(series.title),
+                values=list(series.values),
+                style=series.style,
+            )
+            for series in series_list
+        ]
+        if not normalized_series:
+            return
+
+        for series in normalized_series:
+            self._model.set_oscillator(series)
+
+        pane_id = self._study_to_pane_id.get(normalized_study_id)
+        if pane_id is None:
+            pane_id = normalized_study_id
+            self._study_to_pane_id[normalized_study_id] = pane_id
+
+        render_keys = [series.key for series in normalized_series]
+        state = self._oscillator_states_by_id.get(pane_id)
+
+        if state is None:
+            state = OscillatorPaneState(
+                pane_id=pane_id,
+                study_instance_id=normalized_study_id,
+                title=str(title).strip() or normalized_series[0].title,
+                render_keys=list(render_keys),
+            )
+            self._oscillator_states_by_id[pane_id] = state
+            self._oscillator_pane_order.append(pane_id)
+
+            pane = OscillatorPane(
+                title=state.title,
+                viewport=self._viewport,
+                crosshair=self._crosshair,
+                study_instance_id=normalized_study_id,
+                series_list=normalized_series,
+                parent=self,
+            )
+            self._oscillator_panes_by_id[pane_id] = pane
+            self._splitter.addWidget(pane)
+        else:
+            state.title = str(title).strip() or normalized_series[0].title
+            state.render_keys = list(render_keys)
+            state.study_instance_id = normalized_study_id
+
+            pane = self._oscillator_panes_by_id[pane_id]
+            pane.set_study_instance_id(normalized_study_id)
+            pane.set_title(state.title)
+            pane.set_series_list(normalized_series)
+
+        self._refresh_oscillator_pane_capabilities()
+        self._refresh_aux_pane_bindings()
+        self._refresh_studies_labels()
+        self._apply_default_sizes(force=True)
+
+    def remove_oscillator_study(self, study_instance_id: str) -> None:
+        normalized_study_id = str(study_instance_id).strip()
+        if not normalized_study_id:
+            return
+
+        pane_id = self._study_to_pane_id.pop(normalized_study_id, None)
+        if pane_id is None:
+            return
+
+        self._capture_managed_pane_heights()
+
+        state = self._oscillator_states_by_id.pop(pane_id, None)
+        pane = self._oscillator_panes_by_id.pop(pane_id, None)
+
+        if state is not None:
+            for render_key in state.render_keys:
+                self._model.remove_oscillator(render_key)
+
+        if pane_id in self._oscillator_pane_order:
+            self._oscillator_pane_order.remove(pane_id)
+
+        if pane is not None:
+            self._remove_widget(pane)
+            pane.deleteLater()
+
+        self._refresh_oscillator_pane_capabilities()
+        self._refresh_aux_pane_bindings()
+        self._refresh_studies_labels()
+        self._apply_default_sizes(force=True)
+
+    def move_oscillator_pane_up(self, study_instance_id: str) -> bool:
+        return self._move_oscillator_pane(study_instance_id, direction=-1)
+
+    def move_oscillator_pane_down(self, study_instance_id: str) -> bool:
+        return self._move_oscillator_pane(study_instance_id, direction=1)
+
+    def oscillator_pane_for_study(self, study_instance_id: str) -> Optional[OscillatorPane]:
+        pane_id = self._study_to_pane_id.get(str(study_instance_id).strip())
+        if pane_id is None:
+            return None
+        return self._oscillator_panes_by_id.get(pane_id)
 
     @property
     def viewport(self) -> ChartViewport:
@@ -372,11 +541,24 @@ class ChartWorkspaceWidget(QWidget):
 
     # -------- Internal helpers --------
 
-    def _apply_default_sizes(self) -> None:
+    def _apply_default_sizes(self, *, force: bool = False) -> None:
+        widgets = self._current_splitter_widget_order()
+        current_sizes = self._splitter.sizes()
+
+        if not force and len(current_sizes) == len(widgets):
+            all_positive = all(int(size) > 0 for size in current_sizes)
+            if sum(current_sizes) > 0 and all_positive:
+                return
+
         sizes = [800]
         if self._volume:
             sizes.append(200)
-        for _ in range(len(self._oscillators)):
+
+        for pane_id in self._oscillator_pane_order:
+            state = self._oscillator_states_by_id.get(pane_id)
+            sizes.append(state.preferred_height if state is not None else 220)
+
+        for _ in self._legacy_oscillator_panes_in_order():
             sizes.append(220)
 
         if len(sizes) == 1:
@@ -456,5 +638,173 @@ class ChartWorkspaceWidget(QWidget):
             if hasattr(pane, "set_resident_base_index"):
                 try:
                     pane.set_resident_base_index(resident_base_index)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+        for pane_id in self._oscillator_pane_order:
+            pane = self._oscillator_panes_by_id.get(pane_id)
+            state = self._oscillator_states_by_id.get(pane_id)
+            if pane is None or state is None:
+                continue
+
+            series_list: List[Series] = []
+            for render_key in state.render_keys:
+                series = self._model.oscillator(render_key)
+                if series is not None:
+                    series_list.append(series)
+
+            if series_list:
+                if hasattr(pane, "set_series_list"):
+                    try:
+                        pane.set_series_list(series_list)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                elif hasattr(pane, "set_values"):
+                    try:
+                        pane.set_values(series_list[0].values)  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+
+            if hasattr(pane, "set_resident_base_index"):
+                try:
+                    pane.set_resident_base_index(resident_base_index)  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+
+    def _pane_id_for_render_key(self, render_key: str) -> Optional[str]:
+        normalized_key = str(render_key).strip()
+        if not normalized_key:
+            return None
+
+        for pane_id, state in self._oscillator_states_by_id.items():
+            if normalized_key in state.render_keys:
+                return pane_id
+        return None
+
+    def _legacy_oscillator_panes_in_order(self) -> List[OscillatorPane]:
+        ordered: List[OscillatorPane] = []
+        seen: set[int] = set()
+
+        for pane in self._oscillators.values():
+            marker = id(pane)
+            if marker in seen:
+                continue
+            seen.add(marker)
+            ordered.append(pane)
+
+        return ordered
+
+    def _current_splitter_widget_order(self) -> List[QWidget]:
+        widgets: List[QWidget] = []
+        for index in range(self._splitter.count()):
+            widget = self._splitter.widget(index)
+            if widget is not None:
+                widgets.append(widget)
+        return widgets
+
+    def _capture_managed_pane_heights(self) -> None:
+        widgets = self._current_splitter_widget_order()
+        sizes = self._splitter.sizes()
+
+        if len(widgets) != len(sizes):
+            return
+
+        for widget, size in zip(widgets, sizes, strict=True):
+            for pane_id, pane in self._oscillator_panes_by_id.items():
+                if pane is widget:
+                    state = self._oscillator_states_by_id.get(pane_id)
+                    if state is not None:
+                        state.preferred_height = max(120, int(size))
+                    break
+
+    def _move_oscillator_pane(self, study_instance_id: str, direction: int) -> bool:
+        pane_id = self._study_to_pane_id.get(str(study_instance_id).strip())
+        if pane_id is None:
+            return False
+
+        try:
+            index = self._oscillator_pane_order.index(pane_id)
+        except ValueError:
+            return False
+
+        new_index = index + int(direction)
+        if new_index < 0 or new_index >= len(self._oscillator_pane_order):
+            return False
+
+        self._capture_managed_pane_heights()
+
+        self._oscillator_pane_order[index], self._oscillator_pane_order[new_index] = (
+            self._oscillator_pane_order[new_index],
+            self._oscillator_pane_order[index],
+        )
+
+        self._rebuild_splitter_layout()
+        self._refresh_oscillator_pane_capabilities()
+        return True
+
+    def _rebuild_splitter_layout(self) -> None:
+        current_widgets = self._current_splitter_widget_order()
+        current_sizes = self._splitter.sizes()
+        widget_sizes: Dict[QWidget, int] = {}
+
+        if len(current_widgets) == len(current_sizes):
+            for widget, size in zip(current_widgets, current_sizes, strict=True):
+                widget_sizes[widget] = int(size)
+
+        widgets: List[QWidget] = [self._price]
+        if self._volume is not None:
+            widgets.append(self._volume)
+
+        for pane_id in self._oscillator_pane_order:
+            pane = self._oscillator_panes_by_id.get(pane_id)
+            if pane is not None:
+                widgets.append(pane)
+
+        for pane in self._legacy_oscillator_panes_in_order():
+            if pane not in widgets:
+                widgets.append(pane)
+
+        for index, widget in enumerate(widgets):
+            self._splitter.insertWidget(index, widget)
+
+        sizes: List[int] = []
+        for widget in widgets:
+            size = widget_sizes.get(widget)
+            if size is not None and size > 0:
+                sizes.append(size)
+                continue
+
+            if widget is self._price:
+                sizes.append(800)
+            elif widget is self._volume:
+                sizes.append(200)
+            else:
+                pane_id_for_widget = None
+                for pane_id, pane in self._oscillator_panes_by_id.items():
+                    if pane is widget:
+                        pane_id_for_widget = pane_id
+                        break
+
+                if pane_id_for_widget is not None:
+                    state = self._oscillator_states_by_id.get(pane_id_for_widget)
+                    sizes.append(state.preferred_height if state is not None else 220)
+                else:
+                    sizes.append(220)
+
+        if sizes:
+            self._splitter.setSizes(sizes)
+
+    def _refresh_oscillator_pane_capabilities(self) -> None:
+        total = len(self._oscillator_pane_order)
+        for index, pane_id in enumerate(self._oscillator_pane_order):
+            pane = self._oscillator_panes_by_id.get(pane_id)
+            if pane is None:
+                continue
+            if hasattr(pane, "set_move_capabilities"):
+                try:
+                    pane.set_move_capabilities(
+                        can_move_up=index > 0,
+                        can_move_down=index < (total - 1),
+                    )
                 except Exception:
                     pass

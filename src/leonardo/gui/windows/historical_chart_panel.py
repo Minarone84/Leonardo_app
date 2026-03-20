@@ -1,21 +1,30 @@
 from __future__ import annotations
 
 import uuid
+from dataclasses import replace
 from typing import Any, Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
-    QMessageBox,
-    QWidget,
-    QVBoxLayout,
+    QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QFormLayout,
+    QFrame,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
     QToolButton,
-    QFrame,
+    QVBoxLayout,
+    QWidget,
 )
 
 from leonardo.gui.core_bridge import CoreBridge
-from leonardo.gui.chart.model import Series
+from leonardo.gui.chart.model import Series, SeriesStyle
 from leonardo.gui.chart.studies import (
     ChartStudyInstance,
     ChartStudyRegistry,
@@ -27,10 +36,148 @@ from leonardo.gui.chart.studies import (
     STUDY_FAMILY_OSCILLATOR,
     STUDY_SOURCE_TEMPORARY,
     StudyComputationConfig,
+    StudyDisplayStyle,
 )
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget
 from leonardo.gui.historical_chart_controller import HistoricalChartController
 from leonardo.gui.windows.financial_tool_manager_window import FinancialToolManagerWindow
+
+
+class StudyStyleDialog(QDialog):
+    """
+    Small chart-local style editor.
+
+    This dialog is intentionally limited to display settings only.
+    It does not touch computation parameters.
+    """
+
+    def __init__(
+        self,
+        *,
+        display_name: str,
+        current_style: StudyDisplayStyle,
+        parent: Optional[QWidget] = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Study Style - {display_name}")
+        self.setModal(True)
+        self.resize(360, 180)
+
+        self.setStyleSheet(
+            """
+            QDialog {
+                background-color: rgb(18, 18, 22);
+                color: rgb(220, 220, 230);
+            }
+            QLabel {
+                color: rgb(210, 210, 220);
+            }
+            QComboBox, QLineEdit, QSpinBox {
+                background-color: rgb(30, 30, 36);
+                color: rgb(230, 230, 240);
+                border: 1px solid rgb(68, 68, 78);
+                border-radius: 4px;
+                padding: 4px 6px;
+            }
+            QPushButton {
+                color: rgb(230, 230, 240);
+                background-color: rgb(40, 40, 48);
+                border: 1px solid rgb(68, 68, 78);
+                border-radius: 4px;
+                padding: 6px 12px;
+            }
+            """
+        )
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(12, 12, 12, 12)
+        root.setSpacing(10)
+
+        form = QFormLayout()
+        form.setSpacing(8)
+        root.addLayout(form)
+
+        self._color_edit = QLineEdit(self)
+        self._color_edit.setPlaceholderText("#RRGGBB")
+        self._color_edit.setText(str(current_style.color or "").strip())
+        form.addRow("Color", self._color_edit)
+
+        self._preset_combo = QComboBox(self)
+        self._preset_combo.addItem("Keep typed color", "")
+        for hex_color, label in (
+            ("#FFA500", "Orange"),
+            ("#00C8FF", "Cyan"),
+            ("#1E90FF", "Blue"),
+            ("#2962FF", "Deep Blue"),
+            ("#BA68C8", "Purple"),
+            ("#FFD666", "Amber"),
+            ("#4CAF50", "Green"),
+            ("#00E676", "Neon Green"),
+            ("#EF5350", "Red"),
+            ("#FF1744", "Bright Red"),
+            ("#FFFFFF", "White"),
+            ("#B0BEC5", "Grey"),
+        ):
+            self._preset_combo.addItem(label, hex_color)
+        self._preset_combo.currentIndexChanged.connect(self._on_preset_changed)
+        form.addRow("Preset", self._preset_combo)
+
+        initial_width = int(getattr(current_style, "line_width", 2))
+        initial_width = max(1, min(8, initial_width))
+
+        self._width_spin = QSpinBox(self)
+        self._width_spin.setRange(1, 8)
+        self._width_spin.setSingleStep(1)
+        self._width_spin.setValue(initial_width)
+        form.addRow("Width", self._width_spin)
+
+        self._line_style_combo = QComboBox(self)
+        self._line_style_combo.addItem("Solid", "solid")
+        self._line_style_combo.addItem("Dotted", "dotted")
+        self._line_style_combo.addItem("Dashed", "dashed")
+        self._line_style_combo.addItem("Dash Dot", "dash_dot")
+        self._set_combo_data(self._line_style_combo, current_style.line_style)
+        form.addRow("Line Style", self._line_style_combo)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            Qt.Horizontal,
+            self,
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        root.addWidget(buttons)
+
+    def _on_preset_changed(self) -> None:
+        preset = str(self._preset_combo.currentData() or "").strip()
+        if preset:
+            self._color_edit.setText(preset)
+
+    def _set_combo_data(self, combo: QComboBox, value: str) -> None:
+        target = str(value or "").strip().lower()
+        for idx in range(combo.count()):
+            current = str(combo.itemData(idx) or "").strip().lower()
+            if current == target:
+                combo.setCurrentIndex(idx)
+                return
+
+    def style_patch(self) -> Dict[str, Any]:
+        return {
+            "color": self._normalized_color_or_default(self._color_edit.text().strip()),
+            "line_width": int(self._width_spin.value()),
+            "line_style": str(self._line_style_combo.currentData() or "solid"),
+        }
+
+    def _normalized_color_or_default(self, text: str) -> str:
+        value = text.strip()
+        if not value:
+            return "#FFA500"
+
+        color = QColor(value)
+        if color.isValid():
+            return color.name().upper()
+
+        return "#FFA500"
 
 
 class HistoricalChartPanel(QFrame):
@@ -62,6 +209,9 @@ class HistoricalChartPanel(QFrame):
         # Tracks the study currently being edited so Apply can replace it
         # instead of creating a second visible instance.
         self._editing_study_instance_id: Optional[str] = None
+
+        # Tracks pane objects that already had oscillator signals wired.
+        self._wired_oscillator_pane_ids: set[int] = set()
 
         self.setObjectName("historicalChartPanel")
         self.setFrameShape(QFrame.StyledPanel)
@@ -241,22 +391,110 @@ class HistoricalChartPanel(QFrame):
         if self._editing_study_instance_id == normalized_id:
             self._editing_study_instance_id = None
 
+        self._cleanup_oscillator_pane_signal_tracking()
+
         self._on_error(
             f"Removed {removed.computation.family} study '{removed.display_name}' from chart session."
         )
         return True
 
+    def _normalize_study_family(self, tool_type: str) -> str:
+        normalized = str(tool_type).strip().lower()
+        if normalized == STUDY_FAMILY_INDICATOR:
+            return STUDY_FAMILY_INDICATOR
+        if normalized == STUDY_FAMILY_OSCILLATOR:
+            return STUDY_FAMILY_OSCILLATOR
+        if normalized == STUDY_FAMILY_CONSTRUCT:
+            return STUDY_FAMILY_CONSTRUCT
+        return normalized
+
+    def _extract_behavior(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw = payload.get("behavior", {}) or {}
+        if not isinstance(raw, dict):
+            raw = {}
+
+        output_mode = str(raw.get("output_mode", "")).strip().lower()
+        if output_mode not in {"overlay", "oscillator-pane", "non-visual"}:
+            family = self._normalize_study_family(str(payload.get("tool_type", "")))
+            if family == STUDY_FAMILY_OSCILLATOR:
+                output_mode = "oscillator-pane"
+            else:
+                output_mode = "overlay"
+
+        chart_renderable = raw.get("chart_renderable", output_mode != "non-visual")
+        supports_style = raw.get("supports_style", bool(chart_renderable))
+        supports_pane_layout = raw.get("supports_pane_layout", output_mode == "oscillator-pane")
+        supports_last_value = raw.get("supports_last_value", bool(chart_renderable))
+
+        return {
+            "output_mode": output_mode,
+            "chart_renderable": bool(chart_renderable),
+            "supports_style": bool(supports_style),
+            "supports_pane_layout": bool(supports_pane_layout),
+            "supports_last_value": bool(supports_last_value),
+        }
+
+    def _extract_output(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        raw = payload.get("output", {}) or {}
+        if not isinstance(raw, dict):
+            raw = {}
+
+        output_names = raw.get("output_names", []) or []
+        if not isinstance(output_names, list):
+            output_names = list(output_names) if isinstance(output_names, tuple) else []
+
+        return {
+            "structure": str(raw.get("structure", "")).strip().lower(),
+            "output_names": [str(name) for name in output_names],
+            "accepts_empty_render_output": bool(raw.get("accepts_empty_render_output", False)),
+        }
+
+    def _pane_target_for_output_mode(self, output_mode: str) -> Optional[str]:
+        normalized = str(output_mode).strip().lower()
+        if normalized == "oscillator-pane":
+            return PANE_TARGET_OSCILLATOR
+        if normalized == "overlay":
+            return PANE_TARGET_PRICE
+        return None
+
+    def _study_is_renderable(self, study: ChartStudyInstance) -> bool:
+        return bool(study.runtime.render_keys)
+
     def _remove_study_rendered_series(self, study: ChartStudyInstance) -> None:
+        if not self._study_is_renderable(study):
+            return
+
+        if study.pane_target == PANE_TARGET_OSCILLATOR:
+            if hasattr(self._workspace, "remove_oscillator_study"):
+                try:
+                    self._workspace.remove_oscillator_study(study.instance_id)
+                    self._cleanup_oscillator_pane_signal_tracking()
+                    return
+                except Exception as e:
+                    self._on_error(
+                        f"Managed oscillator study removal fallback engaged for "
+                        f"'{study.display_name}': {e!r}"
+                    )
+
         for render_key in study.runtime.render_keys:
             if study.pane_target == PANE_TARGET_OSCILLATOR:
                 self._workspace.remove_oscillator_series(render_key)
             else:
                 self._workspace.remove_overlay_series(render_key)
 
+        self._cleanup_oscillator_pane_signal_tracking()
+
     def _connect_price_pane_study_signals(self) -> None:
         price_pane = getattr(self._workspace, "_price", None)
         if price_pane is None:
             return
+
+        style_signal = getattr(price_pane, "study_style_requested", None)
+        if style_signal is not None:
+            try:
+                style_signal.connect(self._on_price_pane_study_style_requested)
+            except Exception:
+                pass
 
         edit_signal = getattr(price_pane, "study_edit_requested", None)
         if edit_signal is not None:
@@ -271,6 +509,83 @@ class HistoricalChartPanel(QFrame):
                 remove_signal.connect(self._on_price_pane_study_remove_requested)
             except Exception:
                 pass
+
+    def _connect_oscillator_pane_signals_for_study(self, study_instance_id: str) -> None:
+        pane = None
+        if hasattr(self._workspace, "oscillator_pane_for_study"):
+            try:
+                pane = self._workspace.oscillator_pane_for_study(study_instance_id)
+            except Exception:
+                pane = None
+
+        if pane is None:
+            return
+
+        pane_marker = id(pane)
+        if pane_marker in self._wired_oscillator_pane_ids:
+            return
+
+        style_signal = getattr(pane, "study_style_requested", None)
+        if style_signal is not None:
+            try:
+                style_signal.connect(self._on_oscillator_pane_study_style_requested)
+            except Exception:
+                pass
+
+        edit_signal = getattr(pane, "study_edit_requested", None)
+        if edit_signal is not None:
+            try:
+                edit_signal.connect(self._on_oscillator_pane_study_edit_requested)
+            except Exception:
+                pass
+
+        remove_signal = getattr(pane, "study_remove_requested", None)
+        if remove_signal is not None:
+            try:
+                remove_signal.connect(self._on_oscillator_pane_study_remove_requested)
+            except Exception:
+                pass
+
+        move_up_signal = getattr(pane, "pane_move_up_requested", None)
+        if move_up_signal is not None:
+            try:
+                move_up_signal.connect(self._on_oscillator_pane_move_up_requested)
+            except Exception:
+                pass
+
+        move_down_signal = getattr(pane, "pane_move_down_requested", None)
+        if move_down_signal is not None:
+            try:
+                move_down_signal.connect(self._on_oscillator_pane_move_down_requested)
+            except Exception:
+                pass
+
+        destroyed_signal = getattr(pane, "destroyed", None)
+        if destroyed_signal is not None:
+            try:
+                destroyed_signal.connect(
+                    lambda *_args, marker=pane_marker: self._wired_oscillator_pane_ids.discard(marker)
+                )
+            except Exception:
+                pass
+
+        self._wired_oscillator_pane_ids.add(pane_marker)
+
+    def _cleanup_oscillator_pane_signal_tracking(self) -> None:
+        live_markers: set[int] = set()
+
+        for study in self._study_registry.list_for_pane(PANE_TARGET_OSCILLATOR):
+            pane = None
+            if hasattr(self._workspace, "oscillator_pane_for_study"):
+                try:
+                    pane = self._workspace.oscillator_pane_for_study(study.instance_id)
+                except Exception:
+                    pane = None
+
+            if pane is not None:
+                live_markers.add(id(pane))
+
+        self._wired_oscillator_pane_ids.intersection_update(live_markers)
 
     def _find_study_by_render_key(self, render_key: str) -> Optional[ChartStudyInstance]:
         normalized_key = str(render_key).strip()
@@ -290,12 +605,144 @@ class HistoricalChartPanel(QFrame):
 
         self.remove_study_instance(study.instance_id)
 
+    def _on_price_pane_study_style_requested(self, render_key: str) -> None:
+        study = self._find_study_by_render_key(render_key)
+        if study is None:
+            self._on_error(f"Cannot style study: render key '{render_key}' is not registered.")
+            return
+
+        dialog = StudyStyleDialog(
+            display_name=study.display_name,
+            current_style=study.style,
+            parent=self,
+        )
+        if dialog.exec() != int(QDialog.Accepted):
+            return
+
+        patch = dialog.style_patch()
+        self._apply_study_style_patch(study.instance_id, patch)
+
+    def _on_oscillator_pane_study_style_requested(self, instance_id: str) -> None:
+        normalized_id = str(instance_id).strip()
+        if not normalized_id:
+            self._on_error("Cannot style oscillator study: empty instance_id.")
+            return
+
+        study = self._study_registry.get(normalized_id)
+        if study is None:
+            self._on_error(f"Cannot style oscillator study: unknown instance_id '{normalized_id}'.")
+            return
+
+        dialog = StudyStyleDialog(
+            display_name=study.display_name,
+            current_style=study.style,
+            parent=self,
+        )
+        if dialog.exec() != int(QDialog.Accepted):
+            return
+
+        patch = dialog.style_patch()
+        self._apply_study_style_patch(study.instance_id, patch)
+
+    def _apply_study_style_patch(self, instance_id: str, patch: Dict[str, Any]) -> None:
+        study = self._study_registry.get(instance_id)
+        if study is None:
+            self._on_error(f"Cannot apply style: unknown instance_id '{instance_id}'.")
+            return
+
+        if not self._study_is_renderable(study):
+            self._on_error(f"Cannot apply style: study '{study.display_name}' is non-visual.")
+            return
+
+        new_style = study.style.merged(patch)
+        updated_study = replace(study, style=new_style)
+        self._study_registry.add(updated_study)
+
+        self._reapply_study_render_series(updated_study)
+
+        self._on_error(
+            f"Updated style for study '{updated_study.display_name}' "
+            f"(color={updated_study.style.color}, "
+            f"width={updated_study.style.line_width}, "
+            f"line_style={updated_study.style.line_style})."
+        )
+
+    def _reapply_study_render_series(self, study: ChartStudyInstance) -> None:
+        if not self._study_is_renderable(study):
+            return
+
+        styled_series_list: List[Series] = []
+
+        for render_key in study.runtime.render_keys:
+            existing_series = None
+            if study.pane_target == PANE_TARGET_OSCILLATOR:
+                existing_series = self._workspace.model.oscillator(render_key)
+            else:
+                existing_series = self._workspace.model.overlays().get(render_key)
+
+            if existing_series is None:
+                continue
+
+            styled_series = Series(
+                key=existing_series.key,
+                title=existing_series.title,
+                values=list(existing_series.values),
+                style=SeriesStyle(
+                    color=study.style.color,
+                    line_width=int(study.style.line_width),
+                    line_style=str(study.style.line_style),
+                ),
+            )
+            styled_series_list.append(styled_series)
+
+        if not styled_series_list:
+            return
+
+        if study.pane_target == PANE_TARGET_OSCILLATOR:
+            if hasattr(self._workspace, "apply_oscillator_study"):
+                try:
+                    self._workspace.apply_oscillator_study(
+                        study_instance_id=study.instance_id,
+                        title=study.display_name,
+                        series_list=styled_series_list,
+                    )
+                    self._connect_oscillator_pane_signals_for_study(study.instance_id)
+                    return
+                except Exception as e:
+                    self._on_error(
+                        f"Managed oscillator study reapply fallback engaged for "
+                        f"'{study.display_name}': {e!r}"
+                    )
+
+            for styled_series in styled_series_list:
+                self._workspace.apply_oscillator_series(styled_series)
+            return
+
+        for styled_series in styled_series_list:
+            self._workspace.apply_overlay_series(styled_series)
+
     def _on_price_pane_study_edit_requested(self, render_key: str) -> None:
         study = self._find_study_by_render_key(render_key)
         if study is None:
             self._on_error(f"Cannot edit study: render key '{render_key}' is not registered.")
             return
 
+        self._open_study_for_edit(study)
+
+    def _on_oscillator_pane_study_edit_requested(self, instance_id: str) -> None:
+        normalized_id = str(instance_id).strip()
+        if not normalized_id:
+            self._on_error("Cannot edit oscillator study: empty instance_id.")
+            return
+
+        study = self._study_registry.get(normalized_id)
+        if study is None:
+            self._on_error(f"Cannot edit oscillator study: unknown instance_id '{normalized_id}'.")
+            return
+
+        self._open_study_for_edit(study)
+
+    def _open_study_for_edit(self, study: ChartStudyInstance) -> None:
         self._editing_study_instance_id = study.instance_id
 
         manager = self._ensure_financial_tool_manager_window()
@@ -339,6 +786,61 @@ class HistoricalChartPanel(QFrame):
                 f"'{study.display_name}' "
                 f"(tool_key={study.computation.tool_key}, params={study.computation.params})."
             )
+
+    def _on_oscillator_pane_study_remove_requested(self, instance_id: str) -> None:
+        normalized_id = str(instance_id).strip()
+        if not normalized_id:
+            self._on_error("Cannot remove oscillator study: empty instance_id.")
+            return
+
+        study = self._study_registry.get(normalized_id)
+        if study is None:
+            self._on_error(f"Cannot remove oscillator study: unknown instance_id '{normalized_id}'.")
+            return
+
+        self.remove_study_instance(study.instance_id)
+
+    def _on_oscillator_pane_move_up_requested(self, instance_id: str) -> None:
+        normalized_id = str(instance_id).strip()
+        if not normalized_id:
+            self._on_error("Cannot move oscillator pane up: empty instance_id.")
+            return
+
+        if hasattr(self._workspace, "move_oscillator_pane_up"):
+            try:
+                moved = bool(self._workspace.move_oscillator_pane_up(normalized_id))
+            except Exception as e:
+                self._on_error(f"Oscillator pane move up failed: {e!r}")
+                return
+
+            if moved:
+                study = self._study_registry.get(normalized_id)
+                if study is not None:
+                    self._on_error(f"Moved oscillator pane up for '{study.display_name}'.")
+            return
+
+        self._on_error("Oscillator pane move up is not available on the current workspace.")
+
+    def _on_oscillator_pane_move_down_requested(self, instance_id: str) -> None:
+        normalized_id = str(instance_id).strip()
+        if not normalized_id:
+            self._on_error("Cannot move oscillator pane down: empty instance_id.")
+            return
+
+        if hasattr(self._workspace, "move_oscillator_pane_down"):
+            try:
+                moved = bool(self._workspace.move_oscillator_pane_down(normalized_id))
+            except Exception as e:
+                self._on_error(f"Oscillator pane move down failed: {e!r}")
+                return
+
+            if moved:
+                study = self._study_registry.get(normalized_id)
+                if study is not None:
+                    self._on_error(f"Moved oscillator pane down for '{study.display_name}'.")
+            return
+
+        self._on_error("Oscillator pane move down is not available on the current workspace.")
 
     def _set_dataset_identity(
         self,
@@ -452,56 +954,75 @@ class HistoricalChartPanel(QFrame):
         except Exception as e:
             self._on_error(f"Financial tool save failed: {e!r}")
 
-    def _normalize_study_family(self, tool_type: str) -> str:
-        normalized = str(tool_type).strip().lower()
-        if normalized == STUDY_FAMILY_INDICATOR:
-            return STUDY_FAMILY_INDICATOR
-        if normalized == STUDY_FAMILY_OSCILLATOR:
-            return STUDY_FAMILY_OSCILLATOR
-        if normalized == STUDY_FAMILY_CONSTRUCT:
-            return STUDY_FAMILY_CONSTRUCT
-        return normalized
-
-    def _pane_target_for_study_family(self, family: str) -> str:
-        if family == STUDY_FAMILY_OSCILLATOR:
-            return PANE_TARGET_OSCILLATOR
-        return PANE_TARGET_PRICE
-
-    def _apply_series_list_to_workspace(self, family: str, series_list: List[Series]) -> List[str]:
+    def _apply_series_list_to_workspace(
+        self,
+        *,
+        output_mode: str,
+        series_list: List[Series],
+        study_instance_id: Optional[str] = None,
+        display_name: str = "",
+    ) -> List[str]:
         render_keys: List[str] = []
+
+        normalized_mode = str(output_mode).strip().lower()
+        if normalized_mode == "non-visual":
+            return render_keys
+
+        if normalized_mode == "oscillator-pane" and study_instance_id:
+            if hasattr(self._workspace, "apply_oscillator_study"):
+                try:
+                    self._workspace.apply_oscillator_study(
+                        study_instance_id=study_instance_id,
+                        title=str(display_name).strip(),
+                        series_list=series_list,
+                    )
+                    render_keys.extend([series.key for series in series_list])
+                    self._connect_oscillator_pane_signals_for_study(study_instance_id)
+                    return render_keys
+                except Exception as e:
+                    self._on_error(
+                        f"Managed oscillator study apply fallback engaged for "
+                        f"'{display_name or study_instance_id}': {e!r}"
+                    )
+
         for series in series_list:
-            if family == STUDY_FAMILY_OSCILLATOR:
+            if normalized_mode == "oscillator-pane":
                 self._workspace.apply_oscillator_series(series)
             else:
                 self._workspace.apply_overlay_series(series)
             render_keys.append(series.key)
+
         return render_keys
 
     def _register_applied_study(
         self,
         *,
         family: str,
+        output_mode: str,
+        supports_last_value: bool,
         tool_key: str,
         display_name: str,
         params: Dict[str, Any],
         render_keys: List[str],
         series_list: List[Series],
+        instance_id: Optional[str] = None,
     ) -> ChartStudyInstance:
         last_value = None
-        for series in series_list:
-            if series.values:
-                candidate = series.values[-1]
-                try:
-                    if candidate == candidate:
-                        last_value = float(candidate)
-                        break
-                except Exception:
-                    continue
+        if supports_last_value:
+            for series in series_list:
+                if series.values:
+                    candidate = series.values[-1]
+                    try:
+                        if candidate == candidate:
+                            last_value = float(candidate)
+                            break
+                    except Exception:
+                        continue
 
         study = ChartStudyInstance(
-            instance_id=uuid.uuid4().hex,
+            instance_id=instance_id or uuid.uuid4().hex,
             dataset_id=self.dataset_key(),
-            pane_target=self._pane_target_for_study_family(family),
+            pane_target=self._pane_target_for_output_mode(output_mode),
             display_name=str(display_name).strip() or tool_key,
             computation=StudyComputationConfig(
                 family=family,
@@ -536,27 +1057,64 @@ class HistoricalChartPanel(QFrame):
             return
 
         family = self._normalize_study_family(str(payload.get("tool_type", "")))
+        behavior = self._extract_behavior(payload)
+        output = self._extract_output(payload)
+
+        output_mode = str(behavior["output_mode"])
+        chart_renderable = bool(behavior["chart_renderable"])
+        supports_last_value = bool(behavior["supports_last_value"])
+        accepts_empty_render_output = bool(output["accepts_empty_render_output"])
+
         tool_key = str(payload.get("tool_key", "")).strip().lower()
         display_name = str(payload.get("display_name", payload.get("tool_title", tool_key))).strip()
         params = dict(payload.get("params", {}) or {})
         series_list = list(payload.get("series_list", []) or [])
 
-        if not tool_key or not series_list:
+        if not tool_key:
+            self._editing_study_instance_id = None
+            self._on_error("Financial tool apply failed: missing tool_key.")
+            return
+
+        if chart_renderable and not series_list:
             self._editing_study_instance_id = None
             self._on_error("Financial tool apply returned no renderable series.")
             return
 
+        if not chart_renderable and not accepts_empty_render_output and not series_list:
+            self._editing_study_instance_id = None
+            self._on_error(
+                "Financial tool apply failed: non-visual output was not declared as a valid empty-render result."
+            )
+            return
+
         self._replace_edited_study_if_needed()
 
-        render_keys = self._apply_series_list_to_workspace(family, series_list)
+        provisional_instance_id = uuid.uuid4().hex
+        render_keys: List[str] = []
+
+        if chart_renderable:
+            render_keys = self._apply_series_list_to_workspace(
+                output_mode=output_mode,
+                series_list=series_list,
+                study_instance_id=provisional_instance_id if output_mode == "oscillator-pane" else None,
+                display_name=display_name,
+            )
+
         study = self._register_applied_study(
             family=family,
+            output_mode=output_mode,
+            supports_last_value=supports_last_value,
             tool_key=tool_key,
             display_name=display_name,
             params=params,
             render_keys=render_keys,
             series_list=series_list,
+            instance_id=provisional_instance_id,
         )
+
+        if output_mode == "oscillator-pane" and chart_renderable:
+            self._connect_oscillator_pane_signals_for_study(study.instance_id)
+
         self._on_error(
             f"Applied {study.computation.family} study '{study.display_name}' to chart session."
         )

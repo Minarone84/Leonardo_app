@@ -531,11 +531,17 @@ class FinancialToolManagerWindow(QDialog):
 
     def _refresh_buttons(self) -> None:
         has_spec = self._current_spec is not None
+        can_save = has_spec and self._current_spec.kind != "construct"
+
         self._apply_button.setEnabled(has_spec)
-        self._save_button.setEnabled(has_spec)
+        self._save_button.setEnabled(can_save)
 
         if not has_spec:
             self._status_label.setText("No tool selected.")
+        elif self._current_spec.kind == "construct":
+            self._status_label.setText(
+                f"{self._current_spec.title} (Construct) — apply supported, save not yet available"
+            )
         else:
             self._status_label.setText(
                 f"Ready to apply or save: {self._current_spec.title}"

@@ -66,11 +66,31 @@ class ChartStudyRuntimeState:
 class ChartStudyInstance:
     instance_id: str
     dataset_id: str
-    pane_target: str
+    pane_target: Optional[str]
     display_name: str
     computation: StudyComputationConfig
     style: StudyDisplayStyle = field(default_factory=StudyDisplayStyle)
     runtime: ChartStudyRuntimeState = field(default_factory=ChartStudyRuntimeState)
+
+    def __post_init__(self) -> None:
+        family = str(self.computation.family).strip().lower()
+        pane_target = str(self.pane_target).strip().lower() if self.pane_target is not None else None
+
+        if pane_target not in {None, PANE_TARGET_PRICE, PANE_TARGET_OSCILLATOR}:
+            raise ValueError(f"Invalid pane_target for ChartStudyInstance: {self.pane_target!r}")
+
+        if family == STUDY_FAMILY_OSCILLATOR and pane_target != PANE_TARGET_OSCILLATOR:
+            raise ValueError("Oscillator studies must use pane_target='oscillator'.")
+
+        if family == STUDY_FAMILY_INDICATOR and pane_target != PANE_TARGET_PRICE:
+            raise ValueError("Indicator studies must use pane_target='price'.")
+
+        if family == STUDY_FAMILY_CONSTRUCT and pane_target not in {
+            None,
+            PANE_TARGET_PRICE,
+            PANE_TARGET_OSCILLATOR,
+        }:
+            raise ValueError("Construct studies must use pane_target None, 'price', or 'oscillator'.")
 
     def with_display_name(self, display_name: str) -> "ChartStudyInstance":
         return replace(self, display_name=str(display_name).strip() or self.display_name)
@@ -83,6 +103,9 @@ class ChartStudyInstance:
 
     def with_runtime(self, runtime: ChartStudyRuntimeState) -> "ChartStudyInstance":
         return replace(self, runtime=runtime)
+
+    def is_renderable(self) -> bool:
+        return bool(self.runtime.render_keys)
 
 
 class ChartStudyRegistry:
@@ -124,7 +147,7 @@ class ChartStudyRegistry:
 
     def list_for_pane(self, pane_target: str) -> List[ChartStudyInstance]:
         pane = str(pane_target).strip().lower()
-        return [item for item in self if item.pane_target == pane]
+        return [item for item in self if str(item.pane_target or "").strip().lower() == pane]
 
     def get(self, instance_id: str) -> Optional[ChartStudyInstance]:
         return self._items.get(instance_id)

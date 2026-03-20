@@ -738,3 +738,4 @@ class HistoricalChartController(QObject):
                     setattr(vp, "end", end)
                 except Exception:
                     pass
+                

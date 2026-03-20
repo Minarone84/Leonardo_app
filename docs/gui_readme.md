@@ -1,6 +1,11 @@
 Leonardo GUI Architecture (Current State)
 
-Overview
+Version: v2.1  
+Date: 2026-03-20  
+
+------------------------------------------------------------
+OVERVIEW
+------------------------------------------------------------
 
 The Leonardo GUI provides the visualization layer for both historical and real-time charting.
 
@@ -148,7 +153,7 @@ All panes share:
 PANE SYSTEM (UPDATED)
 ------------------------------------------------------------
 
-Pane system is now **layout-managed**, not passive.
+Pane system is **layout-managed**, not passive.
 
 Three pane types:
 
@@ -162,10 +167,10 @@ Layout is owned by the workspace, not by studies.
 
 
 ------------------------------------------------------------
-OSCILLATOR PANE MANAGEMENT (NEW)
+OSCILLATOR PANE MANAGEMENT
 ------------------------------------------------------------
 
-Oscillator panes are now fully managed.
+Oscillator panes are fully managed.
 
 Workspace owns:
 
@@ -181,13 +186,109 @@ Current rule:
 • 1 study → 1 pane  
 • 1 study → N series supported  
 
-Pane state includes:
 
-• pane_id  
-• study_instance_id  
-• title  
+------------------------------------------------------------
+STUDY SYSTEM (UPDATED)
+------------------------------------------------------------
+
+ChartStudyRegistry (per panel):
+
+• tracks studies  
+• resolves render keys  
+• manages lifecycle  
+
+Study properties:
+
+• instance_id  
+• pane_target  
+• computation config  
+• style  
+• runtime state  
 • render_keys  
-• preferred_height  
+
+
+------------------------------------------------------------
+STUDY TYPES (NEW)
+------------------------------------------------------------
+
+Three study families exist:
+
+• Indicators  
+• Oscillators  
+• Constructs  
+
+---
+
+### Indicators
+
+• overlay-rendered  
+• price-pane attached  
+
+---
+
+### Oscillators
+
+• rendered in dedicated panes  
+• pane-managed  
+
+---
+
+### Constructs (NEW)
+
+Constructs are analysis-oriented tools.
+
+They are NOT defined by rendering.
+
+They may be:
+
+• overlay constructs (price pane)  
+• oscillator constructs (lower pane)  
+• non-visual constructs (no rendering)  
+
+
+------------------------------------------------------------
+RENDERING MODEL (CRITICAL UPDATE)
+------------------------------------------------------------
+
+Rendering is **behavior-driven**, not family-driven.
+
+Old assumption:
+
+indicator → overlay  
+oscillator → pane  
+
+New system:
+
+Each study declares:
+
+• output_mode  
+    - overlay  
+    - oscillator-pane  
+    - non-visual  
+
+Panel resolves:
+
+• pane target  
+• rendering path  
+• lifecycle behavior  
+
+
+------------------------------------------------------------
+NON-VISUAL STUDIES (NEW)
+------------------------------------------------------------
+
+Non-visual studies:
+
+• produce no renderable series  
+• are still valid study instances  
+• exist in ChartStudyRegistry  
+• participate in lifecycle  
+
+They:
+
+• do NOT render  
+• do NOT create panes  
+• do NOT support styling  
 
 
 ------------------------------------------------------------
@@ -196,24 +297,23 @@ PANE LIFECYCLE
 
 Apply:
 
-• controller computes series  
-• panel applies study  
-• workspace creates or updates pane  
+• controller computes result  
+• panel registers study  
+• workspace renders (if applicable)  
 
 Remove:
 
-• workspace removes pane  
-• series removed from model  
+• workspace removes rendering  
+• study removed from registry  
 
 Edit:
 
 • replace-on-apply  
-• pane reused or recreated  
 
 Style:
 
 • visual only  
-• no layout impact  
+• computation untouched  
 
 
 ------------------------------------------------------------
@@ -283,7 +383,6 @@ Supports:
 • pan  
 • zoom  
 • anchor zoom  
-• future padding  
 
 
 Crosshair
@@ -305,7 +404,7 @@ Stores:
 
 Includes:
 
-resident_base_index
+resident_base_index  
 
 
 ------------------------------------------------------------
@@ -333,7 +432,7 @@ HistoricalChartController:
 
 • loads dataset  
 • manages slices  
-• applies studies  
+• applies financial tools  
 • saves artifacts  
 
 Key rule:
@@ -345,36 +444,12 @@ Apply ≠ Save
 
 
 ------------------------------------------------------------
-RENDERING SYSTEM
-------------------------------------------------------------
-
-Price:
-
-• candlesticks  
-• overlays  
-• crosshair  
-
-Volume:
-
-• bars  
-• value lines  
-
-Oscillator:
-
-• multi-series rendering  
-• crosshair  
-• value display  
-
-All panes share viewport mapping.
-
-
-------------------------------------------------------------
 FINANCIAL TOOL WORKFLOW
 ------------------------------------------------------------
 
 FinancialToolManagerWindow:
 
-• selects tool  
+• selects tool family  
 • configures parameters  
 • emits intent  
 
@@ -388,25 +463,6 @@ Save:
 • compute full dataset  
 • persist CSV  
 • show result  
-
-
-------------------------------------------------------------
-STUDY SYSTEM (UPDATED)
-------------------------------------------------------------
-
-ChartStudyRegistry (per panel):
-
-• tracks studies  
-• resolves render keys  
-• manages lifecycle  
-
-Study properties:
-
-• instance_id  
-• computation config  
-• style  
-• runtime state  
-• render_keys (multi-series support)  
 
 
 ------------------------------------------------------------
@@ -434,8 +490,8 @@ STUDY VS PANE (CRITICAL DISTINCTION)
 Study:
 
 • defines computation  
-• produces series  
-• pane-agnostic  
+• produces outputs  
+• may or may not render  
 
 Pane:
 
@@ -476,6 +532,7 @@ The system enforces:
 • resident slice rendering  
 • viewport continuity  
 • pane-managed layout  
+• behavior-driven rendering  
 • study-pane separation  
 • shell-agnostic sessions  
 • controller-driven computation  
@@ -488,6 +545,8 @@ KEY RULES
 
 • Studies do NOT control layout  
 • Workspace owns pane system  
+• Rendering is behavior-driven, not family-driven  
+• Non-visual studies are valid studies  
 • Render keys are the only identity bridge  
 • Apply and Save are fundamentally different  
 • Style does not trigger computation  
@@ -503,6 +562,8 @@ The GUI now provides:
 • multi-chart workspace  
 • detachable chart sessions  
 • pane-managed oscillator system  
+• construct system (overlay / oscillator / non-visual)  
+• behavior-driven rendering pipeline  
 • chart-local study lifecycle  
 • multi-series study support  
 • render-key mapping  
@@ -514,6 +575,7 @@ The system is now:
 • modular  
 • extensible  
 • layout-aware  
+• behavior-driven  
 • architecturally consistent  
 
-And, for once, not actively trying to sabotage you.
+And still somehow cooperating with you.

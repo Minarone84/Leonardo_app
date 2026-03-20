@@ -1,9 +1,9 @@
 Leonardo  
 DESIGN — Historical Chart v2
 
-Version: v2  
-Date: 2026-03-19  
-Scope: Historical Data Visualization Workspace (Embedded + Floating, OHLC + Volume, detachable panels, financial tools, async-safe persistence)
+Version: v2.1  
+Date: 2026-03-20  
+Scope: Historical Data Visualization Workspace (Embedded + Floating, OHLC + Volume, detachable panels, financial tools, async-safe persistence, construct system)
 
 Reference:
 
@@ -23,7 +23,7 @@ The system is designed to allow:
 - docking floating chart windows back into the historical workspace
 - preservation of chart session state while changing shell/container
 - async-safe Core/GUI separation
-- applying indicators and oscillators to historical charts
+- applying indicators, oscillators, and constructs to historical charts
 - saving configured financial tools for later reuse and analysis
 
 The historical chart remains primarily a visualization and research interface.
@@ -116,8 +116,10 @@ Core chart session:
 
 - owns workspace
 - owns controller
+- owns study registry
 - forwards tool actions
 - maintains dataset identity
+- owns chart-local lifecycle of studies
 
 ---
 
@@ -130,9 +132,9 @@ Floating shell for one panel.
 ### 3.6 HistoricalChartController
 
 - loads data
-- applies studies
+- applies financial tools
 - async-safe
-- emits results
+- emits structured results
 
 ---
 
@@ -153,88 +155,192 @@ Handles:
 
 - tool selection
 - parameter config
-- save/apply intent
+- apply / save intent
 
-Does NOT compute or persist directly.
+Does NOT:
+
+- compute results
+- manage chart layout
+- manage pane logic
 
 ---
 
-### 3.9 Study System (Chart-Local)
+## 3.9 Study System (Chart-Local)
 
-Studies represent chart-applied computations.
+A **study** represents a chart-applied computation instance.
 
-Responsibilities:
+Studies are:
 
-- render series
-- track active studies
+- chart-session scoped
+- non-persistent (runtime)
+- decoupled from tool persistence
+
+---
+
+### Study Responsibilities
+
+- render series (if applicable)
+- track runtime state
 - support edit/remove/style
+- integrate with workspace layout
 
 ---
 
-### 3.10 ChartStudyRegistry
+## 3.10 ChartStudyRegistry
 
 Per-panel registry:
 
-- instance_id
-- render_keys
-- config
+Stores:
+
+- `instance_id`
+- `pane_target`
+- computation config
+- runtime render keys
 - style
+
+Acts as the single source of truth for chart-local studies.
 
 ---
 
-### 3.11 Study Rendering Model
+## 3.11 Study Rendering Model (v2.1 Update)
 
-Flow:
+### Key Principle
+
+Rendering is **behavior-driven**, NOT family-driven.
+
+Old model:
+- indicator → overlay
+- oscillator → lower pane
+
+New model:
+- rendering determined by **ToolBehaviorSpec**
+
+---
+
+### Flow
 
 Tool → Controller → Panel → Workspace → Render
 
-Render keys link data ↔ UI.
+---
+
+### Behavior-Driven Routing
+
+Each study declares:
+
+- `output_mode`
+  - `overlay`
+  - `oscillator-pane`
+  - `non-visual`
+
+Panel resolves:
+
+- pane target
+- render path
+- lifecycle rules
 
 ---
 
-### 3.12 Study Lifecycle
+## 3.12 Study Lifecycle
 
-- Apply → compute + register
-- Edit → replace-on-apply
-- Remove → delete from workspace
-- Style → re-render only
+Apply:
+- compute result
+- register study
+- render if applicable
+
+Edit:
+- replace-on-apply
+
+Remove:
+- remove from workspace
+- remove from registry
+
+Style:
+- re-render only
+- computation untouched
 
 ---
 
-### 3.13 Study Style System
+## 3.13 Study Types (v2.1 Extension)
+
+### Indicators
+
+- overlay-rendered
+- price-pane attached
+
+### Oscillators
+
+- rendered in dedicated lower panes
+- pane-managed
+
+### Constructs (NEW)
+
+Constructs are analysis-oriented tools.
+
+They are NOT defined by rendering.
+
+They may be:
+
+#### 1. Overlay Constructs
+- render on price pane
+- behave like indicators (visually)
+
+#### 2. Oscillator Constructs
+- render in lower pane
+- behave like oscillators (visually)
+
+#### 3. Non-Visual Constructs
+- produce no chart rendering
+- exist only as analytical state
+
+---
+
+### Important Design Rule
+
+Construct behavior is **explicitly declared**, not inferred.
+
+---
+
+## 3.14 Non-Visual Studies (NEW)
+
+Non-visual studies:
+
+- produce no `series_list`
+- are still valid studies
+- are stored in the registry
+- participate in lifecycle (apply/remove)
+
+They:
+
+- do NOT render
+- do NOT support styling
+- do NOT create panes
+
+---
+
+## 3.15 Study Style System
 
 Style is:
 
-- local
+- local to chart
 - non-persistent
 - decoupled from computation
 
----
+Constraints:
 
-### 3.14 Chart UI Integration
-
-Price pane supports:
-
-- Edit
-- Style
-- Remove
-
-Signals use `render_key`.
+- only renderable studies support styling
+- non-visual studies reject style operations
 
 ---
 
-### 3.15 Financial Tool vs Study
+## 3.16 Financial Tool vs Study
 
-Financial Tool = intent + persistence  
-Study = runtime visualization
+Financial Tool:
+- definition + parameters
+- persistence layer concept
 
----
-
-### 3.16 Current Limitations
-
-- no cross-chart sync
-- no dependency graph
-- no replay system
+Study:
+- runtime instance on chart
+- ephemeral
 
 ---
 
@@ -242,17 +348,17 @@ Study = runtime visualization
 
 ### Purpose
 
-Oscillators are now pane-managed, not simple series attachments.
+Oscillators and oscillator-like constructs use managed panes.
 
 ---
 
-### Architectural Model
+### Architecture
 
 Three independent layers:
 
-1. Computation (Core / Controller)
-2. Display (Renderer / Style)
-3. Layout (Workspace)
+1. Computation
+2. Display
+3. Layout
 
 ---
 
@@ -264,27 +370,6 @@ Workspace introduces:
 - `_oscillator_states_by_id`
 - `_oscillator_pane_order`
 - `_study_to_pane_id`
-
----
-
-### OscillatorPaneState
-
-Stores:
-
-- pane_id
-- study_instance_id
-- title
-- render_keys
-- preferred_height
-
----
-
-### Study → Pane Mapping
-
-Current rule:
-
-- 1 study = 1 pane
-- multi-series per study supported
 
 ---
 
@@ -304,55 +389,11 @@ Style:
 
 ---
 
-### Layout Management
-
-- panes in vertical splitter
-- height persistence
-- deterministic ordering
-
-Key functions:
-
-- `_capture_managed_pane_heights`
-- `_apply_default_sizes(force=True)`
-
----
-
 ### Pane Reordering
 
 - move up/down
-- rebuild layout
-- preserve sizes
-
----
-
-### Legacy Compatibility
-
-Legacy `_oscillators` map still exists.
-
-- series-based
-- deprecated path
-
----
-
-### Chart UI Integration
-
-Pane-level actions:
-
-- Edit
-- Style
-- Remove
-- Move Up / Down
-
-Signals use `study_instance_id`.
-
----
-
-### Current Limitations
-
-- no pane merging
-- no pane splitting
-- no per-series legend
-- no layout persistence across sessions
+- deterministic layout
+- size preservation
 
 ---
 
@@ -368,7 +409,7 @@ Panel is moved, not recreated.
 1 → full  
 2 → split  
 3 → 2x2  
-4 → 2x2 full
+4 → 2x2 full  
 
 ---
 
@@ -388,7 +429,7 @@ candles.csv
 
 ---
 
-## 7. Summary
+## 7. Summary (v2.1)
 
 Historical Chart v2 now provides:
 
@@ -396,12 +437,15 @@ Historical Chart v2 now provides:
 - detachable sessions
 - async-safe loading
 - financial tool workflow
-- chart-local studies
+- chart-local study system
 - pane-managed oscillators
+- behavior-driven rendering model
+- construct system (overlay / oscillator / non-visual)
+- support for analysis-only (non-visual) studies
 - interactive lifecycle (apply/edit/remove/style)
 - render-key mapping
 
-The system is now a structured charting environment, still cleanly separated from:
+The system is now a **flexible analytical charting environment**, cleanly separated from:
 
 - trading execution
 - backtesting

@@ -1,491 +1,357 @@
-Leonardo GUI Architecture (Current State)
+Leonardo Core Architecture (Current State)
 
 Overview
 
-The Leonardo GUI provides the visualization layer for both historical and real-time charting.
+The Leonardo Core layer is responsible for:
 
-It is built around a modular chart engine capable of rendering large datasets using resident slices and a global index model.
+• data access  
+• dataset structure  
+• historical slicing  
+• financial computation  
+• artifact persistence  
 
-The GUI now supports two chart deployment models:
+It is completely independent from the GUI.
 
-• Embedded historical chart panels managed by a workspace window  
-• Independent top-level chart windows (floating historical charts and future realtime charts)
+The core is designed to support:
 
-Both models use the same underlying chart engine.
+• large historical datasets  
+• partial data loading (slice-based)  
+• deterministic computation  
+• reproducible financial tool outputs  
 
-The GUI architecture separates three concerns:
-
-• chart session (data + viewport + rendering)  
-• workspace management (layout of multiple charts)  
-• shell window (top-level OS window behavior)
-
-This separation allows charts to move between embedded and floating states without losing session state.
-
-
-Historical Workspace Model
-
-Historical charts are primarily managed inside a dedicated window:
-
-HistoricalDataManagerWindow
-
-This window hosts a workspace capable of managing up to **four simultaneous historical charts**.
-
-Each chart is implemented as a reusable component called:
-
-HistoricalChartPanel
-
-The panel contains:
-
-• chart workspace  
-• chart controller  
-• dataset identity  
-• local chart actions
-
-Panels can exist in two modes:
-
-Embedded Mode  
-Floating Mode
+The core must never depend on GUI state or rendering logic.
 
 
-Embedded Mode
+------------------------------------------------------------
+CORE RESPONSIBILITIES
+------------------------------------------------------------
 
-When created from:
+The core layer is responsible for:
 
-File → New Chart
+• loading historical datasets  
+• managing dataset identity  
+• slicing large datasets efficiently  
+• computing financial tools (indicators, oscillators, constructs)  
+• persisting derived artifacts  
+• exposing clean interfaces to controllers  
 
-a chart is inserted into the historical workspace.
+The core is NOT responsible for:
 
-HistoricalWorkspaceWidget manages layout automatically.
-
-Layout policy:
-
-1 chart → full workspace  
-2 charts → split left/right  
-3 charts → 2x2 grid with one empty slot  
-4 charts → full 2x2 grid
-
-Charts can be removed using a **Close** action on the chart panel.
-
-
-Floating Mode
-
-An embedded chart can be detached from the workspace.
-
-Flow:
-
-HistoricalChartPanel  
-→ Float action  
-→ panel removed from workspace  
-→ panel reparented into a new HistoricalChartWindow  
-
-The floating window becomes a standard top-level GUI window.
-
-The chart session remains unchanged.
+• rendering  
+• chart layout  
+• pane management  
+• user interaction  
 
 
-Dock Back
+------------------------------------------------------------
+DATASET MODEL
+------------------------------------------------------------
 
-Floating charts can return to the workspace.
+Canonical dataset structure:
 
-Flow:
+data/historical/{exchange}/{market_type}/{symbol}/{timeframe}/ohlcv/candles.csv
 
-HistoricalChartWindow  
-→ Dock Back action  
-→ WindowManager retrieves chart panel  
-→ panel reinserted into HistoricalWorkspaceWidget  
+Example:
 
-The floating window closes automatically.
-
-The same chart session continues running.
+data/historical/bybit/linear/BTCUSDT/1h/ohlcv/candles.csv
 
 
-Window Manager
+Dataset Identity
 
-WindowManager is responsible for managing all top-level windows.
+A dataset is uniquely defined by:
 
-Tracked windows include:
+• exchange  
+• market_type  
+• symbol  
+• timeframe  
 
-MainWindow  
-HistoricalDataManagerWindow  
-HistoricalChartWindow (floating)  
-RealtimeChartWindow (future)  
-WindowsInspectorWindow  
-HistoricalDownloadWindow  
-SignalsWindow  
+This identity is used across:
 
-The manager is responsible for:
-
-• window creation  
-• window lifetime  
-• window registration in runtime state  
-• floating chart lifecycle  
-
-Embedded chart panels are **not** windows and are therefore not tracked by the Window Manager.
+• loading  
+• computation  
+• persistence  
 
 
-Chart Session Architecture
+------------------------------------------------------------
+SLICE SYSTEM (CRITICAL)
+------------------------------------------------------------
 
-A chart session is represented by:
+Large datasets are not loaded entirely.
 
-HistoricalChartPanel
+Instead, the core provides **resident slices**.
 
-The panel owns:
+Definitions:
 
-• ChartWorkspaceWidget  
-• HistoricalChartController  
-• dataset identity  
-• chart status bar  
+Dataset  
+Full dataset on disk.
 
-The panel can exist inside different shells:
+Slice  
+Subset of dataset loaded into memory.
 
-Embedded inside HistoricalWorkspaceWidget  
-Floating inside HistoricalChartWindow
-
-The panel itself is shell-agnostic.
+Viewport  
+Visible region (managed by GUI).
 
 
-Chart Workspace Architecture
+Slice Payload
 
-ChartWorkspaceWidget is the main chart container used by both historical and future realtime charts.
+Each slice provides:
 
-It owns:
+• candles  
+• base_index  
+• has_more_left  
+• has_more_right  
 
-ChartModel  
-ChartViewport  
-Crosshair  
-Pane stack (via vertical splitter)
+
+Key invariant:
+
+global_index = base_index + local_index
+
+
+The core guarantees:
+
+• consistent indexing across slices  
+• deterministic slice boundaries  
+• safe navigation across dataset edges  
+
+
+------------------------------------------------------------
+SLICE LOADING
+------------------------------------------------------------
+
+The controller requests slices based on:
+
+• viewport center  
+• navigation direction  
+
+The core returns:
+
+• a centered slice  
+• metadata for further navigation  
+
+
+The core does NOT:
+
+• track viewport  
+• trigger refills  
+• manage navigation state  
+
+That responsibility belongs to the controller.
+
+
+------------------------------------------------------------
+FINANCIAL TOOL SYSTEM
+------------------------------------------------------------
+
+The core computes financial tools.
+
+Tool families:
+
+• indicators (price overlays)  
+• oscillators (separate series)  
+• constructs (future expansion)  
+
+
+Each tool defines:
+
+• input parameters  
+• computation logic  
+• output series  
+
+
+------------------------------------------------------------
+COMPUTATION MODEL
+------------------------------------------------------------
+
+Financial tools operate on:
+
+• candle arrays  
+• optional auxiliary data  
+
+They produce:
+
+• one or more output series  
+
+
+Important:
+
+The core is **multi-series aware**.
+
+Examples:
+
+• SMA → 1 series  
+• RSI → 1 series  
+• MACD → multiple series  
+
+
+The core does NOT:
+
+• assign render keys  
+• manage chart studies  
+• manage panes  
+
+It only returns raw computed series.
+
+
+------------------------------------------------------------
+APPLY VS SAVE (CRITICAL RULE)
+------------------------------------------------------------
+
+The system enforces strict separation:
+
+Apply:
+
+• operates on resident slice  
+• fast  
+• not persisted  
+• used for chart interaction  
+
+Save:
+
+• operates on full dataset  
+• deterministic  
+• persisted to disk  
+• used for reproducible analysis  
+
+
+The core supports both modes explicitly.
+
+
+------------------------------------------------------------
+ARTIFACT PERSISTENCE
+------------------------------------------------------------
+
+Derived artifacts are stored alongside canonical data.
 
 Structure:
 
-ChartWorkspaceWidget  
-    PricePane  
-    VolumePane (optional)  
-    OscillatorPane(s)
+data/historical/{exchange}/{market_type}/{symbol}/{timeframe}/
 
-All panes share the same viewport and crosshair.
+Subfolders:
 
-
-Shared State Objects
-
-ChartViewport
-
-ChartViewport(QObject)
-
-Controls the horizontal slot-based viewport.
-
-State:
-
-_data_total      number of real candles in dataset  
-_future_pad      empty slots to the right  
-_total           data_total + future_pad  
-
-_visible         number of visible slots  
-_start           first visible slot  
-_end             start + visible  
-
-Features:
-
-• slot-based discrete X axis  
-• pan left / right  
-• zoom anchored at mouse  
-• future padding  
-• anchor zoom mode  
-
-All panes share the same viewport.
+• indicators  
+• oscillators  
+• constructs  
 
 
-Crosshair
+Examples:
 
-Crosshair(QObject)
-
-Shared crosshair state across panes.
-
-State:
-
-index           global dataset index  
-hover_on_price  controls chart horizontal line  
-
-Signals:
-
-changed  
-cleared  
-
-Behavior:
-
-• vertical line shown on all panes  
-• price pane horizontal line follows mouse Y  
-• volume / oscillator panes show value-based horizontal lines  
+sma__period-20.csv  
+rsi__period-14.csv  
 
 
-Chart Model
+Rules:
 
-ChartModel stores GUI-side data series.
-
-candles  
-volume  
-overlays      price indicators  
-oscillators   oscillator series  
-trades        future feature  
-
-For historical mode the model also stores:
-
-resident_base_index
-
-This represents the dataset index of the first resident candle.
-
-This allows translation between:
-
-global dataset index  
-resident slice index  
+• one file per configured tool  
+• naming encodes parameters  
+• artifacts are deterministic  
 
 
-Historical Chart Engine
+------------------------------------------------------------
+PERSISTENCE CONTRACT
+------------------------------------------------------------
 
-Historical charts use a **resident slice model**.
+The core guarantees:
 
-Large datasets are not loaded entirely into memory.
-
-Instead the chart loads partial slices around the visible region.
-
-
-Dataset vs Slice
-
-FULL DATASET  
-|----------------------------------------------------------|
-
-RESIDENT SLICE  
-                 |---------------------------|
-
-VIEWPORT  
-                      |-----------|
+• reproducible outputs for same inputs  
+• stable file structure  
+• deterministic naming  
 
 
-Definitions
+The core does NOT:
 
-Dataset  
-Entire historical dataset stored on disk.
+• handle overwrite confirmation  
+• show dialogs  
+• manage user decisions  
 
-Resident slice  
-Portion currently loaded in memory.
-
-Viewport  
-Visible portion of the dataset.
+Those belong to the GUI.
 
 
-Global Index Model
+------------------------------------------------------------
+CONTROLLER INTERACTION
+------------------------------------------------------------
 
-The chart engine uses dataset-global indexing.
+The core is accessed via controllers.
 
-global_index = resident_base_index + local_index
+Example:
 
-Rendering surfaces translate:
-
-viewport global index  
-→ resident local index  
-→ candle / series value  
-
-This allows the chart to behave as if the full dataset were loaded.
+HistoricalChartController
 
 
-Historical Controller
+Controller responsibilities:
 
-HistoricalChartController manages dataset interaction with the core layer.
-
-Responsibilities:
-
-• open dataset  
 • request slices  
-• apply slices to workspace  
-• trigger refills when navigating near slice edges  
+• call computation  
+• apply results to GUI  
+• trigger persistence  
 
 
-Slice Metadata
+The core only provides:
 
-Each slice payload provides:
+• data  
+• computation  
+• storage  
 
-base_index  
-has_more_left  
-has_more_right  
 
-Controller state tracks:
+------------------------------------------------------------
+ERROR HANDLING
+------------------------------------------------------------
 
-resident_base_index  
-resident_size  
-dataset_count  
+The core reports:
 
+• computation errors  
+• file errors  
+• dataset issues  
 
-Refill on Pan
+It returns structured error information.
 
-When the viewport approaches slice boundaries the controller requests a new slice.
+The GUI decides:
 
-Example logic:
+• how to display errors  
+• how to notify users  
 
-if left_margin <= threshold  
-    refill-left  
 
-if right_margin <= threshold  
-    refill-right  
+------------------------------------------------------------
+ARCHITECTURAL PRINCIPLES
+------------------------------------------------------------
 
-The refill is centered around the current viewport center.
+The core enforces:
 
-Viewport position is preserved.
+• determinism  
+• reproducibility  
+• stateless computation  
+• dataset identity consistency  
+• separation from GUI  
 
 
-Rendering System
+------------------------------------------------------------
+KEY RULES
+------------------------------------------------------------
 
-Rendering is performed by specialized surfaces.
+• Core must never depend on GUI  
+• Core must not know about panes or rendering  
+• Core must not manage chart state  
+• Computation must be deterministic  
+• Apply and Save must remain separate  
+• Slice indexing must remain consistent  
 
-Price Chart
 
-ChartRenderSurface
+------------------------------------------------------------
+SUMMARY
+------------------------------------------------------------
 
-Draws:
+The Leonardo Core provides:
 
-• candlesticks  
-• grid  
-• price axis  
-• time axis  
-• realtime price tag  
-• crosshair  
+• scalable dataset access  
+• efficient slice-based loading  
+• deterministic financial computation  
+• structured artifact persistence  
 
-Supports:
+It is:
 
-• pan (drag)  
-• zoom (mouse wheel)  
-• optional free Y scaling when anchor zoom disabled  
+• independent  
+• reusable  
+• predictable  
 
+The core is the foundation.
 
-Volume Pane
-
-VolumeRenderSurface
-
-Draws:
-
-• volume bars  
-• volume legend tag  
-• crosshair index line  
-• horizontal value line  
-
-
-Oscillator Pane
-
-OscillatorRenderSurface
-
-Draws:
-
-• oscillator polyline  
-• oscillator legend tag  
-• crosshair index line  
-• horizontal value line  
-
-
-Pane System
-
-Each pane consists of:
-
-Pane  
- ├─ RenderSurface  
- └─ Overlay  
-
-Overlay displays:
-
-• pane title  
-• values at crosshair index  
-
-Pane types:
-
-PricePane  
-VolumePane  
-OscillatorPane  
-
-
-Interaction Model
-
-Crosshair
-
-The crosshair vertical line is shared across all panes.
-
-Index is computed using discrete slot mapping.
-
-index = viewport.index_from_x(...)
-
-
-Zoom
-
-Mouse wheel zoom adjusts visible slot range.
-
-viewport.zoom_in_at(...)  
-viewport.zoom_out_at(...)
-
-Zoom is anchored to slot center.
-
-
-Anchor Zoom Mode
-
-When anchor zoom is ON:
-
-• Y axis auto-scales to visible candles  
-• viewport snaps to latest candle  
-
-When OFF:
-
-• right axis drag → Y zoom  
-• shift + drag → Y pan  
-• future padding accessible  
-
-
-Dependency Overview
-
-HistoricalDataManagerWindow  
- └─ HistoricalWorkspaceWidget  
-     ├─ HistoricalChartPanel  
-     │   └─ ChartWorkspaceWidget  
-     │       ├─ ChartModel  
-     │       ├─ ChartViewport  
-     │       ├─ Crosshair  
-     │       └─ QSplitter  
-     │           ├─ PricePane  
-     │           │   └─ ChartRenderSurface  
-     │           ├─ VolumePane  
-     │           │   └─ VolumeRenderSurface  
-     │           └─ OscillatorPane  
-     │               └─ OscillatorRenderSurface  
-
-
-Architectural Principles
-
-The chart engine is designed around the following invariants:
-
-• global dataset indexing  
-• resident slice rendering  
-• viewport continuity  
-• pane independence  
-• shell-agnostic chart sessions  
-
-
-Key Rule
-
-All rendering and overlays must respect:
-
-global_index = resident_base_index + local_index
-
-Breaking this invariant will cause incorrect rendering during slice refills.
-
-
-Summary
-
-The Leonardo GUI chart system now provides:
-
-• scalable historical dataset visualization  
-• reusable chart session architecture  
-• deterministic workspace layout for up to 4 charts  
-• detachable floating chart windows  
-• dock-back capability for floating charts  
-• modular pane architecture  
-• discrete slot-based viewport  
-• crosshair synchronization  
-
-The architecture now supports both:
-
-• multi-chart workspace workflows  
-• multi-monitor floating chart workflows
+If this layer breaks, everything above it becomes chaos.

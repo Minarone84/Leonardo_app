@@ -4,13 +4,14 @@
 
 This document defines the architecture and behavior of **Chart Study Instances** within the Leonardo historical chart system.
 
-The goal is to introduce a TradingView-like system for managing indicators, oscillators, and constructs directly on the chart, without interfering with the Financial Tool Manager responsibilities.
+The system provides a TradingView-like experience for managing indicators, oscillators, and constructs directly on the chart.
 
-This system separates:
+It enforces strict separation between:
 
-* **Computation (what is calculated)**
-* **Display (how it looks)**
-* **Chart session state (what is currently shown)**
+- **Computation (what is calculated)**
+- **Display (how it looks)**
+- **Chart session state (what is currently shown)**
+- **Layout (where it is rendered)**
 
 ---
 
@@ -18,20 +19,22 @@ This system separates:
 
 ### ChartStudyInstance
 
-A **ChartStudyInstance** represents a single study displayed on a chart.
+A **ChartStudyInstance** represents a single study applied to a chart session.
 
 Examples:
 
-* EMA 14 on price chart
-* SMA 50 overlay
-* RSI 14 in oscillator pane
+- EMA 14 overlay
+- SMA 50 overlay
+- RSI 14 oscillator
+- MACD (multi-series oscillator)
 
 It is:
 
-* Chart-session local
-* Editable
-* Removable
-* Independent from persistence
+- Chart-session local
+- Editable
+- Removable
+- Independent from persistence
+- Pane-agnostic
 
 ---
 
@@ -41,221 +44,295 @@ A ChartStudyInstance encapsulates four domains:
 
 ### 3.1 Identity
 
-* instance_id
-* family (indicator / oscillator / construct)
-* tool_key (ema, sma, rsi...)
-* display_name ("EMA 14")
-* dataset_id
-* pane_target (price / oscillator)
+- instance_id
+- family (indicator / oscillator / construct)
+- tool_key (ema, sma, rsi...)
+- display_name
+- dataset_id
+
+NOTE:  
+Studies do **not** own pane placement. Pane/layout is handled by the workspace.
+
+---
 
 ### 3.2 Computation (Inputs)
 
 Defines how values are calculated.
 
-* params (e.g. period=14)
-* source_kind (temporary | saved_artifact)
-* artifact_path (optional)
-* saved_artifact_name (optional)
+- params (e.g. period=14)
+- source_kind (temporary | saved_artifact)
+- artifact_path (optional)
+- saved_artifact_name (optional)
+
+---
 
 ### 3.3 Display (Style)
 
 Defines how the study is rendered.
 
-* color
-* line_width
-* line_style
-* visible
-* show_label
-* show_value
+- color
+- line_width
+- line_style
+- visible
+- show_label
+- show_value
+
+Style is:
+
+- chart-local
+- not persisted
+- independent from computation
+
+---
 
 ### 3.4 Runtime State
 
 Live state used during rendering.
 
-* last_value
-* selected
-* status (active | hidden | updating | error)
-* error_text
+- last_value
+- render_keys (list of series identifiers)
+- selected
+- status (active | hidden | updating | error)
+- error_text
 
 ---
 
-## 4. SUPPORTING OBJECTS
+## 4. MULTI-SERIES STUDY MODEL
 
-### StudyComputationConfig
+A study may produce **one or more render series**.
 
-Defines computation parameters.
+Examples:
 
-### StudyDisplayStyle
+- RSI → 1 series
+- MACD → multiple series (line, signal, histogram)
+- future studies → bands, zones, envelopes
 
-Defines visual appearance.
+Rules:
 
-### ChartStudyRuntimeState
-
-Defines live runtime state.
-
-### ChartStudyInstance
-
-Combines all of the above.
-
----
-
-## 5. KEY ARCHITECTURAL PRINCIPLE
-
-Display and computation MUST remain separate.
-
-Changing:
-
-* color
-* width
-* visibility
-
-must NOT trigger recomputation.
-
-Changing:
-
-* period
-* source
-
-must trigger recomputation but preserve the same instance.
+- A single study instance owns **all its render series**
+- All render series share the same `instance_id`
+- Each render series has its own `render_key`
+- The study runtime stores all associated render keys
 
 ---
 
-## 6. STUDY LIFECYCLE
+## 5. RENDER KEYS (CRITICAL CONCEPT)
 
-### Create
+Each rendered series is assigned a unique **render_key**.
 
-A study is created when applied from the Financial Tool Manager or from chart actions.
+Render keys are the ONLY link between:
 
-### Attach
+- chart-rendered series
+- ChartStudyInstance
+- UI interactions
 
-The study is registered into the chart session.
+They are used to:
 
-### Render
+- resolve study from chart interactions
+- edit a study
+- remove a study
+- update style without recomputation
 
-The study is rendered by the ChartWorkspaceWidget.
+Rules:
 
-### Update Style
+- stored in `ChartStudyRuntimeState.render_keys`
+- unique per study instance
+- regenerated on study replacement
+- never persisted across sessions
 
-Visual properties change without recomputation.
+---
 
-### Update Inputs
+## 6. KEY ARCHITECTURAL PRINCIPLE
 
-Triggers recomputation via controller.
+### Strict Separation of Responsibilities
+
+| Responsibility | Owned By |
+|------|--------|
+| computation | Core / Study |
+| series structure | Study |
+| rendering | ChartWorkspaceWidget |
+| pane layout | ChartWorkspaceWidget |
+| lifecycle | HistoricalChartPanel |
+| persistence | FinancialToolManager |
+
+---
+
+### Critical Rule
+
+Studies:
+
+- DO NOT know about panes
+- DO NOT control layout
+- DO NOT decide rendering location
+
+They ONLY:
+
+- define computation
+- produce series
+
+---
+
+## 7. STUDY LIFECYCLE
+
+### Apply
+
+Triggered from FinancialToolManagerWindow.
+
+Flow:
+
+- controller computes series
+- panel receives series_list
+- workspace renders series
+- study is registered
+
+---
+
+### Edit (Inputs)
+
+Triggered from chart UI.
+
+Uses **replace-on-apply model**:
+
+- old study is removed
+- new computation is executed
+- new study instance replaces old one
+- new render keys are generated
+
+---
+
+### Style Update
+
+- affects only visual properties
+- does NOT recompute data
+- re-renders existing series
+- preserves render keys
+
+---
 
 ### Remove
 
-Removes study from chart session ONLY.
-Does NOT delete saved artifacts.
+- removes study from chart session
+- removes associated render series
+- does NOT delete saved artifacts
 
 ---
 
-## 7. STUDY STATES
+## 8. STUDY STATES
 
 ### Source States
 
-* temporary
-* saved-linked
-* saved-loaded
+- temporary
+- saved-linked
+- saved-loaded
 
 ### Runtime States
 
-* active
-* hidden
-* updating
-* error
+- active
+- hidden
+- updating
+- error
 
 ---
 
-## 8. CHART STUDY REGISTRY
+## 9. CHART STUDY REGISTRY
 
 Each chart session owns a **ChartStudyRegistry**.
 
 Responsibilities:
 
-* add study
-* remove study
-* update style
-* update inputs
-* enumerate studies
-* maintain order
+- add study
+- remove study
+- lookup by instance_id
+- resolve by render_key
+- enumerate studies
+- maintain order
 
 Owned by:
 
-* HistoricalChartPanel
+- `HistoricalChartPanel`
 
 ---
 
-## 9. UI MODEL (TRADINGVIEW STYLE)
+## 10. UI MODEL
 
-Each study appears in the chart as a legend item:
+Each study appears as a chart-managed element.
 
-Example:
-EMA 14 104,235.7 [gear] [eye] [x]
+Controls:
 
-Features:
+- Edit (computation)
+- Style (visual)
+- Remove
 
-* color swatch
-* label
-* live value
-* settings button
-* visibility toggle
-* remove button
+Future extensions:
+
+- visibility toggle
+- value display
+- legend expansion
 
 ---
 
-## 10. SETTINGS MODEL
-
-Study settings dialog is split into:
+## 11. SETTINGS MODEL
 
 ### Inputs
 
-* computation parameters
+- computation parameters
 
 ### Style
 
-* visual settings
+- visual settings
 
 ### Source (future)
 
-* link to saved artifacts
+- linkage to saved artifacts
 
 ---
 
-## 11. ARCHITECTURAL PLACEMENT
+## 12. ARCHITECTURAL PLACEMENT
 
 ### HistoricalChartPanel
 
-* owns ChartStudyRegistry
-* manages study lifecycle
+- owns ChartStudyRegistry
+- manages lifecycle
+- resolves UI signals
 
 ### HistoricalChartController
 
-* computes study data
+- computes study data
 
 ### ChartWorkspaceWidget
 
-* renders studies
+- renders series
+- manages panes
+- manages layout
 
 ### FinancialToolManagerWindow
 
-* creates study definitions
+- defines studies
+- edits computation inputs
+- handles persistence intent
 
 ---
 
-## 12. DESIGN RULES
+## 13. DESIGN RULES
 
 1. Study instance is the unit of chart management
-2. Display changes do not recreate studies
-3. Computation changes preserve instance identity
-4. Removing a study does not delete stored data
-5. Chart style is local, not persisted globally
-6. Chart panel owns study instances
+2. Studies are pane-agnostic
+3. Display changes do not recreate studies
+4. Computation changes use replace-on-apply
+5. Removing a study does not delete stored data
+6. Style is chart-local only
+7. Render keys are the ONLY interaction bridge
+8. Multi-series studies are first-class citizens
+9. Layout is owned by the workspace, not the study
 
 ---
 
-## 13. MINIMUM DATA STRUCTURE
+## 14. MINIMUM DATA STRUCTURE
 
 ```python
+from dataclasses import dataclass, field
+
+
 @dataclass
 class StudyComputationConfig:
     family: str
@@ -263,6 +340,7 @@ class StudyComputationConfig:
     params: dict
     source_kind: str
     artifact_path: str | None = None
+
 
 @dataclass
 class StudyDisplayStyle:
@@ -273,34 +351,47 @@ class StudyDisplayStyle:
     show_label: bool = True
     show_value: bool = True
 
+
 @dataclass
 class ChartStudyRuntimeState:
     last_value: float | None = None
+    render_keys: list[str] = field(default_factory=list)
     selected: bool = False
     status: str = "active"
     error_text: str | None = None
+
 
 @dataclass
 class ChartStudyInstance:
     instance_id: str
     dataset_id: str
-    pane_target: str
     display_name: str
     computation: StudyComputationConfig
     style: StudyDisplayStyle
     runtime: ChartStudyRuntimeState
-```
 
----
+15. SUMMARY
 
-## 14. SUMMARY
+The ChartStudyInstance system provides:
 
-The ChartStudyInstance system introduces a robust, scalable, and user-friendly way to manage indicators, oscillators, and constructs directly on the chart.
+chart-local study lifecycle
 
-It ensures:
+multi-series study support
 
-* clean separation of responsibilities
-* TradingView-like usability
-* future extensibility
+strict separation of computation, display, and layout
 
-This is the foundation for all future on-chart study management features.
+render-key based interaction mapping
+
+replace-on-apply consistency model
+
+This architecture enables:
+
+scalable study management
+
+clean integration with pane-based rendering
+
+future support for complex studies (MACD, bands, constructs)
+
+This is the foundation for all future chart study behavior.
+
+If this file is not followed, the system will degrade into:    

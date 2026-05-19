@@ -1,73 +1,65 @@
 from __future__ import annotations
 
-from typing import List, Optional
+from typing import Any, List, Mapping, Optional
 
-from PySide6.QtCore import QRectF, Qt
-from PySide6.QtGui import (
-    QColor,
-    QFont,
-    QPainter,
-    QPen,
-    QBrush,
-    QWheelEvent,
-    QFontMetricsF,
-)
 from PySide6.QtWidgets import QWidget
 
+from leonardo.common.market_types import Candle
 from leonardo.gui.chart.viewport import ChartViewport
 from leonardo.gui.chart.crosshair import Crosshair
+from leonardo.gui.chart.model import Series
+from leonardo.gui.chart.rendering.right_axis_tags import draw_right_axis_value_tag
+from leonardo.gui.chart.rendering.volume_surface import (
+    VolumeRenderInteractionMixin,
+    VolumeRenderPaintMixin,
+)
+from leonardo.gui.chart.rendering.y_axis_interaction import OscillatorYAxisInteractionMixin
+from leonardo.gui.chart.rendering.oscillator_policy_painter import OscillatorPolicyPainterMixin
+from leonardo.gui.chart.rendering.oscillator_surface_painter import OscillatorSurfacePaintMixin
 
 
-def draw_right_axis_value_tag(p: QPainter, axis: QRectF, y: float, text: str) -> None:
-    """
-    Draw a right-side floating label INSIDE the axis/legend gutter at vertical position y.
-    Style: orange box, 50% opacity, black text.
-    """
-    fm = QFontMetricsF(p.font())
-    pad_x = 7.0
-    pad_y = 3.0
-
-    text_w = fm.horizontalAdvance(text)
-    text_h = fm.height()
-
-    w = min(axis.width() - 8.0, text_w + 2 * pad_x)
-    h = text_h + 2 * pad_y
-
-    y_top = y - h / 2.0
-    y_top = max(axis.top(), min(axis.bottom() - h, y_top))
-
-    x_left = axis.right() - w - 4.0
-    r = QRectF(x_left, y_top, w, h)
-
-    p.save()
-    p.setPen(Qt.NoPen)
-    p.setBrush(QColor(255, 165, 0))  # orange
-    p.setOpacity(0.5)
-    p.drawRoundedRect(r, 6.0, 6.0)
-    p.setOpacity(1.0)
-    p.setPen(QColor(0, 0, 0))        # black text
-    p.drawText(r, Qt.AlignCenter, text)
-    p.restore()
-
-
-class VolumeRenderSurface(QWidget):
+class VolumeRenderSurface(
+    VolumeRenderPaintMixin,
+    VolumeRenderInteractionMixin,
+    QWidget,
+):
     def __init__(
         self,
         viewport: ChartViewport,
         crosshair: Crosshair,
+        candles: List[Candle],
         volume: List[float],
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._viewport = viewport
+        self._candles = candles
         self._volume = volume
         self._crosshair = crosshair
 
         self._resident_base_index = 0
 
+        # ------------------------------------------------------------------
+        # Static cache
+        #
+        # Crosshair movement should not force a full volume-bar repaint.
+        # Cache the static scene and paint only the dynamic crosshair overlay
+        # on top for mouse-move updates.
+        # ------------------------------------------------------------------
+        self._static_pixmap = None
+        self._static_pixmap_key = None
+        self._static_version = 0
+        self._static_rebuild_scheduled = False
+        self._static_vmax: float | None = None
+
         self.setMouseTracking(True)
 
-        self._viewport.viewport_changed.connect(self.update)
+        # Workspace owns viewport-driven refresh coordination.
+        #
+        # Volume is an auxiliary pane and still consumes the shared horizontal
+        # camera, but the surface must not become a second refresh owner by
+        # listening directly to viewport signals. Workspace triggers volume
+        # repaints explicitly on camera changes (mirroring price/oscillator).
         self._crosshair.changed.connect(self.update)
         self._crosshair.cleared.connect(self.update)
 
@@ -76,172 +68,35 @@ class VolumeRenderSurface(QWidget):
         self._pad_right = 64
         self._pad_bottom = 14
 
-    def set_volume(self, volume: List[float]) -> None:
+
+    def _bump_static_version(self) -> None:
+        try:
+            self._static_version = int(getattr(self, "_static_version", 0)) + 1
+            self._static_pixmap_key = None
+        except Exception:
+            pass
+
+    def apply_contract(
+        self,
+        *,
+        candles: List[Candle],
+        volume: List[float],
+        resident_base_index: int,
+    ) -> None:
+        """Apply the full workspace-owned volume render contract in one update."""
+        self._candles = candles
         self._volume = volume
+        self._resident_base_index = max(0, int(resident_base_index))
+        self._bump_static_version()
         self.update()
 
-    def set_resident_base_index(self, base_index: int) -> None:
-        self._resident_base_index = max(0, int(base_index))
-        self.update()
 
-    def _global_to_local(self, global_index: int) -> Optional[int]:
-        local = int(global_index) - self._resident_base_index
-        if 0 <= local < len(self._volume):
-            return local
-        return None
-
-    def _value_at_global(self, global_index: int) -> Optional[float]:
-        local = self._global_to_local(global_index)
-        if local is None:
-            return None
-        return float(self._volume[local])
-
-    def _plot_rect(self) -> QRectF:
-        w = self.width()
-        h = self.height()
-        return QRectF(
-            self._pad_left,
-            self._pad_top,
-            max(1, w - self._pad_left - self._pad_right),
-            max(1, h - self._pad_top - self._pad_bottom),
-        )
-
-    def _axis_rect(self, plot: QRectF) -> QRectF:
-        return QRectF(plot.right(), plot.top(), float(self._pad_right), plot.height())
-
-    def mouseMoveEvent(self, e) -> None:
-        plot = self._plot_rect()
-        try:
-            x = float(e.position().x())
-            y = float(e.position().y())
-        except Exception:
-            x = float(e.x())
-            y = float(e.y())
-
-        if not plot.contains(x, y):
-            self._crosshair.set_hover_on_price(False)
-            return
-
-        idx = self._viewport.index_from_x(plot, x)
-        self._crosshair.set_index(idx)
-        self._crosshair.set_hover_on_price(False)
-
-    def wheelEvent(self, event: QWheelEvent) -> None:
-        plot = self._plot_rect()
-
-        try:
-            mx = float(event.position().x())
-            my = float(event.position().y())
-        except Exception:
-            mx = float(event.x())
-            my = float(event.y())
-
-        if not plot.contains(mx, my):
-            event.ignore()
-            return
-
-        anchor_idx = self._viewport.index_from_x(plot, mx)
-        # slot-centered anchor_rel (NOT continuous mouse-based)
-        anchor_rel = ((anchor_idx - self._viewport.start) + 0.5) / max(1, self._viewport.visible)
-
-        dy = event.angleDelta().y()
-        if dy > 0:
-            self._viewport.zoom_in_at(anchor_idx, anchor_rel)
-        elif dy < 0:
-            self._viewport.zoom_out_at(anchor_idx, anchor_rel)
-
-        event.accept()
-
-    def leaveEvent(self, e) -> None:
-        self._crosshair.set_hover_on_price(False)
-        super().leaveEvent(e)
-
-    def paintEvent(self, event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-
-        w = self.width()
-        h = self.height()
-        p.fillRect(0, 0, w, h, QColor(12, 12, 14))
-
-        plot = self._plot_rect()
-        axis = self._axis_rect(plot)
-
-        p.setPen(QPen(QColor(70, 70, 82)))
-        p.drawRect(plot)
-
-        start, end = self._viewport.start, self._viewport.end
-        vis: List[Optional[float]] = [self._value_at_global(gi) for gi in range(start, end)]
-        real_vis = [v for v in vis if v is not None]
-        if not real_vis:
-            return
-
-        vmax = max(real_vis)
-        n = len(vis)
-        if n <= 0:
-            return
-
-        bar_w = max(2.0, plot.width() / max(1, n))
-        body_w = max(1.0, bar_w * 0.8)
-
-        brush = QBrush(QColor(80, 120, 220))
-        p.setPen(QPen(QColor(80, 120, 220)))
-        p.setBrush(brush)
-
-        p.save()
-        p.setClipRect(plot)
-
-        for i, v in enumerate(vis):
-            if v is None:
-                continue
-            cx = plot.left() + (i + 0.5) * bar_w
-            t = v / vmax if vmax > 0 else 0.0
-            bar_h = t * plot.height()
-            p.drawRect(cx - body_w / 2, plot.bottom() - bar_h, body_w, bar_h)
-
-        if self._crosshair.active and self._crosshair.index is not None:
-            idx = self._crosshair.index
-
-            if start <= idx < end:
-                x = self._viewport.x_from_index(plot, idx)
-                p.setPen(QPen(QColor(120, 120, 140)))
-                p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
-
-            v_cross = self._value_at_global(idx)
-            if v_cross is not None and vmax > 0:
-                v = v_cross
-                if v < 0.0:
-                    v = 0.0
-                elif v > vmax:
-                    v = vmax
-
-                t = v / vmax
-                y = plot.bottom() - t * plot.height()
-
-                p.setPen(QPen(QColor(120, 120, 140)))
-                p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
-
-        p.restore()
-
-        if self._volume and vmax > 0:
-            v_raw = float(self._volume[-1])
-            v_clamped = v_raw
-            if v_clamped < 0.0:
-                v_clamped = 0.0
-            elif v_clamped > vmax:
-                v_clamped = vmax
-
-            y_tag = plot.bottom() - (v_clamped / vmax) * plot.height()
-            p.setFont(QFont("Consolas", 9))
-            draw_right_axis_value_tag(p, axis, y_tag, f"{v_raw:.0f}")
-
-        p.setPen(QPen(QColor(170, 170, 185)))
-        p.setFont(QFont("Consolas", 9))
-        p.drawText(int(plot.right() + 8), int(plot.top() + 12), "Vol")
-        p.drawText(int(plot.right() + 8), int(plot.top() + 26), f"{vmax:0.0f}")
-
-
-class OscillatorRenderSurface(QWidget):
+class OscillatorRenderSurface(
+    OscillatorYAxisInteractionMixin,
+    OscillatorSurfacePaintMixin,
+    OscillatorPolicyPainterMixin,
+    QWidget,
+):
     def __init__(
         self,
         title: str,
@@ -249,18 +104,51 @@ class OscillatorRenderSurface(QWidget):
         crosshair: Crosshair,
         values: List[float],
         parent: Optional[QWidget] = None,
+        *,
+        visual_policy: Optional[Mapping[str, Any]] = None,
     ) -> None:
         super().__init__(parent)
-        self._title = title
+        self._title = str(title).strip() or "Oscillator"
         self._viewport = viewport
         self._crosshair = crosshair
-        self._values = values
+        self._values = values if isinstance(values, list) else list(values)
+
+        self._series_list: List[Series] = [
+            Series(
+                key="__oscillator__",
+                title=self._title,
+                values=self._values,
+            )
+        ]
 
         self._resident_base_index = 0
+        self._visual_policy: dict[str, Any] = dict(visual_policy or {})
+
+        # Pane-owned view state is supplied by OscillatorPane/Workspace.
+        # Final point-C contract for the oscillator renderer mirrors the price
+        # renderer contract:
+        # - workspace/pane own the explicit vertical range contract
+        # - workspace/pane own the durable interaction state
+        # - the renderer consumes that state and may only write back direct
+        #   gesture updates into the same pane-owned mapping
+        #
+        # Required keys for painting:
+        # - ``y_lo`` / ``y_hi``: current resolved oscillator range
+        #
+        # Additional pane-owned keys consumed in this phase:
+        # - ``y_offset``: vertical pixel offset applied after value->pixel mapping
+        #
+        # Transient gesture keys owned in the same pane/workspace mapping:
+        # - ``y_drag_active``
+        # - ``y_drag_last_mouse_y``
+        self._view_state: dict[str, Any] = {}
+        self._y_offset = 0.0
 
         self.setMouseTracking(True)
 
-        self._viewport.viewport_changed.connect(self.update)
+        # Workspace owns viewport-driven oscillator-pane contract refresh.
+        # The renderer repaints when the pane pushes a refreshed contract or
+        # when crosshair interaction changes the current overlay state.
         self._crosshair.changed.connect(self.update)
         self._crosshair.cleared.connect(self.update)
 
@@ -269,163 +157,49 @@ class OscillatorRenderSurface(QWidget):
         self._pad_right = 64
         self._pad_bottom = 14
 
-    def set_values(self, values: List[float]) -> None:
-        self._values = values
-        self.update()
+        # ------------------------------------------------------------------
+        # Static render caching
+        #
+        # Oscillator panes can contain multiple series and policy layers. Mouse
+        # crosshair motion should not force a full redraw of that entire scene.
+        # We therefore cache the static scene into a pixmap and paint only the
+        # dynamic crosshair overlay on top.
+        # ------------------------------------------------------------------
+        self._static_pixmap = None
+        self._static_pixmap_key = None
+        self._static_version = 0
 
-    def set_resident_base_index(self, base_index: int) -> None:
-        self._resident_base_index = max(0, int(base_index))
-        self.update()
 
-    def _global_to_local(self, global_index: int) -> Optional[int]:
-        local = int(global_index) - self._resident_base_index
-        if 0 <= local < len(self._values):
-            return local
-        return None
 
-    def _value_at_global(self, global_index: int) -> Optional[float]:
-        local = self._global_to_local(global_index)
-        if local is None:
-            return None
-        return float(self._values[local])
 
-    def _plot_rect(self) -> QRectF:
-        w = self.width()
-        h = self.height()
-        return QRectF(
-            self._pad_left,
-            self._pad_top,
-            max(1, w - self._pad_left - self._pad_right),
-            max(1, h - self._pad_top - self._pad_bottom),
-        )
-
-    def _axis_rect(self, plot: QRectF) -> QRectF:
-        return QRectF(plot.right(), plot.top(), float(self._pad_right), plot.height())
-
-    def mouseMoveEvent(self, e) -> None:
-        plot = self._plot_rect()
+    def _bump_static_version(self) -> None:
+        """Mark the cached static oscillator scene as dirty."""
         try:
-            x = float(e.position().x())
-            y = float(e.position().y())
+            self._static_version = int(getattr(self, "_static_version", 0)) + 1
+            self._static_pixmap_key = None
         except Exception:
-            x = float(e.x())
-            y = float(e.y())
+            pass
 
-        if not plot.contains(x, y):
-            self._crosshair.set_hover_on_price(False)
-            return
-
-        idx = self._viewport.index_from_x(plot, x)
-        self._crosshair.set_index(idx)
-        self._crosshair.set_hover_on_price(False)
-
-    def wheelEvent(self, event: QWheelEvent) -> None:
-        plot = self._plot_rect()
-
-        try:
-            mx = float(event.position().x())
-            my = float(event.position().y())
-        except Exception:
-            mx = float(event.x())
-            my = float(event.y())
-
-        if not plot.contains(mx, my):
-            event.ignore()
-            return
-
-        anchor_idx = self._viewport.index_from_x(plot, mx)
-        # slot-centered anchor_rel (NOT continuous mouse-based)
-        anchor_rel = ((anchor_idx - self._viewport.start) + 0.5) / max(1, self._viewport.visible)
-
-        dy = event.angleDelta().y()
-        if dy > 0:
-            self._viewport.zoom_in_at(anchor_idx, anchor_rel)
-        elif dy < 0:
-            self._viewport.zoom_out_at(anchor_idx, anchor_rel)
-
-        event.accept()
-
-    def leaveEvent(self, e) -> None:
-        self._crosshair.set_hover_on_price(False)
-        super().leaveEvent(e)
-
-    def paintEvent(self, event) -> None:
-        p = QPainter(self)
-        p.setRenderHint(QPainter.Antialiasing, False)
-
-        w = self.width()
-        h = self.height()
-        p.fillRect(0, 0, w, h, QColor(12, 12, 14))
-
-        plot = self._plot_rect()
-        axis = self._axis_rect(plot)
-
-        p.setPen(QPen(QColor(70, 70, 82)))
-        p.drawRect(plot)
-
-        start, end = self._viewport.start, self._viewport.end
-        vis: List[Optional[float]] = [self._value_at_global(gi) for gi in range(start, end)]
-        real_vis = [v for v in vis if v is not None]
-        if len(real_vis) < 2:
-            return
-
-        ymin = min(real_vis)
-        ymax = max(real_vis)
-        if ymax <= ymin:
-            ymax = ymin + 1.0
-
-        n = len(vis)
-        dx = plot.width() / max(1, (n - 1))
-
-        pen = QPen(QColor(0, 200, 255))
-        pen.setWidth(1)
-        p.setPen(pen)
-
-        def y_to_px(v: float) -> float:
-            t = (v - ymin) / (ymax - ymin)
-            return plot.bottom() - t * plot.height()
-
-        p.save()
-        p.setClipRect(plot)
-
-        prev_x: float | None = None
-        prev_y: float | None = None
-        for i, v in enumerate(vis):
-            if v is None:
-                prev_x = None
-                prev_y = None
-                continue
-
-            x = plot.left() + i * dx
-            y = y_to_px(v)
-
-            if prev_x is not None and prev_y is not None:
-                p.drawLine(int(prev_x), int(prev_y), int(x), int(y))
-
-            prev_x, prev_y = x, y
-
-        if self._crosshair.active and self._crosshair.index is not None:
-            idx = self._crosshair.index
-
-            if start <= idx < end:
-                x = self._viewport.x_from_index(plot, idx)
-                p.setPen(QPen(QColor(120, 120, 140)))
-                p.drawLine(int(x), int(plot.top()), int(x), int(plot.bottom()))
-
-            v_cross = self._value_at_global(idx)
-            if v_cross is not None:
-                y = y_to_px(v_cross)
-                p.setPen(QPen(QColor(120, 120, 140)))
-                p.drawLine(int(plot.left()), int(y), int(plot.right()), int(y))
-
-        p.restore()
-
-        if self._values:
-            v_last = float(self._values[-1])
-            y_tag = y_to_px(v_last)
-            p.setFont(QFont("Consolas", 9))
-            draw_right_axis_value_tag(p, axis, y_tag, f"{v_last:.2f}")
-
-        p.setPen(QPen(QColor(170, 170, 185)))
-        p.setFont(QFont("Consolas", 9))
-        p.drawText(int(plot.right() + 8), int(plot.top() + 12), self._title)
+    def apply_contract(
+        self,
+        *,
+        title: str,
+        series_list: List[Series],
+        visual_policy: Optional[Mapping[str, Any]],
+        view_state: Optional[Mapping[str, Any]],
+        resident_base_index: int,
+    ) -> None:
+        """Apply the full pane-owned oscillator render contract in one update."""
+        self._title = str(title).strip() or "Oscillator"
+        self._series_list = series_list if isinstance(series_list, list) else list(series_list)
+        primary = self._primary_series()
+        self._values = primary.values if primary is not None else []
+        self._visual_policy = dict(visual_policy or {})
+        if isinstance(view_state, dict):
+            self._view_state = view_state
+        else:
+            self._view_state = dict(view_state or {})
+        self._resident_base_index = max(0, int(resident_base_index))
+        self._sync_view_state_from_owner()
+        self._bump_static_version()
+        self.update()

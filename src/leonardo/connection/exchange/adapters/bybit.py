@@ -3,13 +3,35 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncIterator, Optional, Sequence, Set
+from typing import AsyncIterator, Literal, Optional, Sequence, Set
 
 import aiohttp
 import websockets
 
-from leonardo.common.market_types import BybitMarket, Candle, Timeframe
+from leonardo.common.market_types import Candle
 from leonardo.connection.exchange.base import BaseExchange
+
+BybitMarket = Literal["spot", "linear", "inverse", "option"]
+
+Bybit_Timeframe = Literal[
+    "1m", "3m", "5m", "15m", "30m",
+    "1h", "2h", "4h", "6h", "12h",
+    "1d", "1w", "1M",
+]
+
+BYBIT_MARKETS: tuple[BybitMarket, ...] = ("spot", "linear", "inverse", "option")
+BYBIT_CANONICAL_MARKETS: tuple[str, ...] = ("spot", "linear", "inverse", "options")
+BYBIT_MARKET_ALIASES: dict[str, BybitMarket] = {"options": "option"}
+
+BYBIT_TIMEFRAMES: tuple[Bybit_Timeframe, ...] = (
+    "1m", "3m", "5m", "15m", "30m",
+    "1h", "2h", "4h", "6h", "12h",
+    "1d", "1w", "1M",
+)
+
+BYBIT_TIMEFRAME_ALIASES: dict[str, Bybit_Timeframe] = {
+    "60m": "1h",
+}
 
 _BYBIT_REST_MAINNET = "https://api.bybit.com"
 _BYBIT_REST_TESTNET = "https://api-testnet.bybit.com"
@@ -17,7 +39,10 @@ _BYBIT_REST_TESTNET = "https://api-testnet.bybit.com"
 _BYBIT_WS_MAINNET = "wss://stream.bybit.com/v5/public"
 _BYBIT_WS_TESTNET = "wss://stream-testnet.bybit.com/v5/public"
 
-_TIMEFRAME_TO_BYBIT_INTERVAL: dict[Timeframe, str] = {
+_BYBIT_MAX_KLINE_LIMIT = 1000
+_BYBIT_MONTH_DISCOVERY_STEP_MS = 31 * 86_400_000
+
+_TIMEFRAME_TO_BYBIT_INTERVAL: dict[Bybit_Timeframe, str] = {
     "1m": "1",
     "3m": "3",
     "5m": "5",
@@ -33,26 +58,9 @@ _TIMEFRAME_TO_BYBIT_INTERVAL: dict[Timeframe, str] = {
     "1M": "M",
 }
 
-_BYBIT_OPTIONA_TO_TIMEFRAME: dict[str, Timeframe] = {
-    "1m": "1m",
-    "3m": "3m",
-    "5m": "5m",
-    "15m": "15m",
-    "30m": "30m",
-    "60m": "1h",
-    "1h": "1h",
-    "2h": "2h",
-    "4h": "4h",
-    "6h": "6h",
-    "12h": "12h",
-    "1d": "1d",
-    "1w": "1w",
-    "1M": "1M",
-    "1m".upper(): "1m",
-    "1h".upper(): "1h",
-    "1d".upper(): "1d",
-    "1w".upper(): "1w",
-    "1M".upper(): "1M",
+_BYBIT_OPTIONA_TO_TIMEFRAME: dict[str, Bybit_Timeframe] = {
+    **{timeframe: timeframe for timeframe in BYBIT_TIMEFRAMES},
+    **BYBIT_TIMEFRAME_ALIASES,
 }
 
 
@@ -100,11 +108,16 @@ class BybitExchange(BaseExchange):
             raise RuntimeError(f"Bybit server time missing in response: {data!r}")
         return int(t)
 
+    def supported_markets(self) -> Set[str]:
+        return {str(market) for market in BYBIT_CANONICAL_MARKETS}
+
     def supported_timeframes(self, market: str) -> Set[str]:
         _ = self._normalize_market(market)
-        out: set[str] = {str(tf) for tf in _TIMEFRAME_TO_BYBIT_INTERVAL.keys()}
-        out.add("60m")
-        return out
+        return {str(timeframe) for timeframe in BYBIT_TIMEFRAMES}
+
+    def max_historical_ohlcv_limit(self, market: str) -> Optional[int]:
+        _ = self._normalize_market(market)
+        return _BYBIT_MAX_KLINE_LIMIT
 
     async def get_metadata(self, *, market: str, force_refresh: bool = False) -> dict:
         m = self._normalize_market(market)
@@ -112,7 +125,9 @@ class BybitExchange(BaseExchange):
             "name": self.name,
             "market": m,
             "capabilities": {"rest_ohlcv": True, "websocket_ohlcv": True, "rest_historical": True},
-            "supported_timeframes": sorted(self.supported_timeframes(m)),
+            "supported_markets": list(BYBIT_CANONICAL_MARKETS),
+            "supported_timeframes": list(BYBIT_TIMEFRAMES),
+            "max_historical_ohlcv_limit": _BYBIT_MAX_KLINE_LIMIT,
         }
 
     async def fetch_ohlcv(
@@ -120,7 +135,7 @@ class BybitExchange(BaseExchange):
         *,
         market: str,
         symbol: str,
-        timeframe: Timeframe,
+        timeframe: Bybit_Timeframe,
         limit: int = 500,
         since_ms: Optional[int] = None,
     ) -> Sequence[Candle]:
@@ -143,7 +158,7 @@ class BybitExchange(BaseExchange):
         *,
         market: str,
         symbol: str,
-        timeframe: Timeframe,
+        timeframe: Bybit_Timeframe,
     ) -> AsyncIterator[tuple[str, Candle]]:
         """
         Required by BaseExchange.
@@ -208,8 +223,94 @@ class BybitExchange(BaseExchange):
                             yield ("update", candle)
             finally:
                 pinger_task.cancel()
-                
-    def _tf_duration_ms(self, tf: Timeframe) -> Optional[int]:
+
+    async def oldest_historical_ohlcv_ts_ms(
+        self,
+        *,
+        market: str,
+        symbol: str,
+        timeframe: str,
+        limit: Optional[int] = None,
+    ) -> Optional[int]:
+        """
+        Discover the oldest available Bybit OHLCV candle for this market.
+
+        Bybit's kline endpoint does not expose a direct "oldest candle" field,
+        so this uses bounded existence probes over [0, server_time] and then
+        fetches the smallest discovered window to return the actual candle
+        timestamp. This is read-only and does not write downloader state.
+        """
+        m = self._normalize_market(market)
+        tf_obj = self._normalize_timeframe(timeframe)
+
+        step_ms = self._tf_duration_ms(tf_obj)
+        if step_ms is None:
+            # Month candles are variable length. Use a conservative probe step
+            # only for discovery-window narrowing; the final timestamp still
+            # comes from the exchange candle open time.
+            step_ms = _BYBIT_MONTH_DISCOVERY_STEP_MS
+
+        server_time_ms = await self.get_server_time_ms()
+        if server_time_ms <= 0:
+            return None
+
+        async def _has_candle_through(end_ms: int) -> bool:
+            candles = await self.fetch_ohlcv_historical(
+                market=m,
+                symbol=symbol,
+                timeframe=tf_obj,
+                start_ms=0,
+                end_ms=max(0, int(end_ms)),
+                limit=1,
+            )
+            return bool(candles)
+
+        if not await _has_candle_through(server_time_ms):
+            return None
+
+        low = 0
+        high = int(server_time_ms)
+        while high - low > step_ms:
+            mid = low + ((high - low) // 2)
+            if await _has_candle_through(mid):
+                high = mid
+            else:
+                low = mid + 1
+
+        final_start = max(0, high - step_ms)
+        final_end = min(int(server_time_ms), high + step_ms)
+        final_limit = self.max_historical_ohlcv_limit(m) or _BYBIT_MAX_KLINE_LIMIT
+        if limit is not None:
+            requested_limit = max(1, int(limit))
+            final_limit = min(final_limit, requested_limit)
+
+        candles = await self.fetch_ohlcv_historical(
+            market=m,
+            symbol=symbol,
+            timeframe=tf_obj,
+            start_ms=final_start,
+            end_ms=final_end,
+            limit=final_limit,
+        )
+        if not candles:
+            return None
+        return min(candle.ts_ms for candle in candles)
+
+    def _normalize_timeframe(self, timeframe: str) -> Bybit_Timeframe:
+        tf_in = (timeframe or "").strip()
+        if not tf_in:
+            raise ValueError("timeframe required")
+
+        # Keep "1M" distinct from "1m".
+        tf_key = "1M" if tf_in == "1M" else tf_in.lower()
+
+        tf_obj = _BYBIT_OPTIONA_TO_TIMEFRAME.get(tf_key)
+        if tf_obj is None:
+            supported = self.supported_timeframes("linear")
+            raise ValueError(f"invalid bybit timeframe={timeframe!r} (supported: {sorted(supported)})")
+        return tf_obj
+
+    def _tf_duration_ms(self, tf: Bybit_Timeframe) -> Optional[int]:
         # Month is variable; we do not try to compute it here
         if tf == "1M":
             return None
@@ -243,28 +344,14 @@ class BybitExchange(BaseExchange):
         """
         m = self._normalize_market(market)
 
-        tf_in = (timeframe or "").strip()
-        if not tf_in:
-            raise ValueError("timeframe required")
-
-        # Keep "1M" distinct from "1m"
-        tf_key = "1M" if tf_in == "1M" else tf_in.lower()
-
-        supported = self.supported_timeframes(m)
-        if supported and tf_key not in supported:
-            raise ValueError(f"invalid bybit timeframe={timeframe!r} (supported: {sorted(supported)})")
-
-        tf_obj = _BYBIT_OPTIONA_TO_TIMEFRAME.get(tf_key)
-        if tf_obj is None:
-            raise ValueError(f"cannot map timeframe {timeframe!r} to internal Timeframe for Bybit")
-
+        tf_obj = self._normalize_timeframe(timeframe)
         interval = _TIMEFRAME_TO_BYBIT_INTERVAL[tf_obj]
 
         lim = int(limit) if limit is not None else 200
         if lim < 1:
             lim = 1
-        if lim > 1000:
-            lim = 1000
+        if lim > _BYBIT_MAX_KLINE_LIMIT:
+            lim = _BYBIT_MAX_KLINE_LIMIT
 
         await self.open()
         assert self._session is not None
@@ -330,6 +417,7 @@ class BybitExchange(BaseExchange):
 
     def _normalize_market(self, market: str) -> BybitMarket:
         m = market.strip().lower()
-        if m not in ("spot", "linear", "inverse", "option"):
-            raise ValueError(f"invalid bybit market={market!r} (expected spot|linear|inverse|option)")
+        m = BYBIT_MARKET_ALIASES.get(m, m)
+        if m not in BYBIT_MARKETS:
+            raise ValueError(f"invalid bybit market={market!r} (expected spot|linear|inverse|options)")
         return m  # type: ignore[return-value]

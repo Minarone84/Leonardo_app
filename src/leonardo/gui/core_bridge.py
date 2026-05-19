@@ -1,21 +1,22 @@
 from __future__ import annotations
 
-from typing import Any, Optional, Awaitable, TypeVar, Callable
 from concurrent.futures import Future
-from dataclasses import dataclass
+from typing import Any, Awaitable, Callable, Optional, TypeVar
 
-from PySide6.QtCore import QObject, Signal, Slot, Qt, QTimer
+from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 
+from leonardo.connection.exchange.adapters.bybit import BybitExchange, BybitMarket, Bybit_Timeframe
 from leonardo.core.context import AppContext
+from leonardo.core.registry_keys import SVC_HISTORICAL_DATASET
+from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService
 from leonardo.gui.core_runner import CoreRunner
 
 T = TypeVar("T")
 
 
 class _GuiDispatcher(QObject):
-    """
-    Lives in the GUI thread. Receives requests and executes callables on GUI thread.
-    """
+    """Dispatch callables onto the Qt GUI thread."""
+
     _invoke = Signal(object, object, object)  # fn, args(tuple), kwargs(dict)
 
     def __init__(self) -> None:
@@ -24,48 +25,63 @@ class _GuiDispatcher(QObject):
 
     @Slot(object, object, object)
     def _on_invoke(self, fn_obj: object, args_obj: object, kwargs_obj: object) -> None:
+        """Execute a queued callable on the GUI thread."""
         fn = fn_obj  # type: ignore[assignment]
         args = args_obj  # type: ignore[assignment]
         kwargs = kwargs_obj  # type: ignore[assignment]
         try:
             fn(*args, **kwargs)  # type: ignore[misc]
         except Exception as e:
-            # Keep GUI alive. You can also emit status_changed here.
-            # Avoid raising across Qt signal boundary.
+            # Keep the GUI alive and avoid raising across the Qt signal boundary.
             print(f"[CoreBridge.gui_call] GUI callable raised: {e!r}")
 
 
 class CoreBridge(QObject):
+    """GUI-facing seam for Core runtime access and realtime feed control.
+
+    Responsibilities:
+        - start/stop the CoreRunner thread
+        - submit coroutines onto the Core event loop
+        - marshal callables back onto the Qt GUI thread
+        - expose a narrow explicit realtime control boundary for the GUI
+
+    Notes:
+        Realtime feed lifecycle ownership is intentionally kept here rather than
+        in MainWindow. The window may request start/stop actions, but it should
+        not own feed futures or orchestrate feed execution directly.
     """
-    GUI-facing integration seam.
-    - submit(): schedule coroutine on core event loop (CoreRunner thread)
-    - gui_call(): schedule callable on Qt GUI thread (thread-safe)
-    """
+
     status_changed = Signal(str)
 
-    # payload: ChartSnapshot / ChartPatch from leonardo.common.market_types
+    # payload: ChartSnapshot / ChartPatch from leonardo.common.chart_messages
     chart_snapshot = Signal(object)
     chart_patch = Signal(object)
+
+    # explicit realtime lifecycle signal for GUI consumers
+    realtime_state_changed = Signal(bool)
 
     def __init__(self) -> None:
         super().__init__()
         self._runner: Optional[CoreRunner] = None
         self._gui = _GuiDispatcher()
+        self._realtime_future: Optional[Future[object]] = None
 
-        # Ensure dispatcher lives in the GUI thread even if CoreBridge is created early.
-        # This schedules the move after the event loop starts.
+        # Ensure dispatcher lives in the GUI thread even if CoreBridge is
+        # created before the main event loop fully settles.
         QTimer.singleShot(0, self._ensure_gui_thread)
 
     @Slot()
     def _ensure_gui_thread(self) -> None:
-        # Move dispatcher to the thread that owns CoreBridge (should be GUI thread).
+        """Move the dispatcher to the thread that owns this bridge."""
         self._gui.moveToThread(self.thread())
 
     @property
     def is_running(self) -> bool:
+        """Return whether the core runner thread is currently active."""
         return self._runner is not None
 
     def start(self) -> None:
+        """Start the Core runtime thread if it is not already running."""
         if self._runner is not None:
             return
         self.status_changed.emit("Starting core...")
@@ -74,27 +90,31 @@ class CoreBridge(QObject):
         self.status_changed.emit("Ready")
 
     def stop(self) -> None:
+        """Stop the realtime feed if needed, then stop the Core runtime."""
         if self._runner is None:
             return
+
+        # Stop GUI-controlled realtime first so runtime truth and connection
+        # cleanup paths are given a chance to execute before the runner dies.
+        self.stop_realtime_feed()
+
         self.status_changed.emit("Stopping core...")
         self._runner.stop()
         self._runner = None
         self.status_changed.emit("Stopped")
 
     def submit(self, coro: Awaitable[T]) -> Future[T]:
+        """Schedule a coroutine on the CoreRunner event loop."""
         if self._runner is None:
             raise RuntimeError("Core not started")
         return self._runner.submit(coro)  # type: ignore[arg-type]
 
     def gui_call(self, fn: Callable[..., Any], *args: Any, **kwargs: Any) -> None:
-        """
-        Thread-safe: schedule fn(*args, **kwargs) to run on the Qt GUI thread.
-        Safe to call from core thread, websocket thread, etc.
-        """
-        # Ensure we always queue into GUI event loop:
+        """Queue ``fn(*args, **kwargs)`` onto the Qt GUI thread."""
         self._gui._invoke.emit(fn, args, kwargs)
 
     def try_get_audit_snapshot(self) -> Optional[dict[str, Any]]:
+        """Return a lightweight snapshot of in-memory audit events, if any."""
         if self._runner is None:
             return None
         snap = self._runner.get_audit_snapshot()
@@ -102,9 +122,218 @@ class CoreBridge(QObject):
             return None
         events = getattr(snap, "events", [])
         return {"count": getattr(snap, "count", len(events)), "events": list(events)}
-    
+
     @property
     def context(self) -> AppContext:
+        """Return the active AppContext exposed by the CoreRunner."""
         if self._runner is None or self._runner.context is None:
             raise RuntimeError("Core not started or context not available")
         return self._runner.context
+
+    def _historical_dataset_service(self) -> HistoricalDatasetService:
+        """Return the Core-owned historical dataset service for catalog access."""
+        return self.context.get_service(SVC_HISTORICAL_DATASET, HistoricalDatasetService)
+
+    def list_historical_dataset_exchanges(self) -> list[str]:
+        """Return exchanges that have at least one Core-loadable OHLCV dataset."""
+        return self._historical_dataset_service().list_dataset_exchanges()
+
+    def list_historical_dataset_market_types(self, exchange: str) -> list[str]:
+        """Return market types available in the Core-owned historical dataset catalog."""
+        return self._historical_dataset_service().list_dataset_market_types(exchange)
+
+    def list_historical_dataset_symbols(self, exchange: str, market_type: str) -> list[str]:
+        """Return symbols available in the Core-owned historical dataset catalog."""
+        return self._historical_dataset_service().list_dataset_symbols(exchange, market_type)
+
+    def list_historical_dataset_timeframes(
+        self,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+    ) -> list[str]:
+        """Return timeframes available in the Core-owned historical dataset catalog."""
+        return self._historical_dataset_service().list_dataset_timeframes(
+            exchange,
+            market_type,
+            symbol,
+        )
+
+    def historical_dataset_exists(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> bool:
+        """Return whether Core can identify the exact OHLCV dataset value file."""
+        dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
+        return self._historical_dataset_service().has_dataset(dataset_id)
+
+    def cancel_historical_download(self, job_id: str) -> Future[bool]:
+        """Request cancellation of one active historical download task.
+
+        Historical downloads are Core-owned tasks named by HistoricalDownloader
+        as ``historical_download:{job_id}``. The GUI may request cancellation,
+        but Core/TaskManager owns the actual task state transition and audit.
+        """
+        normalized_job_id = str(job_id or "").strip()
+        if not normalized_job_id:
+            fut: Future[bool] = Future()
+            fut.set_result(False)
+            return fut
+
+        ctx = self.context
+        task_name = f"historical_download:{normalized_job_id}"
+
+        async def _cancel() -> bool:
+            tasks = getattr(ctx, "tasks", None)
+            cancel = getattr(tasks, "cancel", None)
+            if not callable(cancel):
+                return False
+            return bool(cancel(task_name))
+
+        return self.submit(_cancel())
+
+    def supported_exchange_names(self) -> list[str]:
+        """Return exchanges available through the current GUI/Core bridge."""
+        adapter = BybitExchange(testnet=False)
+        return [adapter.name]
+
+    def supported_exchange_markets(self, exchange: str) -> list[str]:
+        """Return canonical market types reported by the selected exchange adapter."""
+        adapter = self._exchange_capability_adapter(exchange)
+        return sorted(str(market) for market in adapter.supported_markets())
+
+    def supported_exchange_timeframes(self, exchange: str, market_type: str) -> list[str]:
+        """Return canonical timeframes reported by the selected exchange adapter."""
+        adapter = self._exchange_capability_adapter(exchange)
+        values = adapter.supported_timeframes(market_type)
+        return sorted((str(timeframe) for timeframe in values), key=self._timeframe_sort_key)
+
+    def _exchange_capability_adapter(self, exchange: str) -> BybitExchange:
+        ex = (exchange or "").strip().lower()
+        adapter = BybitExchange(testnet=False)
+        if ex == adapter.name:
+            return adapter
+        raise ValueError(f"unsupported exchange: {exchange!r}")
+
+    @staticmethod
+    def _timeframe_sort_key(timeframe: str) -> tuple[int, int, str]:
+        text = str(timeframe).strip()
+        if len(text) < 2:
+            return (99, 0, text)
+        unit = text[-1]
+        value_text = text[:-1]
+        unit_order = {"m": 0, "h": 1, "d": 2, "w": 3, "M": 4}.get(unit, 99)
+        try:
+            value = int(value_text)
+        except Exception:
+            value = 0
+        return (unit_order, value, text)
+
+    def is_realtime_running(self) -> bool:
+        """Return whether a realtime feed future is currently active."""
+        fut = self._realtime_future
+        return fut is not None and not fut.done()
+
+    def start_realtime_feed(
+        self,
+        *,
+        market: BybitMarket = "linear",
+        symbol: str = "BTCUSDT",
+        timeframe: Bybit_Timeframe = "30m",
+        limit: int = 200,
+        testnet: bool = False,
+    ) -> None:
+        """Start the GUI-requested realtime feed through the Core boundary.
+
+        The bridge owns the feed future and the runtime flag transition so the
+        GUI does not directly orchestrate background feed execution.
+        """
+        if self.is_realtime_running():
+            self.status_changed.emit("Realtime already running")
+            self.realtime_state_changed.emit(True)
+            return
+
+        from leonardo.core.market_data.bybit_feed import run_bybit_chart_feed
+
+        ctx = self.context
+        self.submit(ctx.state.set_realtime_active(True, where="gui"))
+        self.status_changed.emit("Streaming")
+
+        self._realtime_future = self.submit(
+            run_bybit_chart_feed(
+                emit_snapshot=self.chart_snapshot.emit,
+                emit_patch=self.chart_patch.emit,
+                state=ctx.state,
+                market=market,
+                symbol=symbol,
+                timeframe=timeframe,
+                limit=limit,
+                testnet=testnet,
+            )
+        )
+        self._realtime_future.add_done_callback(self._on_realtime_feed_done)
+        self.realtime_state_changed.emit(True)
+
+    def stop_realtime_feed(self) -> None:
+        """Stop the current GUI-requested realtime feed if one is active."""
+        if self._runner is None:
+            self._realtime_future = None
+            self.realtime_state_changed.emit(False)
+            return
+
+        try:
+            self.submit(self.context.state.set_realtime_active(False, where="gui"))
+        except Exception:
+            # The core may already be coming down. Best-effort only.
+            pass
+
+        fut = self._realtime_future
+        if fut is not None and not fut.done():
+            fut.cancel()
+        self._realtime_future = None
+
+        self.status_changed.emit("Ready")
+        self.realtime_state_changed.emit(False)
+
+    def _on_realtime_feed_done(self, fut: Future[object]) -> None:
+        """Handle realtime feed termination and keep GUI state honest.
+    
+        Cancellation is treated as a normal stop path. Unexpected failures are
+        surfaced through the status signal and the runtime realtime flag is
+        forced back to False so the GUI does not remain stuck in a fake
+        streaming state.
+        """
+        self._realtime_future = None
+    
+        # --- Proper cancellation handling ---
+        if fut.cancelled():
+            self.status_changed.emit("Ready")
+            self.realtime_state_changed.emit(False)
+            return
+    
+        try:
+            exc = fut.exception()
+        except Exception as e:
+            print("FAILED TO READ FEED FUTURE:", repr(e))
+            self.status_changed.emit("Feed status unavailable")
+            self.realtime_state_changed.emit(False)
+            return
+    
+        if exc is None:
+            self.status_changed.emit("Ready")
+            self.realtime_state_changed.emit(False)
+            return
+    
+        print("FEED CRASHED:", repr(exc))
+    
+        try:
+            self.submit(self.context.state.set_realtime_active(False, where="core_bridge"))
+        except Exception:
+            pass
+        
+        self.status_changed.emit(f"Feed crashed: {type(exc).__name__}")
+        self.realtime_state_changed.emit(False)

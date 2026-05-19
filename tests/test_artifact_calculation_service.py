@@ -1,0 +1,142 @@
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pandas as pd
+import pytest
+
+from leonardo.data.historical.artifact_calculation_service import ArtifactCalculationService
+from leonardo.data.historical.artifact_metadata_contracts import HistoricalCsvArtifactManifest
+from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
+from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
+from leonardo.data.naming import canonicalize
+
+
+def _write_ohlcv(root: Path, *, rows: int = 40):
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    paths = HistoricalPaths(root=root)
+    ohlcv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    start = 1_700_000_000_000
+    candles = [
+        Candle(
+            ts_ms=start + idx * 1_800_000,
+            open=100.0 + idx,
+            high=101.0 + idx,
+            low=99.0 + idx,
+            close=100.5 + idx,
+            volume=10.0 + idx,
+        )
+        for idx in range(rows)
+    ]
+    CsvOHLCVStore().write_atomic(ohlcv_path, candles, market=market)
+    return market, ohlcv_path
+
+
+def _load_manifest(csv_path: Path) -> HistoricalCsvArtifactManifest:
+    with metadata_path_for_csv(csv_path).open("r", encoding="utf-8") as handle:
+        return HistoricalCsvArtifactManifest.from_dict(json.load(handle))
+
+
+def test_artifact_calculation_service_saves_single_oscillator_with_metadata(tmp_path):
+    market, _ohlcv_path = _write_ohlcv(tmp_path)
+    service = ArtifactCalculationService(historical_root=tmp_path)
+
+    result = service.calculate_and_save(
+        {
+            "tool_type": "oscillator",
+            "tool_key": "rsi",
+            "tool_title": "RSI",
+            "exchange": market.exchange,
+            "market_type": market.market_type,
+            "symbol": market.symbol,
+            "timeframe": market.timeframe,
+            "params": {"period": 14},
+            "input_bindings": {},
+            "input_binding_meta": {},
+        }
+    )
+
+    assert result.saved_path.exists()
+    assert result.metadata_path.exists()
+    assert result.saved_path.is_relative_to(tmp_path)
+    assert result.instance_key == "rsi__default__period-14"
+
+    saved = pd.read_csv(result.saved_path)
+    assert list(saved.columns) == ["ts_ms", "time", "timeframe", "rsi_14"]
+    assert len(saved) == 40
+
+    manifest = _load_manifest(result.saved_path)
+    assert manifest.identity.artifact_family == "oscillator"
+    assert manifest.identity.storage_family == "oscillators"
+    assert manifest.tool is not None
+    assert manifest.tool.tool_key == "rsi"
+    assert manifest.tool.params == {"period": 14}
+    assert manifest.tool.params_status == "explicit"
+    assert manifest.tool.bindings_status == "unknown"
+
+
+def test_artifact_calculation_service_saves_volume_oscillator_with_configurable_mean_metadata(tmp_path):
+    market, _ohlcv_path = _write_ohlcv(tmp_path)
+    service = ArtifactCalculationService(historical_root=tmp_path)
+
+    result = service.calculate_and_save(
+        {
+            "tool_type": "oscillator",
+            "tool_key": "volume",
+            "tool_title": "Volume",
+            "exchange": market.exchange,
+            "market_type": market.market_type,
+            "symbol": market.symbol,
+            "timeframe": market.timeframe,
+            "params": {"period": 20},
+            "input_bindings": {},
+            "input_binding_meta": {},
+        }
+    )
+
+    assert result.saved_path.exists()
+    assert result.metadata_path.exists()
+    assert result.saved_path.is_relative_to(tmp_path)
+    assert result.instance_key == "volume__default__period-20"
+
+    saved = pd.read_csv(result.saved_path)
+    assert list(saved.columns) == ["ts_ms", "time", "timeframe", "volume", "volume_mean_20"]
+    assert len(saved) == 40
+    assert saved["volume"].tolist() == pytest.approx([10.0 + idx for idx in range(40)])
+    assert saved["volume_mean_20"].iloc[:19].isna().all()
+    assert saved["volume_mean_20"].iloc[19] == pytest.approx(sum(10.0 + idx for idx in range(20)) / 20.0)
+
+    manifest = _load_manifest(result.saved_path)
+    assert manifest.identity.artifact_family == "oscillator"
+    assert manifest.identity.storage_family == "oscillators"
+    assert manifest.tool is not None
+    assert manifest.tool.tool_key == "volume"
+    assert manifest.tool.params == {"period": 20}
+    assert manifest.tool.params_status == "explicit"
+    assert manifest.tool.bindings_status == "unknown"
+
+    columns = {column.name: column for column in manifest.columns}
+    assert columns["volume"].renderable is True
+    assert columns["volume"].analysis_usable is True
+    assert columns["volume_mean_20"].renderable is True
+    assert columns["volume_mean_20"].analysis_usable is True
+
+
+def test_artifact_calculation_service_requires_existing_ohlcv(tmp_path):
+    service = ArtifactCalculationService(historical_root=tmp_path)
+
+    with pytest.raises(FileNotFoundError):
+        service.calculate_and_save(
+            {
+                "tool_type": "indicator",
+                "tool_key": "sma",
+                "tool_title": "SMA",
+                "exchange": "bybit",
+                "market_type": "linear",
+                "symbol": "BTCUSDT",
+                "timeframe": "30m",
+                "params": {"period": 5},
+            }
+        )

@@ -9,7 +9,8 @@ from leonardo.core.context import AppContext
 from leonardo.core.state import StateStore
 from leonardo.gui.core_bridge import CoreBridge
 from leonardo.gui.windows.signals_window import SignalsWindow
-from leonardo.gui.windows.windows_inspector_window import WindowsInspectorWindow
+from leonardo.gui.windows.runtime_inspector_window import WindowsInspectorWindow
+from leonardo.gui.windows.data_manager_window import DataManagerWindow
 from leonardo.gui.windows.historical_download_window import HistoricalDownloadWindow
 from leonardo.gui.windows.historical_chart_window import HistoricalChartWindow
 from leonardo.gui.windows.historical_data_manager_window import HistoricalDataManagerWindow
@@ -38,9 +39,11 @@ class WindowManager(QObject):
 
         self._signals: Optional[SignalsWindow] = None
         self._inspector: Optional[WindowsInspectorWindow] = None
+        self._data_manager: Optional[DataManagerWindow] = None
 
         self._historical_download: Optional[HistoricalDownloadWindow] = None
         self._historical_data_manager: Optional[HistoricalDataManagerWindow] = None
+        self._historical_data_manager_closing: bool = False
 
         self._floating_historical_charts: dict[str, HistoricalChartWindow] = {}
         self._historical_chart_counter: int = 0
@@ -97,6 +100,34 @@ class WindowManager(QObject):
         self._inspector = None
         self._safe_submit(self._state.window_close("windows_inspector", where="gui"))
 
+    def get_data_manager(self) -> Optional[DataManagerWindow]:
+        return self._data_manager
+
+    def open_data_manager(self, *, parent: Optional[QObject] = None) -> DataManagerWindow:
+        if self._data_manager is None:
+            parent_widget = parent if isinstance(parent, QWidget) else self._parent
+            self._data_manager = DataManagerWindow(
+                ctx=self._ctx,
+                core_bridge=self._core,
+                parent=parent_widget if isinstance(parent_widget, QWidget) else None,
+            )
+            self._data_manager.setAttribute(Qt.WA_DeleteOnClose, True)
+            self._data_manager.destroyed.connect(self._on_data_manager_destroyed)
+            self._safe_submit(self._state.window_open("data_manager", "DataManagerWindow", where="gui"))
+
+        self._data_manager.showMaximized()
+        self._data_manager.raise_()
+        self._data_manager.activateWindow()
+        return self._data_manager
+
+    def close_data_manager(self) -> None:
+        if self._data_manager is not None:
+            self._data_manager.close()
+
+    def _on_data_manager_destroyed(self) -> None:
+        self._data_manager = None
+        self._safe_submit(self._state.window_close("data_manager", where="gui"))
+
     def get_historical_download_manager(self) -> Optional[HistoricalDownloadWindow]:
         return self._historical_download
 
@@ -107,11 +138,11 @@ class WindowManager(QObject):
         parent: Optional[QObject] = None,
     ) -> HistoricalDownloadWindow:
         if self._historical_download is None:
-            exchange_names = ["bybit"]
-
             self._historical_download = HistoricalDownloadWindow(
                 core_bridge,
-                exchange_names=exchange_names,
+                exchange_names=core_bridge.supported_exchange_names(),
+                get_supported_markets=core_bridge.supported_exchange_markets,
+                get_supported_timeframes=core_bridge.supported_exchange_timeframes,
                 parent=parent or self._parent,
             )
             self._historical_download.setAttribute(Qt.WA_DeleteOnClose, True)
@@ -134,13 +165,34 @@ class WindowManager(QObject):
     def get_historical_data_manager(self) -> Optional[HistoricalDataManagerWindow]:
         return self._historical_data_manager
 
+    def notify_historical_data_manager_closing(self, window: HistoricalDataManagerWindow) -> None:
+        """Mark the cached Historical Data Manager as closing.
+
+        The window manager owns shell reuse only. It does not tear down chart
+        sessions itself. This hook lets the shell report that close has begun so
+        reopen logic will not treat a WA_DeleteOnClose window as a reusable live
+        instance.
+        """
+        if self._historical_data_manager is window:
+            self._historical_data_manager_closing = True
+
     def open_historical_data_manager(
         self,
         *,
         core_bridge: CoreBridge,
         parent: Optional[QObject] = None,
     ) -> HistoricalDataManagerWindow:
+        if (
+            self._historical_data_manager is not None
+            and (
+                self._historical_data_manager_closing
+                or bool(getattr(self._historical_data_manager, "_is_closing", False))
+            )
+        ):
+            self._historical_data_manager = None
+
         if self._historical_data_manager is None:
+            self._historical_data_manager_closing = False
             self._historical_data_manager = HistoricalDataManagerWindow(
                 ctx=self._ctx,
                 core_bridge=core_bridge,
@@ -164,10 +216,12 @@ class WindowManager(QObject):
 
     def close_historical_data_manager(self) -> None:
         if self._historical_data_manager is not None:
+            self._historical_data_manager_closing = True
             self._historical_data_manager.close()
 
     def _on_historical_data_manager_destroyed(self) -> None:
         self._historical_data_manager = None
+        self._historical_data_manager_closing = False
         self._safe_submit(self._state.window_close("historical_data_manager", where="gui"))
 
     def float_historical_chart_panel(
@@ -182,8 +236,8 @@ class WindowManager(QObject):
         win = HistoricalChartWindow(core_bridge=self._core, parent=None)
         win.setAttribute(Qt.WA_DeleteOnClose, True)
         win.setObjectName(window_id)
+        setattr(win, "_dock_handler", lambda win_obj, wid=window_id: self._on_dock_back_requested(wid, win_obj))
         win.set_panel(panel)
-        win.dock_back_requested.connect(lambda win_obj, wid=window_id: self._on_dock_back_requested(wid, win_obj))
         win.destroyed.connect(lambda _=None, wid=window_id: self._on_floating_historical_chart_destroyed(wid))
 
         self._floating_historical_charts[window_id] = win
@@ -248,10 +302,6 @@ class WindowManager(QObject):
                 "Historical Dock",
                 "Historical workspace is not available. Cannot dock chart back.",
             )
-            return False
-
-        if not workspace.can_add_chart():
-            workspace.warn_max_charts()
             return False
 
         panel = win.take_panel()

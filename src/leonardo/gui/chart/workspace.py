@@ -1,34 +1,63 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Dict, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QSplitter, QWidget, QVBoxLayout
 
-from leonardo.common.market_types import ChartPatch, ChartSnapshot, Candle
-from leonardo.gui.chart.viewport import ChartViewport
-from leonardo.gui.chart.dummy_data import make_dummy_oscillator
-from leonardo.gui.chart.model import ChartModel, Series
-from leonardo.gui.chart.panes import PricePane, VolumePane, OscillatorPane
 from leonardo.gui.chart.crosshair import Crosshair
+from leonardo.gui.chart.model import ChartModel
+from leonardo.gui.chart.panes import OscillatorPane, PricePane, VolumePane
+from leonardo.gui.chart.viewport import ChartViewport
+from leonardo.gui.chart._workspace.workspace_apply import WorkspaceApplyMixin
+from leonardo.gui.chart._workspace.workspace_autoscale import WorkspaceAutoscaleMixin
+from leonardo.gui.chart._workspace.workspace_batches import WorkspaceBatchMixin
+from leonardo.gui.chart._workspace.workspace_contracts import WorkspaceContractMixin
+from leonardo.gui.chart._workspace.workspace_oscillators import WorkspaceOscillatorMixin
+from leonardo.gui.chart._workspace.workspace_overlays import WorkspaceOverlayMixin
+from leonardo.gui.chart._workspace.workspace_state import (
+    OscillatorPaneState,
+    OscillatorSpec,
+    OverlayStudyState,
+    PricePaneState,
+)
 
 
-@dataclass(frozen=True)
-class OscillatorSpec:
-    key: str    # unique id, e.g. "rsi_14"
-    title: str  # e.g. "RSI(14)"
-
-
-class ChartWorkspaceWidget(QWidget):
+class ChartWorkspaceWidget(
+    QWidget,
+    WorkspaceApplyMixin,
+    WorkspaceAutoscaleMixin,
+    WorkspaceBatchMixin,
+    WorkspaceContractMixin,
+    WorkspaceOscillatorMixin,
+    WorkspaceOverlayMixin,
+):
     """
     Central chart workspace: price pane + optional volume + optional oscillator panes.
-    Shared viewport + shared data owned here (via ChartModel).
 
-    apply_snapshot/apply_patch are GUI-thread entry points for core market data updates.
+    Final point-C workspace contract:
+    - ChartModel owns the canonical base OHLC layer and study truth currently
+      resident in the GUI process.
+    - ChartViewport owns the shared horizontal camera only.
+    - Workspace owns pane layout, pane lifecycle, pane view state, and the
+      explicit projection payloads pushed into panes.
+    - Panes consume workspace-owned state and hand explicit render inputs to
+      render surfaces.
+    - Render surfaces must not discover pane grouping or pane ownership by
+      inspecting workspace internals.
+
+    apply_snapshot/apply_patch remain the GUI-thread entry points for core
+    market-data updates.
     """
+
     request_start_feed = Signal()
     request_stop_feed = Signal()
+
+    # Fixed chart-space padding for historical sessions. This is part of the
+    # chart environment contract owned by the workspace, not a side effect of
+    # viewport anchoring behavior.
+    HISTORICAL_LEFT_DOMAIN_PAD = 1000
+    HISTORICAL_RIGHT_DOMAIN_PAD = 1000
 
     def __init__(self, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -38,110 +67,82 @@ class ChartWorkspaceWidget(QWidget):
         # ---- Shared data (owned by the model) ----
         self._model = ChartModel(candles=[], volume=[])
 
-        # NOTE: Indicators/oscillators are out of scope for the exchange phase.
-        # We do NOT pre-populate dummy oscillator series here.
-
         # ---- Shared viewport ----
-        # Start empty: no data yet
         self._viewport = ChartViewport(total_count=0, visible_count=1)
 
         # ---- Layout ----
         self._splitter = QSplitter(Qt.Vertical, self)
         self._splitter.setChildrenCollapsible(False)
 
+        self._price_state = PricePaneState()
+
+        # Workspace owns the price-pane vertical contract. This is distinct
+        # from viewport zoom-anchor behavior, even while older callers still
+        # enter through the legacy set_anchor_zoom_enabled() API. Keep the
+        # canonical autoscale flag mirrored into the shared price-pane view
+        # state so pane/render gesture logic does not have to infer vertical
+        # ownership from the horizontal viewport compatibility flag.
+        self._price_autoscale_enabled: bool = True
+        self._price_state.view_state["autoscale_enabled"] = True
+
         self._price = PricePane(
             viewport=self._viewport,
             model=self._model,
             crosshair=self._crosshair,
+            view_state=self._price_state.view_state,
             parent=self,
         )
         self._splitter.addWidget(self._price)
 
         # Optional panes (not shown by default)
         self._volume: Optional[VolumePane] = None
-        self._oscillators: Dict[str, OscillatorPane] = {}
+
+        # Managed overlay study state.
+        # Transitional note:
+        # This remains here for now, but it is no longer consumed implicitly by
+        # the price pane. Workspace pushes an explicit row projection instead.
+        self._overlay_states_by_id: Dict[str, OverlayStudyState] = {}
+        self._overlay_render_key_to_study_id: Dict[str, str] = {}
+
+        # Managed oscillator pane state.
+        #
+        # Final point-C rule in this workspace:
+        # compatibility entry points may still exist for older callers, but all
+        # oscillator-pane ownership must flow through this single managed pane
+        # registry. Workspace must not keep a second legacy pane map alive.
+        self._oscillator_panes_by_id: Dict[str, OscillatorPane] = {}
+        self._oscillator_states_by_id: Dict[str, OscillatorPaneState] = {}
+        self._oscillator_pane_order: List[str] = []
+        self._study_to_pane_id: Dict[str, str] = {}
+
+        # Workspace owns when chart-wide pane contracts should be refreshed.
+        # Large resident-slice and multi-study updates therefore defer visual
+        # fan-out until the final coherent workspace/model state is ready.
+        self._workspace_update_depth: int = 0
+        self._deferred_contract_refresh: bool = False
+        self._deferred_labels_refresh: bool = False
+        self._deferred_size_refresh: bool = False
+        self._deferred_price_refresh: bool = False
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.addWidget(self._splitter)
 
-        self._apply_default_sizes()
+        # Viewport changes are camera-only, but camera movement still changes
+        # viewport-dependent pane contracts such as visible-range y-resolution.
+        # Workspace owns that reconciliation step instead of leaving renderers to
+        # rediscover vertical truth on their own.
+        self._viewport.viewport_changed.connect(self._on_viewport_changed)
 
-    # -------- Public API (MainWindow calls these) --------
+        self._apply_default_sizes(force=True)
 
     def set_asset_label(self, text: str) -> None:
         self._price.set_asset_label(text)
 
     def set_studies_labels(self, indicators: List[str], oscillators: List[str]) -> None:
         self._price.set_studies(indicators=indicators, oscillators=oscillators)
-
-    def set_anchor_zoom_enabled(self, enabled: bool) -> None:
-        enabled = bool(enabled)
-
-        # First switch viewport behavior mode.
-        self._viewport.set_anchor_zoom_enabled(enabled)
-
-        # Then apply explicit future padding preference.
-        # In anchored mode: no visible future padding.
-        # In non-anchored mode: allow some future room; viewport policy will expand
-        # this as needed to support the legal right-pan range.
-        self._viewport.set_future_padding(0 if enabled else 50)
-        
-    def set_volume_enabled(self, enabled: bool) -> None:
-        if enabled and self._volume is None:
-            self._volume = VolumePane(
-                viewport=self._viewport,
-                crosshair=self._crosshair,
-                volume=self._model.volume,
-                parent=self,
-            )
-            self._splitter.addWidget(self._volume)
-            self._refresh_aux_pane_bindings()
-            self._apply_default_sizes()
-        elif not enabled and self._volume is not None:
-            self._remove_widget(self._volume)
-            self._volume.deleteLater()
-            self._volume = None
-            self._apply_default_sizes()
-
-    def add_oscillator(self, spec: OscillatorSpec) -> None:
-        # Still supported for GUI testing, but values are dummy until indicators return.
-        if spec.key in self._oscillators:
-            return
-
-        series = self._model.oscillator(spec.key)
-        if series is None:
-            n = max(1, len(self._model.candles))
-            series = Series(
-                key=spec.key,
-                title=spec.title,
-                values=make_dummy_oscillator(n=n, seed=99),
-            )
-            self._model.set_oscillator(series)
-
-        pane = OscillatorPane(
-            title=series.title,
-            viewport=self._viewport,
-            crosshair=self._crosshair,
-            values=series.values,
-            parent=self,
-        )
-        self._oscillators[spec.key] = pane
-        self._splitter.addWidget(pane)
-        self._refresh_aux_pane_bindings()
-        self._apply_default_sizes()
-
-    def remove_oscillator(self, key: str) -> None:
-        pane = self._oscillators.pop(key, None)
-        if pane is None:
-            return
-        self._remove_widget(pane)
-        pane.deleteLater()
-        self._apply_default_sizes()
-
-    def clear_oscillators(self) -> None:
-        for key in list(self._oscillators.keys()):
-            self.remove_oscillator(key)
+        self._sync_price_pane_contract()
+        self._refresh_price_pane()
 
     @property
     def viewport(self) -> ChartViewport:
@@ -151,208 +152,11 @@ class ChartWorkspaceWidget(QWidget):
     def model(self) -> ChartModel:
         return self._model
 
-    # -------- core → GUI chart update API --------
 
-    def apply_snapshot(self, snapshot: ChartSnapshot) -> None:
-        candles = list(snapshot.candles)
-
-        self.set_asset_label(f"{snapshot.symbol} · {snapshot.timeframe}")
-
-        if not candles:
-            self._model.set_candles([])
-            self._model.set_volume([])
-            if hasattr(self._model, "set_resident_base_index"):
-                try:
-                    self._model.set_resident_base_index(0)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            elif hasattr(self._model, "resident_base_index"):
-                try:
-                    setattr(self._model, "resident_base_index", 0)
-                except Exception:
-                    pass
-
-            self._refresh_aux_pane_bindings()
-            if hasattr(self._viewport, "set_total_count"):
-                self._viewport.set_total_count(0)  # type: ignore[attr-defined]
-            return
-
-        self._model.set_candles(candles)
-        self._model.set_volume([float(c.volume) for c in candles])
-
-        # Realtime/local snapshot semantics: viewport indices remain local.
-        if hasattr(self._model, "set_resident_base_index"):
-            try:
-                self._model.set_resident_base_index(0)  # type: ignore[attr-defined]
-            except Exception:
-                pass
-        elif hasattr(self._model, "resident_base_index"):
-            try:
-                setattr(self._model, "resident_base_index", 0)
-            except Exception:
-                pass
-
-        self._refresh_aux_pane_bindings()
-
-        n = len(candles)
-        if hasattr(self._viewport, "set_total_count"):
-            self._viewport.set_total_count(n)  # type: ignore[attr-defined]
-
-    def apply_historical_slice(
-        self,
-        *,
-        symbol: str,
-        timeframe: str,
-        candles: List[Candle],
-        resident_base_index: int,
-        dataset_total: int,
-    ) -> None:
-        """
-        Historical-mode apply path.
-    
-        Unlike apply_snapshot(), the viewport total represents the full dataset
-        size, while the model stores only the currently resident slice.
-        """
-        self.set_asset_label(f"{symbol} · {timeframe}")
-    
-        if not candles:
-            self._model.set_candles([])
-            self._model.set_volume([])
-            if hasattr(self._model, "set_resident_base_index"):
-                try:
-                    self._model.set_resident_base_index(int(resident_base_index))  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            elif hasattr(self._model, "resident_base_index"):
-                try:
-                    setattr(self._model, "resident_base_index", int(resident_base_index))
-                except Exception:
-                    pass
-                
-            if hasattr(self._viewport, "set_total_count_preserve_position"):
-                self._viewport.set_total_count_preserve_position(max(0, int(dataset_total)))  # type: ignore[attr-defined]
-            elif hasattr(self._viewport, "set_total_count"):
-                self._viewport.set_total_count(max(0, int(dataset_total)))  # type: ignore[attr-defined]
-    
-            self._refresh_aux_pane_bindings()
-            return
-    
-        self._model.set_candles(candles)
-        self._model.set_volume([float(c.volume) for c in candles])
-    
-        if hasattr(self._model, "set_resident_base_index"):
-            try:
-                self._model.set_resident_base_index(int(resident_base_index))  # type: ignore[attr-defined]
-            except Exception:
-                pass
-        elif hasattr(self._model, "resident_base_index"):
-            try:
-                setattr(self._model, "resident_base_index", int(resident_base_index))
-            except Exception:
-                pass
-            
-        if hasattr(self._viewport, "set_total_count_preserve_position"):
-            self._viewport.set_total_count_preserve_position(max(0, int(dataset_total)))  # type: ignore[attr-defined]
-        elif hasattr(self._viewport, "set_total_count"):
-            self._viewport.set_total_count(max(0, int(dataset_total)))  # type: ignore[attr-defined]
-    
-        self._refresh_aux_pane_bindings()
-
-    def apply_patch(self, patch: ChartPatch) -> None:
-        self.set_asset_label(f"{patch.symbol} · {patch.timeframe}")
-
-        if patch.op == "append":
-            # cap realtime window
-            self._model.append_candle(patch.candle, maxlen=200)
-
-            # Realtime/local patch semantics: viewport indices remain local.
-            if hasattr(self._model, "set_resident_base_index"):
-                try:
-                    self._model.set_resident_base_index(0)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            elif hasattr(self._model, "resident_base_index"):
-                try:
-                    setattr(self._model, "resident_base_index", 0)
-                except Exception:
-                    pass
-
-            # update viewport to new (possibly trimmed) length
-            if hasattr(self._viewport, "set_total_count"):
-                self._viewport.set_total_count(len(self._model.candles))  # type: ignore[attr-defined]
-
-            self._refresh_aux_pane_bindings()
-        else:
-            # "update" of the currently forming candle
-            self._model.update_last_candle(patch.candle)
-
-            # Realtime/local patch semantics: viewport indices remain local.
-            if hasattr(self._model, "set_resident_base_index"):
-                try:
-                    self._model.set_resident_base_index(0)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-            elif hasattr(self._model, "resident_base_index"):
-                try:
-                    setattr(self._model, "resident_base_index", 0)
-                except Exception:
-                    pass
-
-            self._refresh_aux_pane_bindings()
-
-    # -------- Internal helpers --------
-
-    def _apply_default_sizes(self) -> None:
-        sizes = [800]
-        if self._volume:
-            sizes.append(200)
-        for _ in range(len(self._oscillators)):
-            sizes.append(220)
-
-        if len(sizes) == 1:
-            sizes = [1000]
-
-        self._splitter.setSizes(sizes)
-
-    def _remove_widget(self, w: QWidget) -> None:
-        w.setParent(None)
-        w.hide()
-
-    def _refresh_aux_pane_bindings(self) -> None:
-        """
-        Keep auxiliary panes bound to the model's current series objects and
-        resident base index.
-        """
-        resident_base_index = 0
-        if hasattr(self._model, "resident_base_index"):
-            try:
-                resident_base_index = int(self._model.resident_base_index)
-            except Exception:
-                resident_base_index = 0
-
-        if self._volume is not None:
-            if hasattr(self._volume, "set_volume"):
-                try:
-                    self._volume.set_volume(self._model.volume)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-
-            if hasattr(self._volume, "set_resident_base_index"):
-                try:
-                    self._volume.set_resident_base_index(resident_base_index)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-
-        for key, pane in self._oscillators.items():
-            series = self._model.oscillator(key)
-            if series is not None and hasattr(pane, "set_values"):
-                try:
-                    pane.set_values(series.values)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
-
-            if hasattr(pane, "set_resident_base_index"):
-                try:
-                    pane.set_resident_base_index(resident_base_index)  # type: ignore[attr-defined]
-                except Exception:
-                    pass
+__all__ = [
+    "ChartWorkspaceWidget",
+    "OscillatorSpec",
+    "OverlayStudyState",
+    "PricePaneState",
+    "OscillatorPaneState",
+]

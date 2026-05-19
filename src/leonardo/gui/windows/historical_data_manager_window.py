@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt
@@ -34,7 +33,7 @@ class HistoricalChartSelectionDialog(QDialog):
     Exchange -> Market Type -> Asset -> Timeframe
 
     Data source:
-    <project_root>/data/historical
+    CoreBridge → HistoricalDatasetService dataset catalog
     """
 
     def __init__(
@@ -61,7 +60,6 @@ class HistoricalChartSelectionDialog(QDialog):
         self.setModal(True)
         self.resize(460, 240)
 
-        self._historical_root = Path(__file__).resolve().parents[4] / "data" / "historical"
 
         self._exchange_combo: Optional[QComboBox] = None
         self._market_type_combo: Optional[QComboBox] = None
@@ -162,29 +160,42 @@ class HistoricalChartSelectionDialog(QDialog):
         self._reset_combo(self._asset_combo, placeholder="")
         self._reset_combo(self._timeframe_combo, placeholder="")
 
-        if not self._historical_root.exists() or not self._historical_root.is_dir():
-            self._set_info_text("Historical root folder not found.")
+        try:
+            exchange_names = self._core.list_historical_dataset_exchanges()
+        except Exception as e:
+            self._exchange_combo.setEnabled(False)
+            self._set_info_text(f"Historical dataset catalog is unavailable: {e!r}")
             return
 
-        exchange_folders = self._list_child_directories(self._historical_root)
-        for folder_name in exchange_folders:
-            display_name = self._capitalize_first_letter(folder_name)
-            self._exchange_combo.addItem(display_name, folder_name)
+        for exchange_name in exchange_names:
+            display_name = self._capitalize_first_letter(exchange_name)
+            self._exchange_combo.addItem(display_name, exchange_name)
 
-        self._set_info_text("Select an exchange to continue.")
+        has_values = bool(exchange_names)
+        self._exchange_combo.setEnabled(has_values)
+        if has_values:
+            self._set_info_text("Select an exchange to continue.")
+        else:
+            self._set_info_text("No historical OHLCV datasets were found.")
 
     def _populate_market_types(self, exchange_name: str) -> None:
         if self._market_type_combo is None:
             return
 
-        exchange_path = self._historical_root / exchange_name
         self._reset_combo(self._market_type_combo, placeholder="")
         self._reset_combo(self._asset_combo, placeholder="")
         self._reset_combo(self._timeframe_combo, placeholder="")
 
-        market_type_folders = self._list_child_directories(exchange_path)
-        for folder_name in market_type_folders:
-            self._market_type_combo.addItem(folder_name, folder_name)
+        try:
+            market_type_names = self._core.list_historical_dataset_market_types(exchange_name)
+        except Exception as e:
+            self._market_type_combo.setEnabled(False)
+            self._set_info_text(f"Could not list market types: {e!r}")
+            self._update_load_button_state()
+            return
+
+        for market_type_name in market_type_names:
+            self._market_type_combo.addItem(market_type_name, market_type_name)
 
         self._market_type_combo.setEnabled(self._market_type_combo.count() > 1)
         if self._asset_combo is not None:
@@ -193,26 +204,41 @@ class HistoricalChartSelectionDialog(QDialog):
             self._timeframe_combo.setEnabled(False)
 
         self._update_load_button_state()
-        self._set_info_text("Select a market type.")
+        if market_type_names:
+            self._set_info_text("Select a market type.")
+        else:
+            self._set_info_text("No market types are available for this exchange.")
 
     def _populate_assets(self, exchange_name: str, market_type_name: str) -> None:
         if self._asset_combo is None:
             return
 
-        asset_root = self._historical_root / exchange_name / market_type_name
         self._reset_combo(self._asset_combo, placeholder="")
         self._reset_combo(self._timeframe_combo, placeholder="")
 
-        asset_folders = self._list_valid_asset_directories(asset_root)
-        for folder_name in asset_folders:
-            self._asset_combo.addItem(folder_name, folder_name)
+        try:
+            asset_names = self._core.list_historical_dataset_symbols(
+                exchange_name,
+                market_type_name,
+            )
+        except Exception as e:
+            self._asset_combo.setEnabled(False)
+            self._set_info_text(f"Could not list assets: {e!r}")
+            self._update_load_button_state()
+            return
+
+        for asset_name in asset_names:
+            self._asset_combo.addItem(asset_name, asset_name)
 
         self._asset_combo.setEnabled(self._asset_combo.count() > 1)
         if self._timeframe_combo is not None:
             self._timeframe_combo.setEnabled(False)
 
         self._update_load_button_state()
-        self._set_info_text("Select an asset.")
+        if asset_names:
+            self._set_info_text("Select an asset.")
+        else:
+            self._set_info_text("No assets are available for this exchange/market type.")
 
     def _populate_timeframes(
         self,
@@ -223,16 +249,29 @@ class HistoricalChartSelectionDialog(QDialog):
         if self._timeframe_combo is None:
             return
 
-        asset_path = self._historical_root / exchange_name / market_type_name / asset_name
         self._reset_combo(self._timeframe_combo, placeholder="")
 
-        timeframe_folders = self._list_valid_timeframe_directories(asset_path)
-        for folder_name in timeframe_folders:
-            self._timeframe_combo.addItem(folder_name, folder_name)
+        try:
+            timeframe_names = self._core.list_historical_dataset_timeframes(
+                exchange_name,
+                market_type_name,
+                asset_name,
+            )
+        except Exception as e:
+            self._timeframe_combo.setEnabled(False)
+            self._set_info_text(f"Could not list timeframes: {e!r}")
+            self._update_load_button_state()
+            return
+
+        for timeframe_name in timeframe_names:
+            self._timeframe_combo.addItem(timeframe_name, timeframe_name)
 
         self._timeframe_combo.setEnabled(self._timeframe_combo.count() > 1)
         self._update_load_button_state()
-        self._set_info_text("Select a timeframe.")
+        if timeframe_names:
+            self._set_info_text("Select a timeframe.")
+        else:
+            self._set_info_text("No timeframes are available for this asset.")
 
     def _on_exchange_changed(self) -> None:
         exchange_name = self._current_data(self._exchange_combo)
@@ -293,20 +332,46 @@ class HistoricalChartSelectionDialog(QDialog):
             self._set_info_text("Select a timeframe.")
 
     def _on_load_data_clicked(self) -> None:
-        candles_file = self._find_candles_file()
+        selected_exchange = self._current_data(self._exchange_combo)
+        selected_market_type = self._current_data(self._market_type_combo)
+        selected_asset = self._current_data(self._asset_combo)
+        selected_timeframe = self._current_data(self._timeframe_combo)
 
-        if candles_file is None:
+        if not selected_exchange or not selected_market_type or not selected_asset or not selected_timeframe:
             QMessageBox.warning(
                 self,
                 "Load Data",
-                "candles file not found",
+                "Dataset selection is incomplete.",
             )
             return
 
-        self._selected_exchange = self._current_data(self._exchange_combo)
-        self._selected_market_type = self._current_data(self._market_type_combo)
-        self._selected_asset = self._current_data(self._asset_combo)
-        self._selected_timeframe = self._current_data(self._timeframe_combo)
+        try:
+            exists = self._core.historical_dataset_exists(
+                exchange=selected_exchange,
+                market_type=selected_market_type,
+                symbol=selected_asset,
+                timeframe=selected_timeframe,
+            )
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Load Data",
+                f"Could not validate dataset through Core: {e!r}",
+            )
+            return
+
+        if not exists:
+            QMessageBox.warning(
+                self,
+                "Load Data",
+                "Selected dataset is not available through the Core historical dataset service.",
+            )
+            return
+
+        self._selected_exchange = selected_exchange
+        self._selected_market_type = selected_market_type
+        self._selected_asset = selected_asset
+        self._selected_timeframe = selected_timeframe
 
         self.accept()
 
@@ -339,42 +404,6 @@ class HistoricalChartSelectionDialog(QDialog):
             pass
         self._is_registered = False
 
-    def _find_candles_file(self) -> Optional[Path]:
-        selection_path = self._selected_timeframe_path()
-        if selection_path is None:
-            return None
-
-        ohlcv_path = selection_path / "ohlcv"
-        if not ohlcv_path.exists() or not ohlcv_path.is_dir():
-            return None
-
-        for child in sorted(ohlcv_path.iterdir(), key=lambda item: item.name.lower()):
-            if child.is_file() and child.stem.lower() == "candles":
-                return child
-
-        for child in sorted(ohlcv_path.iterdir(), key=lambda item: item.name.lower()):
-            if child.is_file() and child.name.lower().startswith("candles"):
-                return child
-
-        return None
-
-    def _selected_timeframe_path(self) -> Optional[Path]:
-        exchange_name = self._current_data(self._exchange_combo)
-        market_type_name = self._current_data(self._market_type_combo)
-        asset_name = self._current_data(self._asset_combo)
-        timeframe_name = self._current_data(self._timeframe_combo)
-
-        if not exchange_name or not market_type_name or not asset_name or not timeframe_name:
-            return None
-
-        return (
-            self._historical_root
-            / exchange_name
-            / market_type_name
-            / asset_name
-            / timeframe_name
-        )
-
     def _has_complete_selection(self) -> bool:
         return (
             bool(self._current_data(self._exchange_combo))
@@ -390,32 +419,6 @@ class HistoricalChartSelectionDialog(QDialog):
     def _set_info_text(self, text: str) -> None:
         if self._info_label is not None:
             self._info_label.setText(text)
-
-    def _list_valid_asset_directories(self, path: Path) -> list[str]:
-        if not path.exists() or not path.is_dir():
-            return []
-
-        valid_assets: list[str] = []
-        for child in sorted(path.iterdir(), key=lambda item: item.name.lower()):
-            if not child.is_dir():
-                continue
-            if self._list_valid_timeframe_directories(child):
-                valid_assets.append(child.name)
-
-        return valid_assets
-
-    def _list_valid_timeframe_directories(self, path: Path) -> list[str]:
-        if not path.exists() or not path.is_dir():
-            return []
-
-        valid_timeframes: list[str] = []
-        for child in sorted(path.iterdir(), key=lambda item: item.name.lower()):
-            if not child.is_dir():
-                continue
-            if (child / "ohlcv").is_dir():
-                valid_timeframes.append(child.name)
-
-        return valid_timeframes
 
     @staticmethod
     def _reset_combo(combo: Optional[QComboBox], placeholder: str = "") -> None:
@@ -440,15 +443,6 @@ class HistoricalChartSelectionDialog(QDialog):
             return text
         return text[0].upper() + text[1:]
 
-    @staticmethod
-    def _list_child_directories(path: Path) -> list[str]:
-        if not path.exists() or not path.is_dir():
-            return []
-
-        return sorted(
-            [child.name for child in path.iterdir() if child.is_dir()],
-            key=str.lower,
-        )
 
 
 class HistoricalDataManagerWindow(QMainWindow):
@@ -500,11 +494,42 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_placeholder_refresh: Optional[QAction] = None
 
         self._workspace_widget: Optional[HistoricalWorkspaceWidget] = None
+        self._is_closing: bool = False
 
         self._build_ui()
 
     def workspace_widget(self) -> Optional[HistoricalWorkspaceWidget]:
         return self._workspace_widget
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        """Tear down embedded chart sessions before the shell is destroyed.
+
+        The Historical Data Manager owns the embedded workspace shell, not the
+        controller internals of each chart. It therefore delegates teardown to
+        the workspace-owned panel lifecycle rather than reaching into resident
+        truth or pane semantics directly.
+        """
+        if self._is_closing:
+            super().closeEvent(event)
+            return
+
+        self._is_closing = True
+
+        notify_closing = getattr(self._window_manager, "notify_historical_data_manager_closing", None)
+        if callable(notify_closing):
+            try:
+                notify_closing(self)
+            except Exception:
+                pass
+
+        clear_all_charts = getattr(self._workspace_widget, "clear_all_charts", None)
+        if callable(clear_all_charts):
+            try:
+                clear_all_charts()
+            except Exception:
+                pass
+
+        super().closeEvent(event)
 
     def _build_ui(self) -> None:
         self._build_menu_bar()
@@ -570,36 +595,6 @@ class HistoricalDataManagerWindow(QMainWindow):
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(12)
 
-        title = QLabel("Historical Data Manager", root)
-        title.setAlignment(Qt.AlignCenter)
-        title.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
-        title.setStyleSheet(
-            """
-            QLabel {
-                font-size: 20px;
-                font-weight: 600;
-                padding: 8px;
-            }
-            """
-        )
-
-        subtitle = QLabel(
-            "This window manages embedded historical chart sessions.\n"
-            "Use File → New Chart to load up to 4 historical charts inside the workspace.",
-            root,
-        )
-        subtitle.setAlignment(Qt.AlignCenter)
-        subtitle.setWordWrap(True)
-        subtitle.setStyleSheet(
-            """
-            QLabel {
-                font-size: 13px;
-                color: #C8C8C8;
-                padding: 8px;
-            }
-            """
-        )
-
         workspace_widget = HistoricalWorkspaceWidget(
             core_bridge=self._core,
             window_manager=self._window_manager,
@@ -607,8 +602,6 @@ class HistoricalDataManagerWindow(QMainWindow):
         )
         self._workspace_widget = workspace_widget
 
-        layout.addWidget(title)
-        layout.addWidget(subtitle)
         layout.addWidget(workspace_widget, 1)
 
         self.setCentralWidget(root)
@@ -620,7 +613,7 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         if not self._workspace_widget.can_add_chart():
             self._workspace_widget.warn_max_charts()
-            self._set_status("Maximum of 4 historical charts reached")
+            self._set_status("Maximum of 8 historical charts reached")
             return
 
         dialog = HistoricalChartSelectionDialog(
@@ -647,7 +640,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         )
         if not created:
             self._workspace_widget.warn_max_charts()
-            self._set_status("Maximum of 4 historical charts reached")
+            self._set_status("Maximum of 8 historical charts reached")
             return
 
         exchange_display = exchange[:1].upper() + exchange[1:] if exchange else exchange

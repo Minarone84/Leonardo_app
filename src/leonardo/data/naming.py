@@ -66,7 +66,19 @@ _TIMEFRAME_UNIT_ALIASES = {
 
 
 @dataclass(frozen=True)
-class CanonicalMarket:
+class MarketId:
+    """
+    Canonical identity of a market dataset.
+
+    This object represents the normalized data identity only:
+    - exchange
+    - market_type
+    - symbol
+    - timeframe
+
+    It intentionally does NOT include runtime/session context such as
+    'historical' or 'realtime'. That belongs in a higher-level context object.
+    """
     exchange: str
     market_type: str
     symbol: str
@@ -141,8 +153,11 @@ def normalize_timeframe(value: str) -> str:
     return f"{n}{unit}"
 
 
-def canonicalize(exchange: str, market_type: str, symbol: str, timeframe: str) -> CanonicalMarket:
-    return CanonicalMarket(
+def canonicalize(exchange: str, market_type: str, symbol: str, timeframe: str) -> MarketId:
+    """
+    Normalize raw market identity components into a canonical MarketId.
+    """
+    return MarketId(
         exchange=normalize_exchange(exchange),
         market_type=normalize_market_type(market_type),
         symbol=normalize_symbol(symbol),

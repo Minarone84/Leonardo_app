@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import csv
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from collections import OrderedDict
 import bisect
 import time
+
+import pandas as pd
 
 
 @dataclass(frozen=True)
@@ -59,6 +61,16 @@ class SlicePayload:
     has_more_right: bool
     first_ts_ms: int
     last_ts_ms: int
+
+
+REQUIRED_OHLCV_COLUMNS: Tuple[str, str, str, str, str, str] = (
+    "ts_ms",
+    "open",
+    "high",
+    "low",
+    "close",
+    "volume",
+)
 
 
 class LruSliceCache:
@@ -113,6 +125,92 @@ class HistoricalDatasetService:
             self._locks[key] = lock
         return lock
 
+
+    def _catalog_root(self) -> Path:
+        """Return the historical dataset catalog root owned by this service."""
+        return self._data_root / "historical"
+
+    @staticmethod
+    def _safe_catalog_segment(value: str, *, label: str) -> str:
+        """Normalize one catalog path segment and reject traversal-like input."""
+        text = str(value or "").strip()
+        if not text or text in {".", ".."} or "/" in text or "\\" in text:
+            raise ValueError(f"Invalid historical dataset {label}: {value!r}")
+        return text
+
+    @staticmethod
+    def _list_child_directories(path: Path) -> List[str]:
+        if not path.exists() or not path.is_dir():
+            return []
+        return sorted(
+            [child.name for child in path.iterdir() if child.is_dir()],
+            key=str.lower,
+        )
+
+    @staticmethod
+    def _partition_has_candles_file(partition_path: Path) -> bool:
+        return (partition_path / "ohlcv" / "candles.csv").is_file()
+
+    def list_dataset_exchanges(self) -> List[str]:
+        """Return exchanges with at least one loadable OHLCV dataset.
+
+        This is the Core/data-owned dataset catalog surface for GUI selection.
+        The GUI must consume this API instead of walking storage folders itself.
+        """
+        root = self._catalog_root()
+        exchanges: List[str] = []
+        for exchange_name in self._list_child_directories(root):
+            if self.list_dataset_market_types(exchange_name):
+                exchanges.append(exchange_name)
+        return exchanges
+
+    def list_dataset_market_types(self, exchange: str) -> List[str]:
+        """Return market types with at least one loadable OHLCV dataset."""
+        exchange_name = self._safe_catalog_segment(exchange, label="exchange")
+        exchange_path = self._catalog_root() / exchange_name
+        market_types: List[str] = []
+        for market_type_name in self._list_child_directories(exchange_path):
+            if self.list_dataset_symbols(exchange_name, market_type_name):
+                market_types.append(market_type_name)
+        return market_types
+
+    def list_dataset_symbols(self, exchange: str, market_type: str) -> List[str]:
+        """Return symbols/assets with at least one loadable OHLCV dataset."""
+        exchange_name = self._safe_catalog_segment(exchange, label="exchange")
+        market_type_name = self._safe_catalog_segment(market_type, label="market_type")
+        symbol_root = self._catalog_root() / exchange_name / market_type_name
+        symbols: List[str] = []
+        for symbol_name in self._list_child_directories(symbol_root):
+            if self.list_dataset_timeframes(exchange_name, market_type_name, symbol_name):
+                symbols.append(symbol_name)
+        return symbols
+
+    def list_dataset_timeframes(self, exchange: str, market_type: str, symbol: str) -> List[str]:
+        """Return timeframes whose partition contains strict ``ohlcv/candles.csv``."""
+        exchange_name = self._safe_catalog_segment(exchange, label="exchange")
+        market_type_name = self._safe_catalog_segment(market_type, label="market_type")
+        symbol_name = self._safe_catalog_segment(symbol, label="symbol")
+        asset_path = self._catalog_root() / exchange_name / market_type_name / symbol_name
+
+        timeframes: List[str] = []
+        for timeframe_name in self._list_child_directories(asset_path):
+            timeframe = self._safe_catalog_segment(timeframe_name, label="timeframe")
+            partition_path = asset_path / timeframe
+            if self._partition_has_candles_file(partition_path):
+                timeframes.append(timeframe_name)
+        return timeframes
+
+    def has_dataset(self, dataset_id: DatasetId) -> bool:
+        """Return whether a dataset has the strict OHLCV value file expected by Core."""
+        # Validate the identity even though the final path resolution also uses
+        # these fields.  Catalog validation belongs in the data service so the
+        # GUI does not need filesystem-layout knowledge.
+        self._safe_catalog_segment(dataset_id.exchange, label="exchange")
+        self._safe_catalog_segment(dataset_id.market_type, label="market_type")
+        self._safe_catalog_segment(dataset_id.symbol, label="symbol")
+        self._safe_catalog_segment(dataset_id.timeframe, label="timeframe")
+        return self._resolve_path(dataset_id).is_file()
+
     def _resolve_path(self, dataset_id: DatasetId) -> Path:
         # Expected structure:
         # data/historical/{exchange}/{market_type}/{symbol}/{timeframe}/ohlcv/candles.csv
@@ -126,6 +224,31 @@ class HistoricalDatasetService:
             / "ohlcv"
             / "candles.csv"
         )
+
+    def list_dataset_ids(self) -> List[DatasetId]:
+        """Return all strict OHLCV dataset identities in catalog order."""
+        datasets: List[DatasetId] = []
+        for exchange_name in self.list_dataset_exchanges():
+            for market_type_name in self.list_dataset_market_types(exchange_name):
+                for symbol_name in self.list_dataset_symbols(exchange_name, market_type_name):
+                    for timeframe_name in self.list_dataset_timeframes(
+                        exchange_name,
+                        market_type_name,
+                        symbol_name,
+                    ):
+                        datasets.append(
+                            DatasetId(
+                                exchange=exchange_name,
+                                market_type=market_type_name,
+                                symbol=symbol_name,
+                                timeframe=timeframe_name,
+                            )
+                        )
+        return datasets
+
+    def dataset_exists(self, dataset_id: DatasetId) -> bool:
+        """Compatibility alias for the strict dataset-catalog validation API."""
+        return self.has_dataset(dataset_id)
 
     async def open_dataset(self, dataset_id: DatasetId) -> DatasetMeta:
         """
@@ -178,7 +301,7 @@ class HistoricalDatasetService:
 
         with path.open("r", newline="") as f:
             r = csv.DictReader(f)
-            required = {"ts_ms", "open", "high", "low", "close", "volume"}
+            required = set(REQUIRED_OHLCV_COLUMNS)
             if r.fieldnames is None or not required.issubset(set(r.fieldnames)):
                 raise ValueError(f"Unexpected CSV headers in {path}. Expected {sorted(required)}; got {r.fieldnames}")
 
@@ -203,6 +326,72 @@ class HistoricalDatasetService:
             v = [v[i] for i in idxs]
 
         return {"ts_ms": ts_ms, "open": o, "high": h, "low": l, "close": c, "volume": v}
+
+    def _loaded_dataset_entry(self, dataset_id: DatasetId) -> Dict[str, object]:
+        """Return the loaded in-memory entry for one dataset.
+
+        HistoricalDatasetService is an async loading service. Public read
+        helpers below intentionally expose already-opened dataset truth without
+        making callers reach into ``_datasets``. Callers that need to guarantee
+        loading should call/await ``open_dataset(...)`` first.
+        """
+        key = dataset_id.key()
+        entry = self._datasets.get(key)
+        if entry is None:
+            raise RuntimeError(
+                "Historical dataset is not loaded. Call open_dataset(dataset_id) "
+                "before requesting timeline, columns, or dataframe access."
+            )
+        return entry
+
+    def get_timeline_ts_ms(self, dataset_id: DatasetId) -> List[int]:
+        """Return a defensive copy of the canonical loaded dataset timeline.
+
+        This is the explicit controller-facing timeline API. It replaces
+        downstream compatibility probing and private ``_datasets`` reach-through.
+        """
+        entry = self._loaded_dataset_entry(dataset_id)
+        cols = entry.get("cols")
+        if not isinstance(cols, dict):
+            raise RuntimeError("Loaded historical dataset entry is missing column storage.")
+
+        raw_ts = cols.get("ts_ms")
+        if raw_ts is None:
+            raise RuntimeError("Loaded historical dataset columns are missing 'ts_ms'.")
+
+        return [int(ts) for ts in list(raw_ts)]
+
+    def get_dataset_columns(self, dataset_id: DatasetId) -> Dict[str, List]:
+        """Return defensive copies of the loaded OHLCV columns.
+
+        The returned mapping is intentionally detached from the service cache so
+        controller/dataframe normalization cannot mutate Core-owned storage.
+        """
+        entry = self._loaded_dataset_entry(dataset_id)
+        cols = entry.get("cols")
+        if not isinstance(cols, dict):
+            raise RuntimeError("Loaded historical dataset entry is missing column storage.")
+
+        missing = [name for name in REQUIRED_OHLCV_COLUMNS if name not in cols]
+        if missing:
+            raise RuntimeError(
+                "Loaded historical dataset columns are missing required values: "
+                f"{missing}"
+            )
+
+        return {
+            name: list(cols[name])
+            for name in REQUIRED_OHLCV_COLUMNS
+        }
+
+    def get_full_dataframe(self, dataset_id: DatasetId) -> pd.DataFrame:
+        """Return the full loaded OHLCV dataset as a detached DataFrame.
+
+        Historical chart apply/save paths consume this API as the explicit Core
+        boundary for full-dataset compute truth. The controller remains
+        responsible for downstream numeric/timeline validation before compute.
+        """
+        return pd.DataFrame(self.get_dataset_columns(dataset_id))
 
     async def get_slice(self, req: SliceRequest) -> SlicePayload:
         """
@@ -251,7 +440,13 @@ class HistoricalDatasetService:
         cache_key = (key, start, end)
         cached = self._slice_cache.get(cache_key)
         if cached is not None:
-            return cached
+            # Cached slice data is reusable across requests, but request-
+            # scoped envelope identity must be refreshed for the current call.
+            return replace(
+                cached,
+                tab_id=req.tab_id,
+                request_id=req.request_id,
+            )
 
         # Build slice arrays
         ts_s = ts[start:end]

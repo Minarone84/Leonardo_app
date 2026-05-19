@@ -3,7 +3,7 @@ from __future__ import annotations
 import abc
 from typing import AsyncIterator, Optional, Sequence, Set
 
-from leonardo.common.market_types import Candle, Timeframe
+from leonardo.common.market_types import Candle
 
 
 class BaseExchange(abc.ABC):
@@ -12,11 +12,11 @@ class BaseExchange(abc.ABC):
 
     Design constraints:
     - Do not break existing realtime chart feed (fetch_ohlcv/stream_ohlcv).
-    - Add a separate historical REST method for the historical downloader.
+    - Add separate historical REST helpers for the historical downloader.
     - Option A naming policy is enforced at the boundary of fetch_ohlcv_historical():
         - market is a canonical string (spot|linear|inverse|options)
         - symbol is canonicalized (uppercase, separators removed, dot preserved)
-        - timeframe is canonical string "<int><unit>" where unit in {m,h,d,w}
+        - timeframe is canonical string "<int><unit>" where unit in {m,h,d,w,M}
         - no auto conversion in naming layer
     """
 
@@ -56,14 +56,14 @@ class BaseExchange(abc.ABC):
         *,
         market: str,
         symbol: str,
-        timeframe: Timeframe,
+        timeframe: str,
         limit: int = 500,
         since_ms: Optional[int] = None,
     ) -> Sequence[Candle]:
         """
         Existing REST OHLCV fetch used by the realtime chart bootstrap path.
 
-        - timeframe is the internal Timeframe type
+        - timeframe is a canonical exchange-specific string
         - since_ms is the start bound
         - returns candles typically sorted by timestamp ascending (recommended)
         """
@@ -75,7 +75,7 @@ class BaseExchange(abc.ABC):
         *,
         market: str,
         symbol: str,
-        timeframe: Timeframe,
+        timeframe: str,
     ) -> AsyncIterator[tuple[str, Candle]]:
         """
         Yields (op, candle) where op is "update" or "append".
@@ -94,12 +94,42 @@ class BaseExchange(abc.ABC):
         Return canonical Option A timeframes supported by this exchange adapter for a given market.
 
         Canonical timeframe format (Option A):
-          - "<int><unit>" where unit in {m,h,d,w}
+          - "<int><unit>" where unit in {m,h,d,w,M}
           - no auto-conversion (60m stays "60m" unless the adapter chooses otherwise)
 
         Default: unknown (empty set). Adapters should override when possible.
         """
         return set()
+
+    def max_historical_ohlcv_limit(self, market: str) -> Optional[int]:
+        """
+        Return the adapter's maximum candle count for one historical OHLCV REST page.
+
+        Default: unknown. Historical downloaders may keep their own conservative
+        default when an adapter does not publish a venue-specific limit.
+        """
+        _ = market
+        return None
+
+    async def oldest_historical_ohlcv_ts_ms(
+        self,
+        *,
+        market: str,
+        symbol: str,
+        timeframe: str,
+        limit: Optional[int] = None,
+    ) -> Optional[int]:
+        """
+        Return the oldest known historical OHLCV candle open timestamp in ms.
+
+        This optional capability lets Core build a determinate full-history
+        download plan before writing data. Adapters that cannot discover the
+        venue's oldest candle should leave the default unsupported path intact.
+        """
+        _ = (market, symbol, timeframe, limit)
+        raise NotImplementedError(
+            f"{self.__class__.__name__}.oldest_historical_ohlcv_ts_ms not implemented"
+        )
 
     async def fetch_ohlcv_historical(
         self,

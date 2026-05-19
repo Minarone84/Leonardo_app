@@ -2,16 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import threading
-import logging
+
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Awaitable
 from concurrent.futures import Future
 from concurrent.futures import TimeoutError as FutureTimeoutError
 
-from leonardo.core.context import AppContext, TaskManager
-from leonardo.core.audit import InMemoryAuditSink  # or your real audit sink
-from leonardo.core.errors import ErrorRouter
-
+from leonardo.core.context import AppContext
+from leonardo.core.app import LeonardoApp
+from leonardo.core.config import load_config
 
 @dataclass(frozen=True)
 class AuditSnapshot:
@@ -31,7 +30,9 @@ class CoreRunner:
 
     def __init__(self, on_status: Optional[Callable[[str], None]] = None) -> None:
         self._on_status = on_status or (lambda _: None)
-
+        self._app: Optional[LeonardoApp] = None
+        self._startup_error: Optional[BaseException] = None
+        
         self._thread: Optional[threading.Thread] = None
         self._thread_lock = threading.Lock()
 
@@ -40,9 +41,6 @@ class CoreRunner:
         self._stop_evt: Optional[asyncio.Event] = None
 
         self.context: Optional[AppContext] = None
-
-        self._audit_count = 0
-        self._audit_lock = threading.Lock()
 
     # ---------------- Public API ----------------
 
@@ -59,6 +57,8 @@ class CoreRunner:
             self._loop = None
             self._stop_evt = None
             self.context = None
+            self._app = None
+            self._startup_error = None
 
             self._thread = threading.Thread(
                 target=self._thread_main,
@@ -71,16 +71,17 @@ class CoreRunner:
         if not ok or self._loop is None:
             raise RuntimeError("CoreRunner failed to start (event loop not ready)")
 
+        if self._startup_error is not None:
+            err = self._startup_error
+            self._startup_error = None
+            raise RuntimeError("CoreRunner failed during LeonardoApp startup") from err
+    
     def is_running(self) -> bool:
         t = self._thread
         loop = self._loop
         return bool(t is not None and t.is_alive() and loop is not None)
 
     def stop(self) -> None:
-        """
-        Request core stop and join the core thread.
-        Safe to call multiple times.
-        """
         t = self._thread
         loop = self._loop
         stop_evt = self._stop_evt
@@ -90,26 +91,21 @@ class CoreRunner:
 
         self._on_status("Core stopping...")
 
-        # Signal stop inside loop thread
         def _request_stop() -> None:
-            try:
-                stop_evt.set()
-            finally:
-                loop.stop()
+            stop_evt.set()
 
         try:
             loop.call_soon_threadsafe(_request_stop)
         except RuntimeError:
-            # loop already closed or not running
             return
 
         t.join(timeout=5)
 
-        # Clear references
         with self._thread_lock:
             self._thread = None
             self._loop = None
             self._stop_evt = None
+            self._app = None
 
     def submit(self, coro: Awaitable[object]) -> Future:
         """
@@ -137,17 +133,21 @@ class CoreRunner:
 
         async def _snap() -> list[dict[str, Any]]:
             # support both async and sync snapshot implementations
+            raw_events: list[object]
             if hasattr(audit, "snapshot"):
                 res = audit.snapshot()
                 if asyncio.iscoroutine(res):
                     res = await res
-                return list(res or [])
-            if hasattr(audit, "get_snapshot"):
+                raw_events = list(res or [])
+            elif hasattr(audit, "get_snapshot"):
                 res = audit.get_snapshot()
                 if asyncio.iscoroutine(res):
                     res = await res
-                return list(res or [])
-            return []
+                raw_events = list(res or [])
+            else:
+                raw_events = []
+
+            return [self._audit_event_to_dict(event) for event in raw_events]
 
         try:
             fut = asyncio.run_coroutine_threadsafe(_snap(), self._loop)
@@ -158,6 +158,26 @@ class CoreRunner:
 
         return AuditSnapshot(count=len(events), events=events)
 
+    @staticmethod
+    def _audit_event_to_dict(event: object) -> dict[str, Any]:
+        """Normalize audit events for GUI consumers.
+
+        Historical download events may be emitted as plain dictionaries while
+        runtime events are AuditEvent dataclass instances. The GUI should see a
+        stable dictionary shape either way.
+        """
+        if isinstance(event, dict):
+            return dict(event)
+        payload = getattr(event, "__dict__", None)
+        if isinstance(payload, dict):
+            return dict(payload)
+        return {
+            "event_type": getattr(event, "event_type", "unknown"),
+            "severity": getattr(event, "severity", "info"),
+            "message": getattr(event, "message", str(event)),
+            "fields": getattr(event, "fields", {}) or {},
+        }
+
     # ---------------- Internal ----------------
 
     def _thread_main(self) -> None:
@@ -167,23 +187,40 @@ class CoreRunner:
         self._loop = loop
         self._stop_evt = asyncio.Event()
 
-        # Create AppContext inside core thread
-        self.context = self._create_context()
+        async def _host_main() -> None:
+            assert self._stop_evt is not None
 
-        self._loop_ready.set()
+            try:
+                self._on_status("Core starting...")
 
-        # Run loop forever; _run_core will stop it via stop_evt
-        core_task = loop.create_task(self._run_core())
+                config = load_config()
+                self._app = LeonardoApp(config)
+
+                await self._app.startup()
+                self.context = self._app.context
+
+                self._on_status("Core started")
+                self._loop_ready.set()
+
+                while not self._stop_evt.is_set():
+                    await asyncio.sleep(0.25)
+
+            except Exception as e:
+                self._startup_error = e
+                self._loop_ready.set()
+                return
+            finally:
+                if self._app is not None:
+                    try:
+                        await self._app.shutdown(reason="core_runner_stop")
+                    except Exception:
+                        pass
+                    finally:
+                        self._on_status("Core stopped")
 
         try:
-            loop.run_forever()
+            loop.run_until_complete(_host_main())
         finally:
-            # Cancel core task + any pending tasks
-            try:
-                core_task.cancel()
-            except Exception:
-                pass
-
             try:
                 pending = asyncio.all_tasks(loop)
                 for t in pending:
@@ -192,35 +229,3 @@ class CoreRunner:
                 loop.run_until_complete(loop.shutdown_asyncgens())
             finally:
                 loop.close()
-
-    def _create_context(self) -> AppContext:
-        logger = logging.getLogger("leonardo")
-        logger.setLevel(logging.INFO)
-
-        audit = InMemoryAuditSink()  # replace with real sink later
-        errors = ErrorRouter(audit=audit, logger=logger)
-        tasks = TaskManager(error_router=errors, audit=audit, logger=logger)
-
-        cfg = object()  # replace with real config later
-
-        return AppContext(
-            config=cfg,
-            logger=logger,
-            audit=audit,
-            error_router=errors,
-            tasks=tasks,
-        )
-
-    async def _run_core(self) -> None:
-        """
-        Minimal core host loop. Keeps core alive until stop_evt is set.
-        """
-        self._on_status("Core started")
-
-        assert self._stop_evt is not None
-        while not self._stop_evt.is_set():
-            await asyncio.sleep(1.0)
-            with self._audit_lock:
-                self._audit_count += 1
-
-        self._on_status("Core stopped")

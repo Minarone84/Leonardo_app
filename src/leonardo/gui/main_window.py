@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from typing import Optional
-from concurrent.futures import Future
 
 from PySide6.QtCore import QTimer, Slot
 from PySide6.QtGui import QAction, QCloseEvent
@@ -9,15 +8,42 @@ from PySide6.QtWidgets import QMainWindow
 
 from leonardo.core.context import AppContext
 from leonardo.core.registry_keys import SVC_GUI_WINDOW_MANAGER
-from leonardo.gui.core_bridge import CoreBridge
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget, OscillatorSpec
+from leonardo.gui.core_bridge import CoreBridge
 
 
 class MainWindow(QMainWindow):
+    """Temporary GUI entry point for Leonardo.
+
+    IMPORTANT:
+        This window is currently acting as a test harness in disguise.
+
+        It exists primarily to:
+        - validate Core ↔ GUI integration
+        - manually trigger realtime feeds
+        - visually inspect chart updates and runtime behavior
+
+    Architectural status:
+        This is NOT the final connection management UI.
+
+        In later phases, connection lifecycle (start/stop/status/inspection)
+        will be handled by a dedicated window or subsystem. At that point:
+
+        - connection orchestration should NOT live here
+        - feed triggering should NOT be initiated from menu actions
+        - this window should become a pure workspace/view layer
+
+    Design constraints (must remain true):
+        - No runtime truth should be owned here (StateStore is authoritative)
+        - No connection lifecycle logic beyond simple triggering
+        - No direct adapter manipulation
+
+    In short:
+        Treat this file as a controlled integration surface, not a foundation.
+    """
+
     def __init__(self, core_bridge: CoreBridge) -> None:
         super().__init__()
-        self._feed_future: Optional[Future[object]] = None
-
         self._core = core_bridge
         self._ctx_ref: Optional[AppContext] = None  # set in on_core_started()
 
@@ -32,6 +58,7 @@ class MainWindow(QMainWindow):
         # Status bar
         self.statusBar().showMessage("Ready")
         self._core.status_changed.connect(self._on_status_changed)
+        self._core.realtime_state_changed.connect(self._on_realtime_state_changed)
 
         # chart data updates from core -> GUI
         if hasattr(self._core, "chart_snapshot"):
@@ -42,7 +69,7 @@ class MainWindow(QMainWindow):
         # Menu bar
         mb = self.menuBar()
         menu1 = mb.addMenu("menu1")
-        menu2 = mb.addMenu("menu2")
+        menu2 = mb.addMenu("Analysis")
         menu3 = mb.addMenu("menu3")
 
         # ---- Chart actions ----
@@ -84,16 +111,16 @@ class MainWindow(QMainWindow):
 
         menu1.addSeparator()
 
-        self._act_open_windows_inspector = QAction("Open Windows Inspector", self)
-        self._act_open_windows_inspector.setEnabled(False)
-        self._act_open_windows_inspector.triggered.connect(self._open_windows_inspector)
-        menu1.addAction(self._act_open_windows_inspector)
+        self._act_open_runtime_inspector = QAction("Open Runtime Inspector", self)
+        self._act_open_runtime_inspector.setEnabled(False)
+        self._act_open_runtime_inspector.triggered.connect(self._open_runtime_inspector)
+        menu1.addAction(self._act_open_runtime_inspector)
 
-        # ---- Zoom mode ----
-        self._act_anchor_zoom = QAction("Anchor Zoom", self, checkable=True)
-        self._act_anchor_zoom.setChecked(self._workspace.viewport.anchor_zoom_enabled)
-        self._act_anchor_zoom.triggered.connect(self._on_anchor_zoom_toggled)
-        menu2.addAction(self._act_anchor_zoom)
+        # ---- Analysis actions ----
+        self._act_open_data_manager = QAction("Data Manager", self)
+        self._act_open_data_manager.setEnabled(False)
+        self._act_open_data_manager.triggered.connect(self._open_data_manager)
+        menu2.addAction(self._act_open_data_manager)
 
         # ---- Menu3: Historical tools ----
         self._act_open_hist_download = QAction("Historical Download Manager", self)
@@ -121,7 +148,8 @@ class MainWindow(QMainWindow):
 
     # Called by gui/app.py after core.start() + services registered
     def on_core_started(self) -> None:
-        self._act_open_windows_inspector.setEnabled(True)
+        self._act_open_runtime_inspector.setEnabled(True)
+        self._act_open_data_manager.setEnabled(True)
         self._act_open_hist_download.setEnabled(True)
         self._act_open_hist_manager.setEnabled(True)
 
@@ -163,6 +191,47 @@ class MainWindow(QMainWindow):
     def _on_status_changed(self, text: str) -> None:
         self.statusBar().showMessage(text)
 
+    @Slot(bool)
+    def _on_realtime_state_changed(self, active: bool) -> None:
+        """Refresh temporary realtime-related GUI affordances.
+
+        The window remains a temporary interaction surface, but it no longer
+        owns feed futures or direct feed lifecycle actions. This slot keeps the
+        local UI in sync with the explicit bridge-owned Core command surface.
+        """
+        self._sync_realtime_ui()
+
+        wm = self._wm()
+        if wm is None:
+            return
+
+        win = wm.get_signals()
+        if win is not None:
+            win.set_streaming(active)
+
+        # --- Phase 4: clear chart on realtime stop ---
+        if not active:
+            try:
+                if hasattr(self._workspace, "model"):
+                    self._workspace.model.set_candles([])
+                    self._workspace.model.set_volume([])
+
+                if hasattr(self._workspace, "clear_financial_tools"):
+                    self._workspace.clear_financial_tools()
+
+                # Optional but recommended: reset label
+                self._workspace.set_asset_label("Disconnected")
+
+                if hasattr(self._workspace.viewport, "set_total_count"):
+                    self._workspace.viewport.set_total_count(0)
+
+                # Force repaint so UI actually updates
+                if hasattr(self._workspace, "_refresh_price_pane"):
+                    self._workspace._refresh_price_pane()
+
+            except Exception as e:
+                print("Failed to clear workspace on realtime stop:", repr(e))
+
     @Slot()
     def _poll_audit_snapshot(self) -> None:
         snap = self._core.try_get_audit_snapshot()
@@ -199,19 +268,29 @@ class MainWindow(QMainWindow):
         self._active_oscillators.clear()
         self._workspace.set_studies_labels(self._active_indicators, self._active_oscillators)
 
-    # ---- Zoom mode handler ----
+    # ---- Analysis handlers ----
 
-    def _on_anchor_zoom_toggled(self, enabled: bool) -> None:
-        self._workspace.set_anchor_zoom_enabled(enabled)
-
-    # ---- Windows Inspector handler ----
-
-    def _open_windows_inspector(self) -> None:
+    def _open_data_manager(self) -> None:
         wm = self._wm()
         if wm is None:
             self.statusBar().showMessage("Window manager missing")
             return
-        wm.open_windows_inspector()
+        wm.open_data_manager(parent=self)
+        self.statusBar().showMessage("Data Manager opened")
+
+    # ---- Runtime Inspector handler ----
+
+    def _open_runtime_inspector(self) -> None:
+        wm = self._wm()
+        if wm is None:
+            self.statusBar().showMessage("Runtime window manager missing")
+            return
+        
+        # Prefer new API if available, fallback to legacy for compatibility
+        if hasattr(wm, "open_runtime_inspector"):
+            wm.open_runtime_inspector()
+        else:
+            wm.open_windows_inspector()
 
     # ---- Menu3: Historical handlers ----
 
@@ -230,7 +309,7 @@ class MainWindow(QMainWindow):
         wm.open_historical_data_manager(core_bridge=self._core, parent=self)
         self.statusBar().showMessage("Historical Data Manager opened")
 
-    # ---- Realtime + Signals (registry/state driven) ----
+    # ---- Realtime + Signals (state-driven GUI) ----
 
     def _is_realtime_active(self) -> bool:
         return self._ctx().state.is_realtime_active()
@@ -242,44 +321,23 @@ class MainWindow(QMainWindow):
         self._act_open_signals.setEnabled(active)
 
     def _start_realtime(self) -> None:
-        self._core.submit(self._ctx().state.set_realtime_active(True, where="gui"))
-        self.statusBar().showMessage("Streaming")
-        self._sync_realtime_ui()
+        """Request realtime startup through the Core bridge.
 
-        if self._feed_future is None or self._feed_future.done():
-            from leonardo.core.market_data.bybit_feed import run_bybit_chart_feed
-
-            self._feed_future = self._core.submit(
-                run_bybit_chart_feed(
-                    bridge=self._core,
-                    market="linear",
-                    symbol="BTCUSDT",
-                    timeframe="30m",
-                    limit=200,
-                    testnet=False,
-                )
-            )
-
-        wm = self._wm()
-        if wm is not None:
-            win = wm.get_signals()
-            if win is not None:
-                win.set_streaming(True)
+        This window remains a temporary integration surface, but direct feed
+        task creation now lives behind the explicit GUI → Core bridge boundary
+        introduced in Phase 4.
+        """
+        self._core.start_realtime_feed(
+            market="linear",
+            symbol="BTCUSDT",
+            timeframe="30m",
+            limit=200,
+            testnet=False,
+        )
 
     def _stop_realtime(self) -> None:
-        self._core.submit(self._ctx().state.set_realtime_active(False, where="gui"))
-        self.statusBar().showMessage("Ready")
-        self._sync_realtime_ui()
-
-        if self._feed_future is not None and not self._feed_future.done():
-            self._feed_future.cancel()
-        self._feed_future = None
-
-        wm = self._wm()
-        if wm is not None:
-            win = wm.get_signals()
-            if win is not None:
-                win.set_streaming(False)
+        """Request realtime shutdown through the Core bridge."""
+        self._core.stop_realtime_feed()
 
     def _open_signals(self) -> None:
         if not self._is_realtime_active():

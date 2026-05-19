@@ -5,6 +5,7 @@ from PySide6.QtCore import QObject, QRectF, Signal
 
 class ChartViewport(QObject):
     viewport_changed = Signal()
+    crosshair_changed = Signal()
 
     # Horizontal viewport policy (same for all timeframes)
     MIN_VISIBLE_BARS = 20
@@ -13,24 +14,30 @@ class ChartViewport(QObject):
     def __init__(self, total_count: int, visible_count: int = 120) -> None:
         super().__init__()
 
-        # real candles count
+        # Canonical dataset candle count. The viewport never mutates dataset
+        # truth; it only moves a camera over a fixed chart-space domain derived
+        # from that truth plus explicit chart-local padding.
         self._data_total = max(0, int(total_count))
-        # explicit future padding request
-        self._future_pad = 0
+
+        # Fixed chart-space domain padding. This is a visualization-domain
+        # contract, not a refill or anchoring policy.
+        self._left_pad = 0
+        self._right_pad = 0
 
         self._crosshair_index: int | None = None
 
-        # anchored zoom default ON
+        # Legacy compatibility flag preserved for upstream gesture/UI wiring.
+        # The viewport must not use this flag to reintroduce latest-edge camera
+        # ownership during zoom; horizontal placement is resolved only from the
+        # explicit zoom anchor and fixed chart-space clamps.
         self._anchor_zoom_enabled: bool = True
 
-        # total slots shown on x axis (real + future)
-        self._total = max(1, self._data_total + self._effective_future_pad())
-
+        self._total = max(1, self._domain_size())
         max_visible = min(self.MAX_VISIBLE_BARS, self._total)
         self._visible = max(1, min(int(visible_count), max_visible))
 
-        # Initial position at latest.
-        self._start = self._max_start()
+        # Initial position: latest real candle aligned to the right data edge.
+        self._start = self._latest_aligned_start()
 
     # ---------------------------
     # basic properties
@@ -45,8 +52,17 @@ class ChartViewport(QObject):
         return self._data_total
 
     @property
+    def left_pad(self) -> int:
+        return self._left_pad
+
+    @property
+    def right_pad(self) -> int:
+        return self._right_pad
+
+    @property
     def future_pad(self) -> int:
-        return self._future_pad
+        # Compatibility alias for older callers.
+        return self._right_pad
 
     @property
     def start(self) -> int:
@@ -64,21 +80,27 @@ class ChartViewport(QObject):
     def crosshair_index(self) -> int | None:
         return self._crosshair_index
 
+    @property
+    def domain_start(self) -> int:
+        return self._domain_start()
+
+    @property
+    def domain_end_exclusive(self) -> int:
+        return self._domain_end_exclusive()
+
     # ---------------------------
-    # anchor zoom toggle
+    # legacy anchor-zoom compatibility toggle
     # ---------------------------
 
     def set_anchor_zoom_enabled(self, enabled: bool) -> None:
+        # Compatibility-only mirror for downstream gesture/UI code. The
+        # viewport keeps exposing this flag, but horizontal zoom placement no
+        # longer branches on it.
         enabled = bool(enabled)
         if self._anchor_zoom_enabled == enabled:
             return
 
         self._anchor_zoom_enabled = enabled
-
-        # IMPORTANT:
-        # Toggling anchor mode must NOT teleport the viewport to latest.
-        # Preserve the current historical position and only change the zoom policy.
-        self._recompute_total_and_clamp(preserve_position=True)
         self.viewport_changed.emit()
 
     @property
@@ -86,12 +108,22 @@ class ChartViewport(QObject):
         return self._anchor_zoom_enabled
 
     # ---------------------------
-    # totals / future padding
+    # totals / domain padding
     # ---------------------------
 
-    def set_future_padding(self, n: int) -> None:
-        self._future_pad = max(0, int(n))
+    def set_domain_padding(self, *, left_pad: int, right_pad: int) -> None:
+        new_left = max(0, int(left_pad))
+        new_right = max(0, int(right_pad))
+        if self._left_pad == new_left and self._right_pad == new_right:
+            return
+
+        self._left_pad = new_left
+        self._right_pad = new_right
         self._recompute_total_and_clamp(preserve_position=True)
+
+    def set_future_padding(self, n: int) -> None:
+        # Compatibility alias: older callers only understood right-side padding.
+        self.set_domain_padding(left_pad=self._left_pad, right_pad=n)
 
     def set_total(self, total: int) -> None:
         self._data_total = max(0, int(total))
@@ -104,7 +136,7 @@ class ChartViewport(QObject):
     def set_total_count(self, n: int) -> None:
         """
         Workspace calls this after snapshot/append.
-        Preserve the user's current horizontal position regardless of anchor mode.
+        Preserve the user's current horizontal position.
         """
         self._data_total = max(0, int(n))
         self._recompute_total_and_clamp(preserve_position=True)
@@ -117,75 +149,38 @@ class ChartViewport(QObject):
         self._data_total = max(0, int(n))
         self._recompute_total_and_clamp(preserve_position=True)
 
-    def _effective_future_pad(self) -> int:
-        """
-        Effective right-side future capacity.
+    def _domain_start(self) -> int:
+        return -self._left_pad
 
-        Anchor zoom ON:
-            no future padding should be visible while right-aligned latest zoom
-            is active.
+    def _domain_end_exclusive(self) -> int:
+        return self._data_total + self._right_pad
 
-        Anchor zoom OFF:
-            reserve enough right-side space so the youngest real bar can be the
-            only visible real bar at the far-right legal boundary.
-        """
-        if self._anchor_zoom_enabled:
-            return 0
-        return max(self._future_pad, self.MAX_VISIBLE_BARS - 1)
+    def _domain_size(self) -> int:
+        return self._domain_end_exclusive() - self._domain_start()
 
     def _latest_aligned_start(self) -> int:
-        """
-        Start index that keeps the latest real candle at the right edge
-        of the visible window.
-        """
-        if self._data_total <= 0:
-            return 0
-        return max(0, self._data_total - self._visible)
+        """Start index that keeps the latest real candle at the right data edge."""
+        target_start = self._data_total - self._visible
+        return max(self._min_start(), min(target_start, self._max_start()))
 
     def _min_start(self) -> int:
-        """
-        Minimum legal viewport start.
-
-        Allow panning into a left-side missing-history zone until the oldest real
-        bar is the only visible real bar on the right side of the chart.
-        """
-        if self._data_total <= 0:
-            return 0
-        return -(self._visible - 1)
+        """Minimum legal viewport start over the fixed chart-space domain."""
+        return self._domain_start()
 
     def _max_start(self) -> int:
-        """
-        Maximum legal viewport start.
-
-        Anchor zoom ON:
-            clamp to latest-aligned real-data window.
-
-        Anchor zoom OFF:
-            allow panning into a right-side future zone until the youngest real
-            bar is the only visible real bar on the left side of the chart.
-        """
-        if self._anchor_zoom_enabled:
-            return self._latest_aligned_start()
-
-        if self._data_total <= 0:
-            return max(0, self._total - 1)
-
-        return self._data_total - 1
+        """Maximum legal viewport start over the fixed chart-space domain."""
+        return max(self._min_start(), self._domain_end_exclusive() - self._visible)
 
     def _min_index(self) -> int:
-        """
-        Minimum legal slot index visible on the x axis.
-        """
-        return self._min_start()
+        """Minimum legal slot index visible on the x axis."""
+        return self._domain_start()
 
     def _max_index(self) -> int:
-        """
-        Maximum legal slot index visible on the x axis.
+        """Maximum legal slot index visible on the x axis."""
+        return max(self._min_index(), self._domain_end_exclusive() - 1)
 
-        This is NOT the same as _max_start(). _max_start() bounds the viewport
-        window origin, while this bounds individual slot indices.
-        """
-        return self._total - 1
+    def _crosshair_index_is_valid(self, index: int) -> bool:
+        return self._min_index() <= int(index) <= self._max_index()
 
     def set_window(self, start: int, end: int) -> None:
         old_visible = self._visible
@@ -194,18 +189,18 @@ class ChartViewport(QObject):
         start_i = int(start)
         end_i = max(start_i + 1, int(end))
 
+        self._total = max(1, self._domain_size())
+
         visible = max(1, end_i - start_i)
         visible = min(visible, min(self.MAX_VISIBLE_BARS, self._total))
         self._visible = visible
-
-        self._total = max(1, self._data_total + self._effective_future_pad())
 
         min_start = self._min_start()
         max_start = self._max_start()
         start_i = max(min_start, min(start_i, max_start))
         self._start = start_i
 
-        if self._crosshair_index is not None and not (0 <= self._crosshair_index < self._total):
+        if self._crosshair_index is not None and not self._crosshair_index_is_valid(self._crosshair_index):
             self._crosshair_index = None
 
         if (self._visible != old_visible) or (self._start != old_start):
@@ -219,10 +214,9 @@ class ChartViewport(QObject):
         old_visible = self._visible
         old_start = self._start
 
-        self._total = max(1, self._data_total + self._effective_future_pad())
+        self._total = max(1, self._domain_size())
 
         max_visible = min(self.MAX_VISIBLE_BARS, self._total)
-
         if self._visible <= 1 and self._data_total > 1:
             self._visible = min(120, max_visible)
         else:
@@ -231,25 +225,21 @@ class ChartViewport(QObject):
         if preserve_position:
             self._start = max(self._min_start(), min(self._start, self._max_start()))
         else:
-            self._start = self._max_start()
+            self._start = self._latest_aligned_start()
 
-        if self._crosshair_index is not None and not (0 <= self._crosshair_index < self._total):
+        if self._crosshair_index is not None and not self._crosshair_index_is_valid(self._crosshair_index):
             self._crosshair_index = None
 
         if (self._total != old_total) or (self._visible != old_visible) or (self._start != old_start):
             self.viewport_changed.emit()
 
     def _snap_right_to_data(self) -> None:
-        """
-        Snap the viewport to the latest legal right position for the current mode.
-        """
-        self._start = self._max_start()
+        """Snap the viewport to the latest real-data edge."""
+        self._start = self._latest_aligned_start()
 
     def _is_right_aligned_to_data(self) -> bool:
-        """
-        True when the current viewport is at the mode-appropriate right boundary.
-        """
-        return self._start == self._max_start()
+        """True when the viewport ends at the latest real-data edge."""
+        return self.end == self._data_total
 
     # ---------------------------
     # pan
@@ -264,8 +254,9 @@ class ChartViewport(QObject):
         min_start = self._min_start()
         self._start = max(min_start, self._start - step)
 
-        at_left_boundary = (old_start == min_start and self._start == min_start)
-        if self._start != old_start or at_left_boundary:
+        # Only emit when the camera actually moved. Emitting at the boundary
+        # causes avoidable repaint/contract churn without changing visible state.
+        if self._start != old_start:
             self.viewport_changed.emit()
 
     def pan_right(self, step: int = 10) -> None:
@@ -277,19 +268,24 @@ class ChartViewport(QObject):
         max_start = self._max_start()
         self._start = min(max_start, self._start + step)
 
-        at_right_boundary = (old_start == max_start and self._start == max_start)
-        if self._start != old_start or at_right_boundary:
+        # Only emit when the camera actually moved. Emitting at the boundary
+        # causes avoidable repaint/contract churn without changing visible state.
+        if self._start != old_start:
             self.viewport_changed.emit()
 
-    # ---------------------------
-    # crosshair
-    # ---------------------------
-
     def set_crosshair(self, index: int | None) -> None:
+        """Set the current crosshair index.
+
+        Crosshair movement is not a camera move. Emitting viewport_changed
+        here causes heavy viewport-driven refresh paths to fire on every
+        mouse move. A dedicated crosshair_changed signal preserves correct
+        repaint behavior without promoting crosshair motion into viewport
+        ownership.
+        """
         if index == self._crosshair_index:
             return
         self._crosshair_index = index
-        self.viewport_changed.emit()
+        self.crosshair_changed.emit()
 
     # ---------------------------
     # index <-> x mapping (DISCRETE GRID)
@@ -338,31 +334,26 @@ class ChartViewport(QObject):
     def _set_visible_anchored(self, new_visible: int, anchor_idx: int, anchor_rel: float) -> None:
         old_visible = self._visible
         old_start = self._start
-        was_right_aligned = self._is_right_aligned_to_data()
 
-        self._total = max(1, self._data_total + self._effective_future_pad())
+        self._total = max(1, self._domain_size())
 
         max_visible = min(self.MAX_VISIBLE_BARS, self._total)
         new_visible = max(1, min(int(new_visible), max_visible))
         self._visible = new_visible
 
         anchor_rel = max(0.0, min(1.0, float(anchor_rel)))
-
-        # anchor_idx is a SLOT INDEX under the cursor, not a viewport start.
         anchor_idx = max(self._min_index(), min(int(anchor_idx), self._max_index()))
 
-        if self._anchor_zoom_enabled and was_right_aligned:
-            # Keep latest alignment only when the user was already at the latest edge.
-            self._start = self._max_start()
-        else:
-            # Historical exploration must preserve the actual slot anchor
-            # instead of teleporting to latest.
-            pos = int(round(anchor_rel * max(1, new_visible - 1)))
-            new_start = anchor_idx - pos
-            new_start = max(self._min_start(), min(new_start, self._max_start()))
-            self._start = new_start
+        # Horizontal zoom remains camera-only. The explicit zoom anchor chooses
+        # the post-zoom placement, and fixed chart-space clamps keep the camera
+        # inside the workspace-owned domain. This path intentionally does not
+        # special-case the latest real-data edge.
+        pos = int(round(anchor_rel * max(1, new_visible - 1)))
+        new_start = anchor_idx - pos
+        new_start = max(self._min_start(), min(new_start, self._max_start()))
+        self._start = new_start
 
-        if self._crosshair_index is not None and not (0 <= self._crosshair_index < self._total):
+        if self._crosshair_index is not None and not self._crosshair_index_is_valid(self._crosshair_index):
             self._crosshair_index = None
 
         if (self._visible != old_visible) or (self._start != old_start):

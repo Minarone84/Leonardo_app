@@ -1,415 +1,512 @@
-Leonardo — Historical Download Subsystem (Partial README)
+🧠 Leonardo — Historical Download Subsystem (Updated)
 
 Date: 02/26/2026
-Scope: Connection + Historical Data Layer (partial implementation)
-Status: Functional, stable, extensible
+Updated: 2026-05-18
+Scope: Connection + Historical Data Layer
+Status: Functional, stable, integrated with Core runtime and exchange capability ownership
 
 1. Purpose of This Document
 
-This README documents the historical data download subsystem implemented as of 02/26/2026.
+This README documents the historical data download subsystem.
 
 It covers:
 
-Folder structure
+• Folder structure
+• Core orchestration
+• Exchange adapter responsibilities
+• Pagination model
+• Candle integrity rules
+• Audit integration
+• Runtime integration
+• Exchange capability ownership
+• Preflight and confirmation flow
+• Multi-timeframe task monitoring
+• Validation and cancellation behavior
+• Current limitations
+• Dependency diagram
 
-Core orchestration
+This document focuses on the connection and historical ingestion layer, now aligned with the Core runtime system.
 
-Exchange adapter responsibilities
+------------------------------------------------------------
+CORE RUNTIME INTEGRATION (PHASE 1)
+------------------------------------------------------------
 
-Pagination model
+The historical download subsystem operates within the Core runtime layer.
 
-Candle integrity rules
+This means:
 
-Audit integration
+• all downloads run as background tasks managed by TaskManager
+• task lifecycle is tracked in runtime state
+• errors are routed through the centralized error system
+• all meaningful events emit structured audit entries
 
-Current limitations
+Runtime Behavior
 
-Dependency diagram
+When a download is started:
 
-This is a partial README, focused only on the connection and historical data ingestion layer.
-GUI and Core documentation will be updated after the historical chart window is completed.
+• a background task is created via Core
+• the task is tracked in runtime state
+• progress and completion are emitted via audit events
 
+The GUI does not manage execution directly.
+
+Instead:
+
+• GUI triggers the request
+• Core executes and supervises
+• GUI observes via audit
+
+Audit as Communication Layer
+
+Audit events are now part of the global runtime system.
+
+They are:
+
+• structured
+• append-only
+• decoupled from GUI
+
+Used for:
+
+• progress updates
+• completion notifications
+• failure reporting
+
+This replaces tight coupling between GUI and downloader state.
+
+Architectural Boundary
+
+The subsystem respects the global separation:
+
+GUI:
+• input
+• validation
+• display
+
+Core:
+• execution
+• state tracking
+• error handling
+• audit emission
+
+Current accepted Download Manager baseline
+
+The Historical Download Manager now supports:
+
+• metadata-aware local OHLCV inspection
+• Core-owned preflight and range discovery before download
+• readable Confirm OHLCV Download plans
+• multi-timeframe selection and sequential batch execution
+• OHLCV Download Task monitor dialog
+• progress, retry, stalled, validation, cancellation, and final recap display
+• Stop/Cancel requests routed through Core/TaskManager
+• authoritative batch completion payloads
+
+The GUI displays this state. It does not become the execution owner.
+
+Exchange capability ownership rule
+
+Exchange-specific truth belongs to the selected exchange adapter/capability layer.
+
+This includes:
+
+• supported markets
+• supported timeframes
+• aliases
+• API interval mappings
+• request limits
+• historical range discovery behavior
+
+The GUI must ask CoreBridge/capability callbacks for supported values and display the result. It must not hardcode Bybit market or timeframe truth.
+
+------------------------------------------------------------
 2. Historical Storage Architecture
+------------------------------------------------------------
 
 Historical data is stored using a partitioned directory model to avoid oversized folders and to support scalable growth.
 
 Folder Structure
+
 data/
 └── historical/
-    └── {exchange}/
-        └── {market_type}/
-            └── {symbol}/
-                └── {timeframe}/
-                    ├── ohlcv/
-                    │   └── candles.csv
-                    ├── indicators/
-                    ├── oscillators/
-                    ├── trade_signal/
-                    └── signal_elaboration/
+  └── {exchange}/
+    └── {market_type}/
+      └── {symbol}/
+        └── {timeframe}/
+          ├── ohlcv/
+          │ ├── candles.csv
+          │ └── candles.meta.json
+          ├── indicators/
+          │ ├── <instance_key>.csv
+          │ └── <instance_key>.meta.json
+          ├── oscillators/
+          │ ├── <instance_key>.csv
+          │ └── <instance_key>.meta.json
+          ├── constructs/
+          │ ├── <instance_key>.csv
+          │ └── <instance_key>.meta.json
+          ├── analysis_databases/
+          │ └── {database_id}/
+          │     ├── manifest.json
+          │     └── dataframe.csv
+          ├── trade_signal/
+          └── signal_elaboration/
+
 Design Rationale
 
-Prevent flat large directories.
-
-Allow independent timeframe storage.
-
-Prepare for computed artifacts (indicators, signals).
-
-Keep raw OHLCV data isolated.
-
-Enable fast lookup and deterministic paths.
+• Prevent flat large directories
+• Allow independent timeframe storage
+• Prepare for computed artifacts
+• Keep raw OHLCV isolated
+• Enable deterministic paths
 
 Currently active:
 
-ohlcv/candles.csv
+• ohlcv/candles.csv
+• ohlcv/candles.meta.json
+• derived artifact CSV + .meta.json sidecars for indicators, oscillators, and constructs
+• artifact recipe JSON files under `artifact_recipes/`
+• ordered artifact recipe collection JSON files under `artifact_recipe_collections/`
+• Analysis Database manifests and materialized dataframes
 
-The remaining folders are pre-architected for future modules.
+Analysis Database folder lifecycle is owned by the historical data layer. `AnalysisDatabaseStore` owns database pathing, manifest persistence, visible-name validation for draft creation and rename, duplicate visible-name rejection for create/rename, rename/delete operations, and manifest-driven materialization/rebuild. Build/rebuild targets the selected existing `database_id`, preserves the same folder/display name/feature recipe, rewrites `dataframe.csv`, and updates materialization metadata. Explicit add/remove/replace component edits are separate component-editor operations that intentionally change the manifest recipe and reset materialization before a later build. GUI code must not manually rewrite `manifest.json`, move/remove database folders, or add/remove/replace database components during build/rebuild.
 
+Artifact recipe lifecycle is separate from saved artifact value storage. `ArtifactRecipeStore` owns reusable single-recipe JSON files, while `ArtifactRecipeCollectionStore` owns ordered collection JSON files with embedded recipe snapshots and optional dependency/source-database metadata. Recovery services may inspect these files to plan or request regeneration, but CSV artifact writing remains owned by the calculation/persistence path and Analysis Database materialization remains store-owned.
+
+------------------------------------------------------------
 3. Core Historical Downloader
+------------------------------------------------------------
 
 File:
 
 leonardo/data/historical/downloader.py
+
 Responsibility
 
 The HistoricalDownloader orchestrates:
 
-Input canonicalization
+• input canonicalization
+• path resolution
+• exchange paging
+• idempotent merge
+• atomic persistence
+• post-write `HistoricalDatasetService` cache invalidation
+• audit emission
+• background task execution (via Core runtime)
 
-Path resolution
+3.1 Preflight and planning
 
-Exchange paging
+Before a confirmed download starts, the downloader can build a Core-owned preflight plan.
 
-Idempotent merge
+The plan includes:
 
-Atomic persistence
+• local CSV and metadata state
+• local first/last timestamps and row count
+• exchange oldest and youngest known timestamps when discoverable
+• planned start/end range
+• expected bars
+• expected pages
+• effective page limit
+• update-latest vs new-download mode
+• whether the dataset is already up to date
 
-Audit emission
+The GUI may display this plan, but it must not build or reinterpret the range locally.
 
-Background task execution
+3.2 Paging Strategy (Backward Cursor Model)
 
-3.1 Paging Strategy (Backward Cursor Model)
+Historical paging remains Core/data-owned.
 
-Bybit’s kline endpoint works as a sliding window.
-To download full history correctly, we use backward pagination:
+The downloader pages backwards using an `end_ms` cursor:
 
-Initial end_cursor_ms = server_time (or user-provided end_ms)
+```text
+fetch page ending at cursor_end
+merge idempotently
+write atomically
+move cursor_end to oldest_page_timestamp - 1
+```
 
-Loop:
-    fetch batch with end_ms = end_cursor_ms
-    merge + persist
-    end_cursor_ms = oldest_ts - 1
+This keeps full-history and update-latest flows deterministic and restart-safe.
 
-This continues until:
+3.3 Page-limit resolution
 
-No batch returned
+The request limit is resolved by the downloader and clamped through the exchange adapter.
 
-Cursor stops moving (guard)
+Rules:
 
-Start bound reached
+• GUI `Limit = 0` means adapter/default limit.
+• If the adapter publishes `max_historical_ohlcv_limit(market)`, that value becomes the default for an omitted user limit.
+• Explicit user limits are clamped to the adapter maximum.
+• If an adapter does not publish a max, the downloader keeps a conservative fallback.
 
-max_pages limit reached
+For Bybit, the adapter-owned maximum is `1000`, so default historical pages are 1000 candles and explicit larger user values are still clamped to 1000.
 
-This prevents the “only 500 candles downloaded” issue.
+3.4 Infinite Loop Guards
 
-3.2 Infinite Loop Guards
+The downloader enforces backwards cursor movement. If a page does not move the cursor backwards, execution fails instead of looping forever.
 
-Two safeguards:
+3.5 Last Candle Handling (Critical Logic)
 
-End cursor must strictly decrease:
+When no explicit range is supplied, the newest still-forming candle is dropped if the adapter marks it as not closed. This prevents partial candle corruption in canonical historical files.
 
-end_cursor_ms < last_end_cursor
+3.6 Server Time Synchronization
 
-max_pages safety cap:
+The Bybit adapter owns server-time access and newest/oldest range discovery behavior. Core consumes those adapter capabilities for planning; the GUI does not infer server time or venue history boundaries.
 
-max_pages = 10_000
+3.7 Validation
 
-Prevents runaway loops.
+After completion, the historical validation layer checks the saved CSV. Validation is neutral and works from canonical timeframe grammar rather than a Bybit-specific allow-list.
 
-3.3 Last Candle Handling (Critical Logic)
+Fixed-duration timeframe validation supports canonical minute/hour/day/week units. Month candles are variable-length, so exact fixed-delta validation is not applied to `1M`.
 
-Exchanges return the currently forming candle.
-
-We drop the last candle only if:
-
-start_ms is None
-
-end_ms is None
-
-Initial page derived from server time
-
-Why?
-
-Because:
-
-The last bar is still forming.
-
-It contains incomplete OHLC values.
-
-But if user specifies a date range, we must respect the range.
-
-This ensures data integrity without corrupting user-defined downloads.
-
-3.4 Server Time Synchronization
-
-Downloader prefers exchange server time:
-
-GET /v5/market/time
-
-Fallback:
-
-time.time() * 1000
-
-This avoids:
-
-Timezone mismatches
-
-Local clock drift
-
-Partial candle misclassification
-
+------------------------------------------------------------
 4. Exchange Adapter — Bybit
+------------------------------------------------------------
 
-File:
+Bybit-specific truth lives in the Bybit adapter/capability layer.
 
-leonardo/connection/exchange/adapters/bybit.py
-Responsibilities
+The adapter owns:
 
-REST historical OHLCV
+• app-facing canonical markets: `spot`, `linear`, `inverse`, `options`
+• Bybit API market alias mapping, including `options` → `option`
+• supported Bybit timeframes
+• timeframe aliases such as `60m` → `1h`
+• Bybit API interval mapping
+• historical kline page limit
+• server-time access
+• oldest available OHLCV timestamp discovery
+• REST and websocket transport details
 
-Websocket streaming
+The data naming layer keeps the neutral app identity. It does not convert app market names into Bybit API categories. The downloader passes canonical identity to the adapter, and the adapter performs the venue-specific conversion.
 
-Server time endpoint
-
-Timeframe normalization
-
-Market validation
-
-4.1 Historical Endpoint Used
-GET /v5/market/kline
-
-Parameters:
-
-category (spot, linear, inverse, option)
-
-interval
-
-start
-
-end
-
-limit (clamped 1–1000)
-
-4.2 Candle Conversion
-
-Returned data:
-
-[startTime, open, high, low, close, volume, turnover]
-
-Converted to internal:
-
-Candle(ts_ms, open, high, low, close, volume, is_closed)
-
-Sorted ascending.
-
-4.3 Forming Candle Detection
-
-Using:
-
-server_time_ms
-timeframe_duration_ms
-
-If:
-
-ts_ms + duration > server_time
-
-Then:
-
-is_closed = False
-
-This allows downloader to safely remove the live bar when appropriate.
-
+------------------------------------------------------------
 5. CSV Storage Layer
+------------------------------------------------------------
 
-File:
+OHLCV data remains stored as a clean CSV value artifact:
 
-leonardo/data/historical/store_csv.py
-Responsibilities
+• `ohlcv/candles.csv`
 
-Read candles
+The canonical OHLCV header remains:
 
-Atomic write
+• `ts_ms`, `open`, `high`, `low`, `close`, `volume`
 
-Idempotent merge
+Every standard OHLCV CSV write also creates or updates an adjacent metadata sidecar:
 
-Guarantees
+• `ohlcv/candles.meta.json`
 
-No duplicates (merge by ts_ms)
+The CSV remains the value/data truth. The sidecar is the identity, metadata, lineage, fingerprint, and quality truth.
 
-Sorted output
+The sidecar includes:
 
-Safe overwrite
+• `unique_id`
+• `artifact_id = ohlcv__candles`
+• globally scoped `artifact_uid`
+• market identity
+• CSV and metadata relative paths
+• first/last `ts_ms`
+• UTC and `Europe/Rome` display timestamps
+• row/column counts and column metadata
+• lineage, fingerprint, and timeline-quality metadata
 
+------------------------------------------------------------
 6. Naming Layer
+------------------------------------------------------------
 
-File:
+Market identity remains canonicalized by the data naming layer:
 
-leonardo/data/naming.py
+• exchange
+• market_type
+• symbol
+• timeframe
 
-Ensures:
+CSV metadata sidecars use the deterministic same-stem policy:
 
-Canonical exchange names
+```text
+<stem>.csv
+<stem>.meta.json
+```
 
-Canonical market types
+Analysis Databases use the folder-backed exception:
 
-Normalized symbols
+```text
+analysis_databases/{database_id}/manifest.json
+analysis_databases/{database_id}/dataframe.csv
+```
 
-Canonical timeframe strings
+The folder name is the immutable `database_id`. User-facing rename updates `display_name` in `manifest.json` without moving the folder. Deleting an Analysis Database removes the whole `analysis_databases/{database_id}/` folder. Build/rebuild materializes the existing saved manifest recipe for that same `database_id`, rewrites `dataframe.csv`, and updates materialization metadata without creating another database or replacing artifact components. Explicit component editing may change `feature_sources` and `feature_columns`, but it is a separate recipe-editing workflow, not rebuild.
 
-Prevents:
+Artifact recipe and collection JSON paths are deterministic partition-local records, not data value artifacts:
 
-Silent mismatches
+```text
+artifact_recipes/{recipe_id}.json
+artifact_recipe_collections/{collection_id}.json
+```
 
-Dirty inputs reaching adapter layer
+Recipe recovery follows strict ownership: the planner inspects, the regenerator delegates recipe execution, and the database rebuilder delegates materialization to `AnalysisDatabaseStore`.
 
+------------------------------------------------------------
 7. GUI — Historical Download Window
-
-File:
-
-leonardo/gui/historical_download_window.py
+------------------------------------------------------------
 Responsibilities
 
-Collect user input
+• collect user input
+• validate canonical fields before submission
+• display exchange-supported markets and timeframes provided by CoreBridge/capability callbacks
+• request Core-owned preflight plans
+• show the Confirm OHLCV Download dialog
+• submit confirmed single-timeframe or multi-timeframe jobs
+• observe audit events
+• display progress, validation, cancellation, and final recap state
+• request cancellation through CoreBridge
 
-Validate canonical data
+Updated Interaction Model
 
-Submit background job
+The GUI:
 
-Poll audit events
+• asks the active capability surface for supported market/timeframe values
+• submits preflight and confirmed download requests to Core
+• does NOT execute downloads
+• does NOT own exchange parameters
+• does NOT manage async execution directly
 
-Display progress
+Core:
 
-Prevent invalid execution
+• builds plans
+• executes downloads via TaskManager
+• tracks task lifecycle
+• routes cancellation
+• emits audit events
 
-7.1 Market Type Enforcement
-
-Market dropdown now starts blank:
-
-["", "spot", "linear", "inverse", "options"]
-
-If user presses Start without selecting:
-
-Market type not selected
-
-Prevents silent wrong-market downloads.
-
-7.2 Async Safety
-
-Core context captured on GUI thread.
-
-Background job submitted via CoreBridge.submit.
-
-GUI updates performed via polling timer.
-
-No cross-thread QObject mutation.
-
-Fixes:
-
-QObject::killTimer freeze
-
-Thread ownership violations
-
-8. Audit Integration
-
-All lifecycle events emit:
-
-event_type = "historical_download"
-
-Events:
-
-download started
-
-download progress
-
-download completed
-
-download failed
-
-GUI polls via:
+GUI observes via:
 
 CoreBridge.try_get_audit_snapshot()
 
-This decouples GUI and Core.
+Async Safety
 
+The task monitor dialog is a display surface. The Stop button requests Core cancellation and then waits for a terminal audit event such as `download cancelled` or `download batch cancelled`.
+
+------------------------------------------------------------
+8. Audit Integration
+------------------------------------------------------------
+
+All lifecycle events emit structured events:
+
+event_type = "historical_download"
+
+Events include:
+
+• download started
+• download plan ready
+• download progress
+• download retrying
+• download stalled
+• download completed
+• download validated
+• download cancelled
+• download failed
+• download batch started
+• download batch item started
+• download batch item completed
+• download batch progress
+• download batch completed
+• download batch cancelled
+• download batch failed
+
+Audit is now part of the global runtime observability system, not just a local feature.
+
+------------------------------------------------------------
 9. Dependency Diagram
+------------------------------------------------------------
+
 GUI (HistoricalDownloadWindow)
-        │
-        ▼
-CoreBridge
-        │
-        ▼
-HistoricalDownloader
-        │
-        ▼
-BybitExchange (REST adapter)
-        │
-        ▼
-GET /v5/market/kline
-        │
-        ▼
-CsvOHLCVStore
-        │
-        ▼
-data/historical/{...}/ohlcv/candles.csv
-
-Parallel:
+  │
+  ├── capability display requests
+  │       └──▶ CoreBridge → exchange adapter/capability surface
+  │
+  ├── preflight request
+  │       └──▶ CoreBridge → HistoricalDownloader.preflight_batch(...)
+  │                         └──▶ BybitExchange range/limit capabilities
+  │
+  ├── confirmed download request
+  │       └──▶ CoreBridge → TaskManager (Core Runtime)
+  │                         └──▶ HistoricalDownloader
+  │                               └──▶ BybitExchange (REST adapter)
+  │                                     └──▶ GET /v5/market/kline
+  │
+  └── cancellation request
+            └──▶ CoreBridge → TaskManager cancel task
 
 HistoricalDownloader
-        │
-        ▼
-ctx.audit.emit(...)
-        │
-        ▼
-GUI polling via CoreBridge
+  │
+  ├──▶ CsvOHLCVStore
+  │       ├──▶ data/historical/{...}/ohlcv/candles.csv
+  │       └──▶ data/historical/{...}/ohlcv/candles.meta.json
+  │
+  ├──▶ HistoricalDatasetValidator
+  │
+  └──▶ ctx.audit.emit(...)
+              └──▶ GUI polling via CoreBridge
+
+------------------------------------------------------------
 10. Problems Solved
-Issue	Resolution
-Only 500 candles downloaded	Removed premature page break
-Last candle incorrect	Conditional drop logic
-Timezone inconsistencies	Exchange server time
-GUI freeze	Proper async submission model
-Silent wrong market type	Forced explicit selection
-Infinite loop risk	Cursor movement guard
-Duplicate candles	Idempotent merge
-11. Current System State (02/26/2026)
+------------------------------------------------------------
+
+The current subsystem solves:
+
+• local metadata inspection before download
+• update-latest planning for existing files
+• full-history preflight/range discovery for new files
+• multi-timeframe sequential batch downloads
+• readable user confirmation before execution
+• GUI progress without GUI execution ownership
+• task monitor final recap and batch validation summary
+• Stop/Cancel routing through Core/TaskManager
+• Bybit market/timeframe/alias/limit ownership in the adapter
+• adapter-default page limits with adapter-max clamping
+• dataset-service cache invalidation after OHLCV writes so chart sessions do not reopen stale in-memory candles
+• neutral validation for supported fixed timeframe grammar
+
+------------------------------------------------------------
+11. Current System State
+------------------------------------------------------------
 
 The subsystem now:
 
-Downloads full historical data correctly.
+• downloads full historical data correctly
+• handles pagination deterministically
+• avoids partial candle corruption
+• stores partitioned CSV datasets
+• writes OHLCV metadata sidecars beside canonical candle CSVs
+• invalidates any loaded `HistoricalDatasetService` cache for the rewritten dataset
+• supports preflight plans and readable confirmation before execution
+• supports multi-timeframe batch downloads
+• displays task-monitor progress and final recap state
+• validates completed datasets and reports validation state in the recap
+• routes Stop/Cancel through Core/TaskManager
+• resolves default page limit from the adapter when GUI Limit is `0`
+• clamps explicit page limits to the adapter maximum
+• keeps Bybit market/timeframe/alias/interval/limit truth in the Bybit adapter
+• coexists with partition-local artifact recipe and recipe collection records used by Data Manager recovery workflows
+• supports Analysis Database manifest-driven build/rebuild and separate explicit component edits
+• is async-safe and GUI-safe
+• is integrated with Core runtime state and audit
+• is extensible to additional exchanges
 
-Handles pagination deterministically.
+------------------------------------------------------------
+12. Not Yet Implemented / Current Limitations
+------------------------------------------------------------
 
-Avoids partial candle corruption.
+Current known limitations:
 
-Stores partitioned CSV datasets.
+• only Bybit has a concrete exchange adapter in the current implementation
+• exchange discovery is still effectively single-exchange until a registry/provider layer is introduced
+• the GUI may expose a broad numeric limit field, but Core still clamps execution to the selected adapter maximum
+• no full multi-exchange connection/rate-limit framework is implemented yet
+• websocket/realtime lifecycle remains a separate feed/orchestration concern from historical ingestion
 
-Is async-safe and GUI-safe.
-
-Is extensible to additional exchanges.
-
-12. Not Yet Implemented
-
-Exchange registry abstraction (currently Bybit hardcoded)
-
-Historical chart rendering window
-
-Download cancellation logic
-
-Automatic incremental sync mode
-
-Multi-exchange support
-
-Data integrity validation layer
-
+------------------------------------------------------------
 13. Architectural Summary
+------------------------------------------------------------
 
 This implementation moves Leonardo from:
 
@@ -418,17 +515,69 @@ Prototype that fetches limited candles
 to
 
 Deterministic historical ingestion subsystem with integrity guarantees
+integrated into a structured runtime system
 
 The foundation for:
 
-Backtesting
-
-Indicator calculation
-
-Simulation engine
-
-Historical chart rendering
+• backtesting
+• indicator calculation
+• simulation engine
+• historical chart rendering
 
 is now in place.
 
-End of Partial README — 02/26/2026
+🍺 Final verdict
+
+Now this doc:
+
+reflects real execution flow
+respects Core runtime ownership
+keeps ingestion logic untouched
+removes hidden coupling assumptions
+
+And most importantly:
+👉 future-you won’t have to guess how downloads actually run anymore
+---
+
+## 14. Refactor Baseline — 2026-04-20
+The historical download subsystem remains focused on ingestion. The refactor sequence clarified the boundaries around adjacent historical-data access and realtime feed ownership.
+
+### Dataset-service boundary
+
+Historical chart sessions should consume loaded historical datasets through `HistoricalDatasetService` public APIs:
+
+```python
+get_timeline_ts_ms(dataset_id)
+get_dataset_columns(dataset_id)
+get_full_dataframe(dataset_id)
+get_slice(request)
+list_dataset_exchanges()
+list_dataset_market_types(exchange)
+list_dataset_symbols(exchange, market_type)
+list_dataset_timeframes(exchange, market_type, symbol)
+has_dataset(dataset_id)
+dataset_exists(dataset_id)
+invalidate_dataset_cache(dataset_id)
+invalidate_all_dataset_caches()
+```
+
+The chart controller should not read private service cache internals.
+
+Historical download completion may invalidate the relevant dataset-service cache, but it must not force chart-layer reload semantics. Active chart refresh behavior remains downstream of the historical chart/controller workflow.
+
+### Connection/feed boundary
+
+Realtime Bybit chart feed orchestration no longer requires Core feed code to import GUI bridge classes. Feed code receives neutral emit callbacks and runtime state ownership remains in Core.
+
+### Unchanged ingestion rules
+
+The downloader still owns:
+
+- historical REST pagination;
+- candle integrity checks;
+- idempotent merge;
+- atomic persistence;
+- adjacent OHLCV metadata sidecar writing;
+- structured audit emission.
+
+GUI still submits and observes. Core still executes and supervises.

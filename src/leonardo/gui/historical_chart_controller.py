@@ -6,32 +6,88 @@ from typing import Optional
 from PySide6.QtCore import QObject, Signal, Slot
 
 from leonardo.common.market_types import Candle as GuiCandle
-from leonardo.core.registry_keys import SVC_HISTORICAL_DATASET
 from leonardo.data.historical.dataset_service import DatasetId, SlicePayload, SliceRequest
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget
 from leonardo.gui.core_bridge import CoreBridge
+from leonardo.gui.historical_chart.construct_sources import HistoricalChartConstructSourceMixin
+from leonardo.gui.historical_chart.data_access import HistoricalChartDataAccessMixin
+from leonardo.gui.historical_chart.projection import HistoricalChartProjectionMixin
+from leonardo.gui.historical_chart.refill_policy import HistoricalChartRefillPolicyMixin
+from leonardo.gui.historical_chart.session import (
+    AppliedStudyProjection,
+    ChartDataSession,
+    StoredStudyLine,
+)
+from leonardo.gui.historical_chart.tool_execution import HistoricalChartToolExecutionMixin
 
 
-class HistoricalChartController(QObject):
+__all__ = [
+    "StoredStudyLine",
+    "AppliedStudyProjection",
+    "ChartDataSession",
+    "HistoricalChartController",
+]
+
+
+class HistoricalChartController(
+    HistoricalChartToolExecutionMixin,
+    HistoricalChartProjectionMixin,
+    HistoricalChartConstructSourceMixin,
+    HistoricalChartDataAccessMixin,
+    HistoricalChartRefillPolicyMixin,
+    QObject,
+):
     """
-    GUI-thread controller.
-    Talks to Core via CoreBridge.submit(coro) and receives results via callbacks.
+    GUI-thread historical chart controller.
 
-    IMPORTANT:
-    concurrent.futures.Future callbacks may execute on the CORE thread.
-    Therefore we must marshal payload application back to the GUI thread.
+    Responsibilities
+    ----------------
+    - Coordinate historical dataset opening and slice requests through CoreBridge.
+    - Keep resident-slice session state aligned with the chart workspace.
+    - Compute financial tools on the full historical dataset.
+    - Convert full-dataset results into resident-local chart series for rendering.
+    - Persist full-dataset results for Save operations.
+
+    Threading rule
+    --------------
+    concurrent.futures.Future callbacks may execute on the Core thread, not on
+    the GUI thread. Any UI-affecting application path must therefore be
+    marshalled back through Qt signals.
+
+    Architectural rule reinforced here
+    ----------------------------------
+    Rendering must remain resident-local.
+
+    That means:
+    - computation may operate on the full dataset
+    - persistence may operate on the full dataset
+    - render payloads sent to the chart layer must be trimmed to the current
+      resident slice before they become ChartSeries objects
+
+    This controller is therefore the boundary where full-dataset truth is
+    converted into resident-local render truth.
     """
 
     error = Signal(str)
-    slice_ready = Signal(object)  # SlicePayload
+    _dataset_open_result_ready = Signal(object, object, object)  # DatasetId, open_generation, result/error
+    _slice_result_ready = Signal(object, object, object)  # request_id, DatasetId, result/error
+    _slice_payload_ready = Signal(object)  # SlicePayload (internal GUI-thread marshalling)
+    slice_ready = Signal(object)  # SlicePayload already applied to session/workspace
+    projected_studies_refreshed = Signal(object)  # list[dict[str, Any]]
+
+    apply_succeeded = Signal(dict)
+    save_succeeded = Signal(dict)
+    save_failed = Signal(dict)
 
     # Historical horizontal policy (same for all timeframes)
     DEFAULT_VISIBLE_BARS = 500
     MAX_VISIBLE_BARS = 2000
-    RESIDENT_TARGET_BARS = 3000
+    RESIDENT_TARGET_BARS = 5000
 
     # Dataset-service request policy derived from the above:
-    # 2000 visible max + 500 left buffer + 500 right buffer = 3000 resident target
+    # 2000 visible max + 1500 left buffer + 1500 right buffer = 5000 resident target.
+    # A larger resident window reduces how often horizontal navigation must
+    # trigger a full resident-slice refresh and study reprojection cycle.
     REQUEST_VISIBLE_MAX = MAX_VISIBLE_BARS
     REQUEST_BUFFER_LEFT = (RESIDENT_TARGET_BARS - MAX_VISIBLE_BARS) // 2
     REQUEST_BUFFER_RIGHT = (RESIDENT_TARGET_BARS - MAX_VISIBLE_BARS) // 2
@@ -53,58 +109,128 @@ class HistoricalChartController(QObject):
         self._dataset: Optional[DatasetId] = None
         self._symbol: str = ""
         self._timeframe: str = ""
+        self._exchange: str = ""
+        self._market_type: str = ""
 
         self._latest_request_id: Optional[str] = None
+        self._dataset_open_generation: int = 0
 
-        # Historical session state
-        self._dataset_count: Optional[int] = None
-        self._resident_base_index: int = 0
-        self._resident_size: int = 0
-        self._has_more_left: bool = False
-        self._has_more_right: bool = False
+        # Historical chart-session data authority.
+        #
+        # This centralizes dataset/session truth inside the controller so the
+        # viewport and render layers remain downstream consumers rather than
+        # accidental owners of chart data state.
+        self._session = ChartDataSession()
         self._initial_view_applied: bool = False
         self._request_in_flight: bool = False
         self._suppress_viewport_refill: bool = False
+        self._is_disposed: bool = False
 
-        # Ensure UI mutations happen on the GUI thread
-        self.slice_ready.connect(self._apply_slice)
-
-        # Refill-on-pan / refill-on-zoom trigger
+        self._dataset_open_result_ready.connect(self._apply_dataset_open_result)
+        self._slice_result_ready.connect(self._apply_slice_result)
+        self._slice_payload_ready.connect(self._apply_slice)
         self._workspace.viewport.viewport_changed.connect(self._on_viewport_changed)
+        self.destroyed.connect(self._on_qobject_destroyed)
+        try:
+            self._workspace.destroyed.connect(self._on_workspace_destroyed)
+        except Exception:
+            pass
 
-    # ---------------- API ----------------
+    def dispose(self) -> None:
+        """Stop this controller from applying any further async results.
+
+        The controller owns chart-session data truth and async refill/application
+        callbacks. Disposal therefore does not invent new shell or pane
+        semantics; it only seals this controller's own callback boundary so late
+        results cannot write into a workspace that is closing or already gone.
+        """
+        if self._is_disposed:
+            return
+
+        self._is_disposed = True
+        self._dataset_open_generation += 1
+        self._latest_request_id = None
+        self._request_in_flight = False
+        self._suppress_viewport_refill = True
+
+        try:
+            self._dataset_open_result_ready.disconnect(self._apply_dataset_open_result)
+        except Exception:
+            pass
+
+        try:
+            self._slice_result_ready.disconnect(self._apply_slice_result)
+        except Exception:
+            pass
+
+        try:
+            self._slice_payload_ready.disconnect(self._apply_slice)
+        except Exception:
+            pass
+
+        try:
+            self._workspace.viewport.viewport_changed.disconnect(self._on_viewport_changed)
+        except Exception:
+            pass
+
+    @Slot()
+    def _on_workspace_destroyed(self) -> None:
+        self.dispose()
+
+    @Slot(object)
+    def _on_qobject_destroyed(self, _obj: object = None) -> None:
+        self._is_disposed = True
 
     def open_dataset(self, exchange: str, market_type: str, symbol: str, timeframe: str) -> None:
+        if self._is_disposed:
+            return
+
         dataset = DatasetId(exchange, market_type, symbol, timeframe)
+        self._dataset_open_generation += 1
+        open_generation = self._dataset_open_generation
+        self._latest_request_id = None
         self._dataset = dataset
+        self._exchange = exchange
+        self._market_type = market_type
         self._symbol = symbol
         self._timeframe = timeframe
 
-        # Reset per-dataset historical session state
-        self._dataset_count = None
-        self._resident_base_index = 0
-        self._resident_size = 0
-        self._has_more_left = False
-        self._has_more_right = False
+        self._session.reset_for_dataset(dataset)
         self._initial_view_applied = False
         self._request_in_flight = False
         self._suppress_viewport_refill = False
 
-        svc = self._core.context.registry.get(SVC_HISTORICAL_DATASET)
+        svc = self._get_historical_dataset_service()
         if svc is None:
-            self.error.emit("HistoricalDatasetService not found in ctx.registry")
             return
 
         fut = self._core.submit(svc.open_dataset(dataset))
-        fut.add_done_callback(self._on_dataset_opened)
+        fut.add_done_callback(
+            lambda done_fut, opened_dataset=dataset, generation=open_generation: (
+                self._on_dataset_opened(
+                    done_fut,
+                    dataset=opened_dataset,
+                    open_generation=generation,
+                )
+            )
+        )
 
     def request_slice(self, *, center_ts_ms: int, reason: str) -> None:
+        if self._is_disposed:
+            return
+
         if self._dataset is None:
             return
 
-        svc = self._core.context.registry.get(SVC_HISTORICAL_DATASET)
+        if self._request_in_flight:
+            # The controller is the sole owner of resident-slice refill policy.
+            # While one request is in flight, the viewport may still move, but it
+            # must not spawn a second resident-truth owner. The latest camera
+            # state will be re-evaluated after the active request completes.
+            return
+
+        svc = self._get_historical_dataset_service()
         if svc is None:
-            self.error.emit("HistoricalDatasetService not found in ctx.registry")
             return
 
         request_id = uuid.uuid4().hex
@@ -122,161 +248,226 @@ class HistoricalChartController(QObject):
             reason=reason,
         )
 
+        request_dataset = self._dataset
         fut = self._core.submit(svc.get_slice(req))
-        fut.add_done_callback(self._on_slice_ready)
+        fut.add_done_callback(
+            lambda done_fut, issued_request_id=request_id, issued_dataset=request_dataset: (
+                self._on_slice_ready(
+                    done_fut,
+                    request_id=issued_request_id,
+                    dataset=issued_dataset,
+                )
+            )
+        )
 
-    # ---------------- callbacks (may execute off the GUI thread) ----------------
-
-    def _on_dataset_opened(self, fut) -> None:
-        try:
-            meta = fut.result()
-        except Exception as e:
-            self.error.emit(f"open_dataset failed: {e!r}")
+    def _on_dataset_opened(
+        self,
+        fut,
+        *,
+        dataset: DatasetId,
+        open_generation: int,
+    ) -> None:
+        """Collect one Core dataset-open result and marshal it to the GUI thread."""
+        if self._is_disposed:
             return
 
         try:
-            self._dataset_count = int(meta.count)
+            result = fut.result()
+        except BaseException as e:
+            result = e
+
+        self._dataset_open_result_ready.emit(dataset, int(open_generation), result)
+
+    @Slot(object, object, object)
+    def _apply_dataset_open_result(
+        self,
+        dataset_obj: object,
+        open_generation_obj: object,
+        result_obj: object,
+    ) -> None:
+        """Apply one opened-dataset result after Qt GUI-thread marshalling.
+
+        Future callbacks may run on the Core thread.  This slot is the only
+        place where an open result is allowed to mutate controller/session
+        state.  The generation and dataset guards prevent a late result from an
+        older open request from priming timeline truth or requesting an initial
+        slice for the active chart session.
+        """
+        if self._is_disposed:
+            return
+
+        if not isinstance(dataset_obj, DatasetId):
+            return
+
+        try:
+            open_generation = int(open_generation_obj)
         except Exception:
-            self._dataset_count = None
-
-        # Initial slice centered at newest candle
-        self.request_slice(center_ts_ms=meta.last_ts_ms, reason="initial")
-
-    def _on_slice_ready(self, fut) -> None:
-        try:
-            payload: SlicePayload = fut.result()
-        except Exception as e:
-            self._request_in_flight = False
-            self.error.emit(f"get_slice failed: {e!r}")
             return
 
+        if open_generation != self._dataset_open_generation:
+            return
+
+        if self._dataset is None or dataset_obj != self._dataset:
+            return
+
+        if self._session.dataset_id is not None and dataset_obj != self._session.dataset_id:
+            return
+
+        if isinstance(result_obj, BaseException):
+            self.error.emit(f"open_dataset failed: {result_obj!r}")
+            return
+
+        meta = result_obj
+
+        try:
+            self._session.set_dataset_count(int(getattr(meta, "count")))
+        except Exception:
+            self._session.set_dataset_count(None)
+
+        svc = self._get_historical_dataset_service()
+        if svc is None:
+            return
+
+        try:
+            self._populate_session_truth_from_service(svc)
+        except Exception as e:
+            self.error.emit(f"Failed to prime canonical chart-session timeline: {e!r}")
+            return
+
+        if open_generation != self._dataset_open_generation:
+            return
+
+        if self._dataset is None or dataset_obj != self._dataset:
+            return
+
+        if self._session.dataset_id is not None and dataset_obj != self._session.dataset_id:
+            return
+
+        try:
+            center_ts_ms = int(getattr(meta, "last_ts_ms"))
+        except Exception as e:
+            self.error.emit(f"Historical dataset metadata did not expose last_ts_ms: {e!r}")
+            return
+
+        self.request_slice(center_ts_ms=center_ts_ms, reason="initial")
+
+    def _on_slice_ready(
+        self,
+        fut,
+        *,
+        request_id: str,
+        dataset: DatasetId,
+    ) -> None:
+        """Collect one Core slice result and marshal it to the GUI thread."""
+        if self._is_disposed:
+            return
+
+        try:
+            result = fut.result()
+        except BaseException as e:
+            result = e
+
+        self._slice_result_ready.emit(str(request_id), dataset, result)
+
+    @Slot(object, object, object)
+    def _apply_slice_result(
+        self,
+        request_id_obj: object,
+        dataset_obj: object,
+        result_obj: object,
+    ) -> None:
+        """Apply one slice result after Qt GUI-thread marshalling.
+
+        Stale slice results must not mutate request flags for a newer active
+        request.  The request-id and dataset guards therefore run before any
+        session state is changed or errors are surfaced.
+        """
+        if self._is_disposed:
+            return
+
+        request_id = str(request_id_obj or "")
+        if not request_id or request_id != self._latest_request_id:
+            return
+
+        if not isinstance(dataset_obj, DatasetId):
+            return
+
+        if self._dataset is None or dataset_obj != self._dataset:
+            return
+
+        if self._session.dataset_id is not None and dataset_obj != self._session.dataset_id:
+            return
+
+        if isinstance(result_obj, BaseException):
+            self._request_in_flight = False
+            self.error.emit(f"get_slice failed: {result_obj!r}")
+            self._on_viewport_changed()
+            return
+
+        payload: SlicePayload = result_obj  # type: ignore[assignment]
         if payload.request_id != self._latest_request_id:
-            return  # stale response
+            self._request_in_flight = False
+            self._on_viewport_changed()
+            return
 
-        # Marshal to GUI thread
-        self.slice_ready.emit(payload)
-
-    # ---------------- viewport refill trigger (GUI thread) ----------------
+        self._slice_payload_ready.emit(payload)
 
     @Slot()
     def _on_viewport_changed(self) -> None:
-        if self._dataset is None:
-            return
-        if self._dataset_count is None or self._dataset_count <= 0:
-            return
-        if self._request_in_flight:
-            return
-        if self._suppress_viewport_refill:
-            return
-        if self._resident_size <= 0:
-            return
-        if not self._initial_view_applied:
+        if self._is_disposed:
             return
 
-        vp = self._workspace.viewport
-        raw_start = int(vp.start)
-        raw_end = int(vp.end)
+        if not self._should_consider_refill():
+            return
 
-        # Only the dataset-covered portion of the viewport should participate
-        # in refill logic. Future-pad slots to the right are intentional empty
-        # space, not missing historical data.
-        view_start = max(0, min(raw_start, self._dataset_count))
-        view_end = max(view_start, min(raw_end, self._dataset_count))
-
-        resident_left = self._resident_base_index
-        resident_right_exclusive = self._resident_base_index + self._resident_size
-
-        left_margin = view_start - resident_left
-        right_margin = resident_right_exclusive - view_end
-
-        underflow_left = view_start < resident_left
-        underflow_right = view_end > resident_right_exclusive
-
-        need_left = self._has_more_left and (underflow_left or left_margin <= self.REFILL_THRESHOLD)
-        need_right = self._has_more_right and (underflow_right or right_margin <= self.REFILL_THRESHOLD)
-
+        need_left, need_right, view_start, view_end = self._evaluate_refill_pressure()
         if not need_left and not need_right:
             return
 
-        # Pick the center from the real-data portion of the viewport, not from
-        # future-pad space.
-        if view_end > view_start:
-            center_global = view_start + ((view_end - view_start) // 2)
-        else:
-            # Degenerate case: viewport is entirely outside real data on the right.
-            center_global = self._dataset_count - 1
-
-        center_global = max(0, min(center_global, self._dataset_count - 1))
-
-        # IMPORTANT:
-        # Do NOT clamp center_global back into the current resident slice.
-        # That makes refills chase the old slice instead of following the
-        # viewport's actual global target during historical navigation.
+        center_global = self._refill_center_global_index(
+            view_start=view_start,
+            view_end=view_end,
+        )
         center_ts_ms = self._global_index_to_ts_ms(center_global)
         if center_ts_ms is None:
             return
 
-        reason = "refill-left" if need_left and not need_right else (
-            "refill-right" if need_right and not need_left else "refill-both"
+        self.request_slice(
+            center_ts_ms=center_ts_ms,
+            reason=self._refill_reason(need_left=need_left, need_right=need_right),
         )
-        self.request_slice(center_ts_ms=center_ts_ms, reason=reason)
-
-    def _infer_resident_tf_ms(self) -> Optional[int]:
-        candles = self._workspace.model.candles
-        if len(candles) < 2:
-            return None
-
-        try:
-            prev_ts = int(candles[-2].ts_ms)
-            last_ts = int(candles[-1].ts_ms)
-        except Exception:
-            return None
-
-        tf_ms = last_ts - prev_ts
-        if tf_ms <= 0:
-            return None
-
-        return tf_ms
-
-    def _global_index_to_ts_ms(self, global_index: int) -> Optional[int]:
-        candles = self._workspace.model.candles
-        if not candles:
-            return None
-
-        local = int(global_index) - self._resident_base_index
-        if 0 <= local < len(candles):
-            try:
-                return int(candles[local].ts_ms)
-            except Exception:
-                return None
-
-        tf_ms = self._infer_resident_tf_ms()
-        if tf_ms is None:
-            return None
-
-        try:
-            first_ts = int(candles[0].ts_ms)
-            last_local = len(candles) - 1
-            last_global = self._resident_base_index + last_local
-            last_ts = int(candles[last_local].ts_ms)
-        except Exception:
-            return None
-
-        if global_index < self._resident_base_index:
-            steps = int(global_index) - self._resident_base_index
-            return first_ts + (steps * tf_ms)
-
-        if global_index > last_global:
-            steps = int(global_index) - last_global
-            return last_ts + (steps * tf_ms)
-
-        return None
-
-    # ---------------- apply (GUI thread) ----------------
 
     @Slot(object)
     def _apply_slice(self, payload_obj: object) -> None:
+        """Apply one resident slice into controller/session and workspace.
+
+        The controller owns resident-slice truth, canonical-to-resident study
+        reprojection, and the downstream data push into the workspace. Pane
+        lifecycle and layout remain workspace-owned, so this slot intentionally
+        does not toggle optional pane visibility.
+        """
+        if self._is_disposed:
+            self._request_in_flight = False
+            return
+
         payload: SlicePayload = payload_obj  # type: ignore[assignment]
+
+        if self._session.dataset_id is not None and payload.dataset_id != self._session.dataset_id:
+            self._request_in_flight = False
+            self.error.emit(
+                "Discarded historical slice for a dataset that does not match the active chart session."
+            )
+            self._on_viewport_changed()
+            return
+
+        if self._initial_view_applied and not self._payload_covers_current_viewport(payload):
+            # The viewport has moved since this request was issued. Because the
+            # controller is the sole owner of resident-slice truth, stale slice
+            # results must be discarded here instead of being applied and then
+            # forcing downstream layers to recover from mismatched truth.
+            self._request_in_flight = False
+            self._on_viewport_changed()
+            return
 
         candles = [
             GuiCandle(
@@ -299,10 +490,14 @@ class HistoricalChartController(QObject):
             )
         ]
 
-        self._resident_base_index = int(getattr(payload, "base_index", 0))
-        self._resident_size = len(candles)
-        self._has_more_left = bool(getattr(payload, "has_more_left", False))
-        self._has_more_right = bool(getattr(payload, "has_more_right", False))
+        self._session.set_resident_slice(
+            base_index=int(getattr(payload, "base_index", 0)),
+            candles=candles,
+            has_more_left=bool(getattr(payload, "has_more_left", False)),
+            has_more_right=bool(getattr(payload, "has_more_right", False)),
+        )
+        self._refresh_all_study_projections()
+        projected_payloads = self.get_projected_study_payloads()
 
         self._suppress_viewport_refill = True
         try:
@@ -310,14 +505,17 @@ class HistoricalChartController(QObject):
                 symbol=self._symbol,
                 timeframe=self._timeframe,
                 candles=candles,
-                resident_base_index=self._resident_base_index,
-                dataset_total=self._dataset_count if self._dataset_count is not None else len(candles),
+                resident_base_index=self._session.resident_base_index,
+                dataset_total=(
+                    self._session.dataset_count
+                    if self._session.dataset_count is not None
+                    else len(candles)
+                ),
             )
 
-            # Ensure volume pane is visible for historical charts
-            self._workspace.set_volume_enabled(True)
-
-            # Initial load only: show the latest default window.
+            # The controller applies resident-local data only. Whether
+            # auxiliary panes such as volume are present is a downstream
+            # workspace/panel layout decision and must not be toggled here.
             if not self._initial_view_applied:
                 self._set_viewport_to_latest(visible_target=self.DEFAULT_VISIBLE_BARS)
                 self._initial_view_applied = True
@@ -325,33 +523,6 @@ class HistoricalChartController(QObject):
             self._suppress_viewport_refill = False
             self._request_in_flight = False
 
-        # Follow-up boundary/coverage check:
-        # if zoom/pan still leaves us close to or beyond resident coverage,
-        # request the next slice immediately.
+        self.projected_studies_refreshed.emit(projected_payloads)
+        self.slice_ready.emit(payload)
         self._on_viewport_changed()
-
-    def _set_viewport_to_latest(self, *, visible_target: int) -> None:
-        vp = self._workspace.viewport
-        total = self._dataset_count if self._dataset_count is not None else len(self._workspace.model.candles)
-        if total <= 0:
-            return
-
-        visible = min(int(visible_target), int(total))
-        start = max(0, int(total) - visible)
-        end = int(total)
-
-        if hasattr(vp, "set_window"):
-            vp.set_window(start, end)  # type: ignore[attr-defined]
-        elif hasattr(vp, "set_range"):
-            vp.set_range(start, end)  # type: ignore[attr-defined]
-        else:
-            if hasattr(vp, "start"):
-                try:
-                    setattr(vp, "start", start)
-                except Exception:
-                    pass
-            if hasattr(vp, "end"):
-                try:
-                    setattr(vp, "end", end)
-                except Exception:
-                    pass

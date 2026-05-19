@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from typing import Optional
 
-from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QToolButton
+from PySide6.QtWidgets import QWidget, QVBoxLayout
 
 from leonardo.gui.core_bridge import CoreBridge
 from leonardo.gui.windows.historical_chart_panel import HistoricalChartPanel
@@ -13,8 +12,6 @@ class HistoricalChartWindow(QWidget):
     """
     Floating shell window for a single HistoricalChartPanel.
     """
-
-    dock_back_requested = Signal(object)
 
     def __init__(self, *, core_bridge: CoreBridge, parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
@@ -28,20 +25,6 @@ class HistoricalChartWindow(QWidget):
         self._root.setContentsMargins(0, 0, 0, 0)
         self._root.setSpacing(0)
 
-        self._toolbar = QWidget(self)
-        self._toolbar_layout = QHBoxLayout(self._toolbar)
-        self._toolbar_layout.setContentsMargins(6, 6, 6, 0)
-        self._toolbar_layout.setSpacing(6)
-
-        self._dock_back_button = QToolButton(self._toolbar)
-        self._dock_back_button.setText("Dock Back")
-        self._dock_back_button.setToolTip("Dock this chart back into Historical Data Manager")
-        self._dock_back_button.clicked.connect(self._on_dock_back_clicked)
-        self._toolbar_layout.addStretch(1)
-        self._toolbar_layout.addWidget(self._dock_back_button)
-
-        self._root.addWidget(self._toolbar, 0)
-
         self._panel: Optional[HistoricalChartPanel] = None
 
     def panel(self) -> Optional[HistoricalChartPanel]:
@@ -52,11 +35,24 @@ class HistoricalChartWindow(QWidget):
             return
 
         if self._panel is not None:
+            try:
+                self._panel.dock_requested.disconnect(self._on_panel_dock_requested)
+            except Exception:
+                pass
             self._root.removeWidget(self._panel)
             self._panel.setParent(None)
+            self._panel.set_floating(False)
 
         self._panel = panel
         self._panel.setParent(self)
+        self._panel.set_floating(True)
+
+        try:
+            self._panel.dock_requested.disconnect(self._on_panel_dock_requested)
+        except Exception:
+            pass
+        self._panel.dock_requested.connect(self._on_panel_dock_requested)
+
         self._root.addWidget(self._panel, 1)
         self._sync_title_from_panel()
 
@@ -65,8 +61,15 @@ class HistoricalChartWindow(QWidget):
             return None
 
         panel = self._panel
+        try:
+            panel.dock_requested.disconnect(self._on_panel_dock_requested)
+        except Exception:
+            pass
+
         self._root.removeWidget(panel)
         panel.setParent(None)
+        panel.set_floating(False)
+
         self._panel = None
         self.setWindowTitle("Historical Chart")
         return panel
@@ -128,5 +131,8 @@ class HistoricalChartWindow(QWidget):
         title = self._panel.dataset_title()
         self.setWindowTitle(title if title else "Historical Chart")
 
-    def _on_dock_back_clicked(self) -> None:
-        self.dock_back_requested.emit(self)
+    def _on_panel_dock_requested(self, panel_obj: object) -> None:
+        _ = panel_obj
+        manager = getattr(self.window(), "_dock_handler", None)
+        if callable(manager):
+            manager(self)

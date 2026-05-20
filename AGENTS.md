@@ -792,6 +792,66 @@ If a requested change appears to violate layering, report the risk before editin
 
 ---
 
+# 17.1 No Shared Responsibility Rule
+
+Every responsibility must have one clear owner.
+
+Codex must not duplicate ownership of the same responsibility across multiple modules, layers, services, or GUI components.
+
+A responsibility includes:
+
+- Lifecycle ownership
+- Service registration
+- Runtime state mutation
+- Data loading
+- Data persistence
+- Metadata validation
+- Artifact naming
+- Recipe execution
+- Financial tool calculation
+- GUI presentation
+- User interaction
+- Chart rendering
+- Error routing
+- Audit reporting
+- Configuration resolution
+
+Rules:
+
+- Do not implement the same responsibility in more than one layer.
+- Do not duplicate business logic in GUI code when a data or core service owns it.
+- Do not duplicate persistence logic in widgets.
+- Do not duplicate configuration resolution across unrelated modules.
+- Do not duplicate financial tool calculation logic between chart workflows and data-manager workflows.
+- Do not make GUI components responsible for data contracts.
+- Do not make data services responsible for GUI behavior.
+- Do not make core services responsible for Qt object ownership.
+- Do not make compatibility facades own implementation logic.
+- Do not create parallel “almost the same” paths for loading, saving, validating, or calculating data.
+
+When shared behavior is needed, Codex must identify the correct owner before editing.
+
+If ownership is unclear, Codex must stop and report:
+
+- The duplicated or unclear responsibility
+- The modules currently sharing it
+- The likely correct owner
+- The safest migration path
+- The risks of changing it
+
+Codex must not resolve unclear ownership by adding another helper, fallback, adapter, or service without explicit approval.
+
+Preferred ownership model:
+
+- Core owns lifecycle, AppContext, service registration, runtime state, audit, and error coordination.
+- Data services own persistence, metadata, lineage, recipes, recovery, and validation.
+- Financial tools own calculation contracts, naming, specs, and deterministic computation.
+- GUI owns presentation, user interaction, Qt widgets, chart display, and GUI-thread orchestration.
+- Bridge/runner code owns communication between GUI and core threads.
+- Tests own verification only and must not introduce production behavior.
+
+If a responsibility appears in multiple places, Codex must treat it as architecture risk unless the duplication is explicitly documented as intentional.
+
 # 18. Leonardo Architecture Rules
 
 Leonardo has a lifecycle-centered architecture.
@@ -1229,6 +1289,7 @@ Codex must not:
 - Modify datasets unless explicitly requested.
 - Claim success without validation.
 - Treat warnings as irrelevant without checking whether they affect the requested task.
+- Create shared responsibility between layers or duplicate ownership of lifecycle, persistence, calculation, validation, or GUI behavior.
 
 ---
 
@@ -1244,5 +1305,6 @@ A task is done only when:
 - Failures were reported honestly.
 - Remaining risks were documented.
 - No forbidden actions were performed.
+- The change did not introduce shared ownership of a responsibility across layers.
 
 If these conditions are not met, the task is not complete.

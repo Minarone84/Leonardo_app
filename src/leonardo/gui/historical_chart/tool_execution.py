@@ -6,7 +6,6 @@ from typing import Any, Dict
 import pandas as pd
 
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore
-from leonardo.data.historical.paths import default_historical_root
 from leonardo.data.naming import canonicalize
 from leonardo.financial_tools.execution_context import ToolExecutionContext
 from leonardo.financial_tools.constructs.constructs import Constructs, ConstructRequest
@@ -16,6 +15,14 @@ from leonardo.financial_tools.oscillators.oscillators import Oscillators, Oscill
 
 
 class HistoricalChartToolExecutionMixin:
+    def _historical_root(self) -> Path:
+        """Return the active historical data root from the Core runtime config."""
+        ctx = getattr(self._core, "context", None)
+        config = getattr(ctx, "config", None)
+        runtime = getattr(config, "runtime", None)
+        data_dir = getattr(runtime, "data_dir", "data")
+        return Path(data_dir) / "historical"
+
     def _utc_peak_trough_columns_for_purpose(
         self,
         params: Dict[str, Any],
@@ -87,7 +94,7 @@ class HistoricalChartToolExecutionMixin:
             symbol=self._symbol,
             timeframe=self._timeframe,
         )
-        store = DerivedCsvStore(historical_root=default_historical_root())
+        store = DerivedCsvStore(historical_root=self._historical_root())
         refs = store.list_instances(
             market=market,
             kind="indicators",
@@ -466,7 +473,7 @@ class HistoricalChartToolExecutionMixin:
             try:
                 result_df = self._construct_result_to_dataframe_for_save(result)
                 instance_key = self._build_instance_key(tool_key, params)
-                historical_root = default_historical_root()
+                historical_root = self._historical_root()
                 store = DerivedCsvStore(historical_root=historical_root)
 
                 target_path = store.resolve_path(
@@ -536,7 +543,7 @@ class HistoricalChartToolExecutionMixin:
         try:
             result_df = self._result_to_dataframe(result)
             instance_key = self._build_instance_key(tool_key, params)
-            historical_root = default_historical_root()
+            historical_root = self._historical_root()
             store = DerivedCsvStore(historical_root=historical_root)
 
             path = store.save_dataframe(

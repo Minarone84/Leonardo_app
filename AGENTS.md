@@ -117,6 +117,60 @@ Validation output must include:
 
 ---
 
+# Sandbox Escalation and Test Execution Rules
+
+Codex may request approval to run a command outside the sandbox only when sandbox execution fails and the command is required for validation.
+
+Approved escalation is allowed only for narrow, explicit validation commands.
+
+Allowed with explicit user approval:
+
+- python -m py_compile <specific_file>
+- python -m pytest <specific_test_file_or_directory>
+- rg <read_only_search_pattern>
+- git status --short
+- git diff
+- git diff --stat
+
+Forbidden outside the sandbox unless explicitly approved as a separate task:
+
+- git push
+- git pull
+- git reset
+- git clean
+- git checkout
+- git restore
+- git merge
+- git rebase
+- git commit
+- pip install
+- python scripts that modify files
+- commands that delete, move, or rewrite files
+- commands that access the network
+- commands that launch the GUI application
+- broad project-wide commands not required by the current task
+
+When requesting escalation, Codex must state:
+
+- The exact command to run
+- Why sandbox execution failed
+- Why the command is necessary
+- Whether the command can modify files
+- Whether the command uses network access
+- Whether the command affects Git state
+
+Codex must not request broad escalation.
+
+Codex must not request session-wide escalation when single-command approval is sufficient.
+
+After any approved outside-sandbox validation command, Codex must report:
+
+- Exact command run
+- Result
+- Any failures
+- Whether files changed
+- Whether Git status changed
+
 # 2. Surgical Change Rule
 
 Every code change must be surgical.

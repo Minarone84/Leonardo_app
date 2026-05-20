@@ -471,7 +471,7 @@ VOLUME_DEFAULTS = StudyStyleDefaults(
         # Period-specific runtime outputs use names such as volume_mean_20.
         # Style resolution maps those outputs to this prefix/default key.
         "volume_mean": SignalStyleDefaults(
-            color="#E5E7EB",  # gray-200
+            color="#06B6D4",  # cyan
             line_width=1,
             line_style="solid",
             visible=True,

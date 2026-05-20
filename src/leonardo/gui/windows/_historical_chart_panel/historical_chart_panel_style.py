@@ -218,6 +218,12 @@ class HistoricalChartPanelStyleMixin:
             return None
 
         signal_defaults = defaults.signal_defaults.get(resolved_line_key)
+        if (
+            signal_defaults is None
+            and resolved_defaults_study_key == "volume"
+            and resolved_line_key.startswith("volume_mean_")
+        ):
+            signal_defaults = defaults.signal_defaults.get("volume_mean")
         if signal_defaults is None:
             signal_defaults = defaults.signal_defaults.get("__primary__")
         if signal_defaults is None:

@@ -73,6 +73,16 @@ class ChartWorkspaceWidget(
         # ---- Layout ----
         self._splitter = QSplitter(Qt.Vertical, self)
         self._splitter.setChildrenCollapsible(False)
+        self._splitter.setHandleWidth(2)
+        self._splitter.setStyleSheet(
+            """
+            QSplitter::handle {
+                background-color: rgb(56, 56, 66);
+                border-top: 1px solid rgb(72, 72, 84);
+                border-bottom: 1px solid rgb(24, 24, 30);
+            }
+            """
+        )
 
         self._price_state = PricePaneState()
 
@@ -126,6 +136,7 @@ class ChartWorkspaceWidget(
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
         root.addWidget(self._splitter)
 
         # Viewport changes are camera-only, but camera movement still changes

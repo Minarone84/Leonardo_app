@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QCloseEvent
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -492,6 +492,10 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_placeholder_open_chart: Optional[QAction] = None
         self._action_placeholder_open_dataset: Optional[QAction] = None
         self._action_placeholder_refresh: Optional[QAction] = None
+        self._action_view_mode_scroll_4: Optional[QAction] = None
+        self._action_view_mode_fit_8: Optional[QAction] = None
+        self._view_mode_action_group: Optional[QActionGroup] = None
+        self._view_mode_label: Optional[QLabel] = None
 
         self._workspace_widget: Optional[HistoricalWorkspaceWidget] = None
         self._is_closing: bool = False
@@ -572,6 +576,38 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_placeholder_tile = action_tile
         menu_window.addAction(action_tile)
 
+        menu_window.addSeparator()
+
+        view_mode_group = QActionGroup(self)
+        view_mode_group.setExclusive(True)
+        self._view_mode_action_group = view_mode_group
+
+        action_view_scroll_4 = QAction("Scroll 4", self, checkable=True)
+        action_view_scroll_4.triggered.connect(
+            lambda checked: checked
+            and self._set_workspace_visualization_mode(HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4)
+        )
+        self._action_view_mode_scroll_4 = action_view_scroll_4
+        view_mode_group.addAction(action_view_scroll_4)
+        menu_window.addAction(action_view_scroll_4)
+
+        action_view_fit_8 = QAction("Fit 8", self, checkable=True)
+        action_view_fit_8.triggered.connect(
+            lambda checked: checked
+            and self._set_workspace_visualization_mode(HistoricalWorkspaceWidget.VIEW_MODE_FIT_8)
+        )
+        self._action_view_mode_fit_8 = action_view_fit_8
+        view_mode_group.addAction(action_view_fit_8)
+        menu_window.addAction(action_view_fit_8)
+
+        view_mode_label = QLabel(self)
+        view_mode_label.setAlignment(Qt.AlignVCenter | Qt.AlignRight)
+        view_mode_label.setStyleSheet(
+            "QLabel { color: rgb(190, 190, 205); padding-left: 12px; padding-right: 12px; }"
+        )
+        self._view_mode_label = view_mode_label
+        menu_bar.setCornerWidget(view_mode_label, Qt.TopRightCorner)
+
         action_open_chart = QAction("Open Historical Chart", self)
         action_open_chart.triggered.connect(self._on_open_chart_placeholder)
         self._action_placeholder_open_chart = action_open_chart
@@ -592,8 +628,8 @@ class HistoricalDataManagerWindow(QMainWindow):
     def _build_central_widget(self) -> None:
         root = QWidget(self)
         layout = QVBoxLayout(root)
-        layout.setContentsMargins(16, 16, 16, 16)
-        layout.setSpacing(12)
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(2)
 
         workspace_widget = HistoricalWorkspaceWidget(
             core_bridge=self._core,
@@ -601,10 +637,45 @@ class HistoricalDataManagerWindow(QMainWindow):
             parent=root,
         )
         self._workspace_widget = workspace_widget
+        workspace_widget.visualization_mode_changed.connect(self._on_workspace_view_mode_changed)
 
         layout.addWidget(workspace_widget, 1)
 
         self.setCentralWidget(root)
+        self._sync_view_mode_controls()
+
+    def _set_workspace_visualization_mode(self, mode: str) -> None:
+        if self._workspace_widget is None:
+            self._set_status("Historical workspace not ready")
+            self._sync_view_mode_controls()
+            return
+        self._workspace_widget.set_visualization_mode(mode)
+
+    def _on_workspace_view_mode_changed(self, _mode: str) -> None:
+        self._sync_view_mode_controls()
+
+    def _sync_view_mode_controls(self) -> None:
+        workspace = self._workspace_widget
+        mode = (
+            workspace.visualization_mode()
+            if workspace is not None
+            else HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4
+        )
+
+        if self._action_view_mode_scroll_4 is not None:
+            self._action_view_mode_scroll_4.blockSignals(True)
+            self._action_view_mode_scroll_4.setChecked(mode == HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4)
+            self._action_view_mode_scroll_4.blockSignals(False)
+
+        if self._action_view_mode_fit_8 is not None:
+            self._action_view_mode_fit_8.blockSignals(True)
+            self._action_view_mode_fit_8.setChecked(mode == HistoricalWorkspaceWidget.VIEW_MODE_FIT_8)
+            self._action_view_mode_fit_8.blockSignals(False)
+
+        if self._view_mode_label is not None:
+            self._view_mode_label.setText(
+                f"View: {HistoricalWorkspaceWidget.visualization_mode_label(mode)}"
+            )
 
     def _on_new_chart(self) -> None:
         if self._workspace_widget is None:

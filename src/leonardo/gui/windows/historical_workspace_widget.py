@@ -2,15 +2,13 @@ from __future__ import annotations
 
 from typing import Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget,
     QVBoxLayout,
-    QHBoxLayout,
     QGridLayout,
     QLabel,
     QMessageBox,
-    QComboBox,
     QScrollArea,
 )
 
@@ -36,6 +34,8 @@ class HistoricalWorkspaceWidget(QWidget):
     VIEW_MODE_SCROLL_4 = "scroll_4"
     VIEW_MODE_FIT_8 = "fit_8"
 
+    visualization_mode_changed = Signal(str)
+
     def __init__(
         self,
         *,
@@ -49,7 +49,6 @@ class HistoricalWorkspaceWidget(QWidget):
         self._chart_slots: List[Optional[HistoricalChartPanel]] = [None] * self.MAX_CHARTS
         self._detached_slots: Dict[HistoricalChartPanel, int] = {}
         self._visualization_mode = self.VIEW_MODE_SCROLL_4
-        self._view_mode_combo: Optional[QComboBox] = None
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -71,25 +70,11 @@ class HistoricalWorkspaceWidget(QWidget):
             """
         )
 
-        mode_layout = QHBoxLayout()
-        mode_layout.setContentsMargins(0, 0, 0, 6)
-
-        mode_label = QLabel("View Mode", self)
-        view_mode_combo = QComboBox(self)
-        view_mode_combo.addItem("Scroll 4", self.VIEW_MODE_SCROLL_4)
-        view_mode_combo.addItem("Fit 8", self.VIEW_MODE_FIT_8)
-        view_mode_combo.currentIndexChanged.connect(self._on_view_mode_changed)
-        self._view_mode_combo = view_mode_combo
-
-        mode_layout.addWidget(mode_label)
-        mode_layout.addWidget(view_mode_combo)
-        mode_layout.addStretch(1)
-
         self._grid_host = QWidget(self)
         self._grid = QGridLayout(self._grid_host)
         self._grid.setContentsMargins(0, 0, 0, 0)
-        self._grid.setHorizontalSpacing(8)
-        self._grid.setVerticalSpacing(8)
+        self._grid.setHorizontalSpacing(2)
+        self._grid.setVerticalSpacing(2)
 
         self._scroll_area = QScrollArea(self)
         self._scroll_area.setWidgetResizable(True)
@@ -97,7 +82,6 @@ class HistoricalWorkspaceWidget(QWidget):
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll_area.setWidget(self._grid_host)
 
-        root.addLayout(mode_layout)
         root.addWidget(self._empty_state, 1)
         root.addWidget(self._scroll_area, 1)
 
@@ -110,21 +94,23 @@ class HistoricalWorkspaceWidget(QWidget):
     def visualization_mode(self) -> str:
         return self._visualization_mode
 
+    @classmethod
+    def visualization_mode_label(cls, mode: str) -> str:
+        if mode == cls.VIEW_MODE_FIT_8:
+            return "Fit 8"
+        return "Scroll 4"
+
     def set_visualization_mode(self, mode: str) -> None:
         if mode not in {self.VIEW_MODE_SCROLL_4, self.VIEW_MODE_FIT_8}:
             raise ValueError(f"Unsupported historical workspace visualization mode: {mode!r}")
 
+        changed = self._visualization_mode != mode
         self._visualization_mode = mode
-        if self._view_mode_combo is not None and self._view_mode_combo.currentData() != mode:
-            for index in range(self._view_mode_combo.count()):
-                if self._view_mode_combo.itemData(index) == mode:
-                    self._view_mode_combo.blockSignals(True)
-                    self._view_mode_combo.setCurrentIndex(index)
-                    self._view_mode_combo.blockSignals(False)
-                    break
 
         self._update_visualization_mode_geometry()
         self._relayout()
+        if changed:
+            self.visualization_mode_changed.emit(mode)
 
     def can_add_chart(self) -> bool:
         return self._first_available_slot_index() is not None
@@ -349,13 +335,6 @@ class HistoricalWorkspaceWidget(QWidget):
         for index, panel in enumerate(self._chart_slots):
             if panel is not None:
                 self._sync_panel_position(panel, index)
-
-    def _on_view_mode_changed(self) -> None:
-        if self._view_mode_combo is None:
-            return
-        mode = self._view_mode_combo.currentData()
-        if isinstance(mode, str):
-            self.set_visualization_mode(mode)
 
     def _update_visualization_mode_geometry(self) -> None:
         if self._visualization_mode == self.VIEW_MODE_SCROLL_4:

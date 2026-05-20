@@ -63,9 +63,9 @@ class ChartRenderSurface(
         self._crosshair.changed.connect(self.update)
         self._crosshair.cleared.connect(self.update)
 
-        self._pad_left = 8
-        self._pad_top = 8
-        self._pad_right = 64
+        self._pad_left = 2
+        self._pad_top = 4
+        self._pad_right = 56
         self._pad_bottom = 18
 
         self._grid_h = 8

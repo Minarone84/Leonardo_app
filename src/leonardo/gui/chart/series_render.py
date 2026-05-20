@@ -63,10 +63,10 @@ class VolumeRenderSurface(
         self._crosshair.changed.connect(self.update)
         self._crosshair.cleared.connect(self.update)
 
-        self._pad_left = 8
-        self._pad_top = 6
-        self._pad_right = 64
-        self._pad_bottom = 14
+        self._pad_left = 2
+        self._pad_top = 4
+        self._pad_right = 56
+        self._pad_bottom = 6
 
 
     def _bump_static_version(self) -> None:
@@ -154,10 +154,10 @@ class OscillatorRenderSurface(
         self._crosshair.changed.connect(self.update)
         self._crosshair.cleared.connect(self.update)
 
-        self._pad_left = 8
-        self._pad_top = 6
-        self._pad_right = 64
-        self._pad_bottom = 14
+        self._pad_left = 2
+        self._pad_top = 4
+        self._pad_right = 56
+        self._pad_bottom = 6
 
         # ------------------------------------------------------------------
         # Static render caching

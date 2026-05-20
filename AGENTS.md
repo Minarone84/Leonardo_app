@@ -171,6 +171,17 @@ After any approved outside-sandbox validation command, Codex must report:
 - Whether files changed
 - Whether Git status changed
 
+When running validation commands outside the sandbox, Codex should prefer this pattern:
+
+    git status --short
+    <approved validation command>
+    git status --short
+
+The first status check records the pre-validation state.
+The second status check confirms whether validation created, modified, or removed files.
+
+`git status --short` is read-only and does not modify repository state.
+
 # 2. Surgical Change Rule
 
 Every code change must be surgical.

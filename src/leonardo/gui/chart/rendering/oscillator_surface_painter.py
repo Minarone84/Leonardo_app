@@ -83,6 +83,76 @@ class OscillatorSurfacePaintMixin:
             p.setBrush(QBrush(fill_color))
             p.drawRect(rect)
 
+    def _threshold_line_segment_points(
+        self,
+        *,
+        series: Series,
+        x1: float,
+        y1: float,
+        v1: float,
+        x2: float,
+        y2: float,
+        v2: float,
+        y_to_px,
+    ) -> list[tuple[tuple[float, float, float], tuple[float, float, float]]]:
+        threshold_values = self._threshold_values_for_series(series)
+        if threshold_values is None or v1 == v2:
+            return [((x1, y1, v1), (x2, y2, v2))]
+
+        crossings: list[tuple[float, float]] = []
+        segment_min = min(v1, v2)
+        segment_max = max(v1, v2)
+        for threshold in threshold_values:
+            if segment_min < threshold < segment_max:
+                ratio = (threshold - v1) / (v2 - v1)
+                crossings.append((ratio, threshold))
+
+        if not crossings:
+            return [((x1, y1, v1), (x2, y2, v2))]
+
+        points: list[tuple[float, float, float]] = [(x1, y1, v1)]
+        for ratio, threshold in sorted(crossings, key=lambda item: item[0]):
+            cross_x = x1 + ratio * (x2 - x1)
+            points.append((cross_x, y_to_px(threshold), threshold))
+        points.append((x2, y2, v2))
+
+        return list(zip(points, points[1:]))
+
+    def _draw_threshold_aware_line_segment(
+        self,
+        p: QPainter,
+        *,
+        series: Series,
+        x1: float,
+        y1: float,
+        v1: float,
+        x2: float,
+        y2: float,
+        v2: float,
+        y_to_px,
+    ) -> None:
+        for start_point, end_point in self._threshold_line_segment_points(
+            series=series,
+            x1=x1,
+            y1=y1,
+            v1=v1,
+            x2=x2,
+            y2=y2,
+            v2=v2,
+            y_to_px=y_to_px,
+        ):
+            start_x, start_y, start_value = start_point
+            end_x, end_y, end_value = end_point
+            midpoint_value = (start_value + end_value) / 2.0
+            path = QPainterPath()
+            path.moveTo(start_x, start_y)
+            path.lineTo(end_x, end_y)
+            self._draw_line_path(
+                p,
+                path,
+                self._pen_for_series_value(series, midpoint_value),
+            )
+
     # ------------------------------------------------------------------
     # Static cache helpers
     # ------------------------------------------------------------------
@@ -292,6 +362,50 @@ class OscillatorSurfacePaintMixin:
                     dx=dx,
                     y_to_px=y_to_px,
                 )
+                continue
+
+            if self._threshold_values_for_series(series) is not None:
+                prev_x: Optional[float] = None
+                prev_y: Optional[float] = None
+                prev_value: Optional[float] = None
+
+                valid_points = 0
+                last_point: Optional[tuple[float, float, float]] = None
+
+                for i, global_index in enumerate(range(start, end)):
+                    v = self._value_at_global_for_values(global_index, values)
+                    if v is None:
+                        prev_x = None
+                        prev_y = None
+                        prev_value = None
+                        continue
+
+                    x = x_positions[i]
+                    y = y_to_px(v)
+                    valid_points += 1
+                    last_point = (x, y, v)
+
+                    if prev_x is not None and prev_y is not None and prev_value is not None:
+                        self._draw_threshold_aware_line_segment(
+                            p,
+                            series=series,
+                            x1=prev_x,
+                            y1=prev_y,
+                            v1=prev_value,
+                            x2=x,
+                            y2=y,
+                            v2=v,
+                            y_to_px=y_to_px,
+                        )
+
+                    prev_x, prev_y, prev_value = x, y, v
+
+                if valid_points == 1 and last_point is not None:
+                    point_x, point_y, point_value = last_point
+                    p.setPen(self._pen_for_series_value(series, point_value))
+                    p.setBrush(QBrush(Qt.NoBrush))
+                    p.drawEllipse(QRectF(point_x - 2.0, point_y - 2.0, 4.0, 4.0))
+
                 continue
 
             prev_x: Optional[float] = None

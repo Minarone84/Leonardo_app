@@ -128,6 +128,34 @@ DEFAULT_BOUNDED_OSCILLATOR_VISUAL_SPEC = OscillatorVisualSpec(
     ),
 )
 
+ARSI_BOUNDED_OSCILLATOR_VISUAL_SPEC = OscillatorVisualSpec(
+    range_mode="fixed_bounds",
+    bounds=(0.0, 100.0),
+    guide_levels=(
+        OscillatorGuideLevelSpec(
+            kind="overbought",
+            value=80.0,
+            visible=True,
+            label="Overbought",
+            description="Default overbought guide level for ARSI.",
+        ),
+        OscillatorGuideLevelSpec(
+            kind="center",
+            value=50.0,
+            visible=True,
+            label="Center",
+            description="Default center guide level for ARSI.",
+        ),
+        OscillatorGuideLevelSpec(
+            kind="oversold",
+            value=20.0,
+            visible=True,
+            label="Oversold",
+            description="Default oversold guide level for ARSI.",
+        ),
+    ),
+)
+
 DEFAULT_ZERO_CENTERED_OSCILLATOR_VISUAL_SPEC = OscillatorVisualSpec(
     range_mode="auto",
     bounds=None,

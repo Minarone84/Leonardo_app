@@ -274,14 +274,16 @@ OSCILLATOR_SPECS: Dict[str, ToolSpec] = {
         title="ARSI",
         kind="oscillator",
         data_inputs=(CLOSE_INPUT,),
-        params=(PERIOD_PARAM, BOOST_BREAKOUTS_PARAM),
-        output_names=("arsi_{period}",),
-        description="Augmented RSI with optional breakout boosting.",
+        params=(PERIOD_PARAM, ARSI_METHOD_PARAM, ARSI_SIGNAL_PERIOD_PARAM, ARSI_SIGNAL_METHOD_PARAM),
+        output_names=("arsi_{period}_{method}", "arsi_signal_{period}_{method}_{signal_period}_{signal_method}"),
+        description="Ultimate RSI-style ARSI with configurable main and signal smoothing.",
         behavior=DEFAULT_OSCILLATOR_BEHAVIOR,
-        output=DEFAULT_LINE_OUTPUT(("arsi_{period}",)),
+        output=DEFAULT_MULTI_LINE_OUTPUT(
+            ("arsi_{period}_{method}", "arsi_signal_{period}_{method}_{signal_period}_{signal_method}")
+        ),
         output_name_resolver=_resolve_arsi_output_names,
         output_signal_resolver=_resolve_arsi_output_signals,
-        oscillator_visual=DEFAULT_BOUNDED_OSCILLATOR_VISUAL_SPEC,
+        oscillator_visual=ARSI_BOUNDED_OSCILLATOR_VISUAL_SPEC,
     ),
     "tdirsi": ToolSpec(
         key="tdirsi",

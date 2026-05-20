@@ -137,32 +137,48 @@ class OscillatorPolicyPainterMixin:
             return series is self._primary_series()
         return self._line_key_from_series_key(series.key) == normalized_target
 
-    def _pen_for_series_value(self, series: Series, value: float) -> QPen:
+    def _threshold_values_for_series(self, series: Series) -> Optional[tuple[float, float]]:
         threshold_policy = self._threshold_line_color_policy()
         if threshold_policy is None:
-            return self._pen_for_series(series)
+            return None
 
         target_signal = str(threshold_policy.get("target_signal", "") or "").strip().lower()
         if not self._series_matches_threshold_target(series, target_signal):
-            return self._pen_for_series(series)
+            return None
 
         try:
             lower_value = float(threshold_policy.get("lower_value"))
             upper_value = float(threshold_policy.get("upper_value"))
         except Exception:
-            return self._pen_for_series(series)
+            return None
 
-        if lower_value != lower_value or upper_value != upper_value or upper_value <= lower_value:
-            return self._pen_for_series(series)
+        if not math.isfinite(lower_value) or not math.isfinite(upper_value) or upper_value <= lower_value:
+            return None
 
+        return (lower_value, upper_value)
+
+    def _pen_for_series_value(self, series: Series, value: float) -> QPen:
         base_pen = self._pen_for_series(series)
+        threshold_values = self._threshold_values_for_series(series)
+        if threshold_values is None:
+            return base_pen
 
-        if value <= lower_value:
+        try:
+            numeric_value = float(value)
+        except Exception:
+            return base_pen
+        if not math.isfinite(numeric_value):
+            return base_pen
+
+        lower_value, upper_value = threshold_values
+        if numeric_value <= lower_value:
+            threshold_policy = self._threshold_line_color_policy() or {}
             color_text = str(threshold_policy.get("oversold_color", "") or "").strip()
-        elif value >= upper_value:
+        elif numeric_value >= upper_value:
+            threshold_policy = self._threshold_line_color_policy() or {}
             color_text = str(threshold_policy.get("overbought_color", "") or "").strip()
         else:
-            color_text = str(threshold_policy.get("neutral_color", "") or "").strip()
+            return base_pen
 
         color = QColor(color_text) if color_text else base_pen.color()
         if not color.isValid():

@@ -19,6 +19,27 @@ VOLUME = DataInputContract("volume", "float", label="Volume")
 OSC = BehaviorContract("oscillator-pane", chart_renderable=True, supports_style=True, supports_pane_layout=True)
 PERIOD = ParamContract("period", "int", default=14, minimum=1, label="Period")
 VOLUME_MEAN_PERIOD = ParamContract("period", "int", default=20, minimum=1, label="Mean Period")
+ARSI_METHOD = ParamContract(
+    "method",
+    "str",
+    default="RMA",
+    label="Method",
+    choices=("EMA", "SMA", "RMA", "TMA"),
+)
+ARSI_SIGNAL_PERIOD = ParamContract(
+    "signal_period",
+    "int",
+    default=14,
+    minimum=1,
+    label="Signal Period",
+)
+ARSI_SIGNAL_METHOD = ParamContract(
+    "signal_method",
+    "str",
+    default="EMA",
+    label="Signal Method",
+    choices=("EMA", "SMA", "RMA", "TMA"),
+)
 BOUNDED = OscillatorVisualContract(
     range_mode="fixed_bounds",
     bounds=(0.0, 100.0),
@@ -26,6 +47,15 @@ BOUNDED = OscillatorVisualContract(
         OscillatorGuideLevelContract("overbought", 70.0, label="Overbought"),
         OscillatorGuideLevelContract("center", 50.0, label="Center"),
         OscillatorGuideLevelContract("oversold", 30.0, label="Oversold"),
+    ),
+)
+ARSI_BOUNDED = OscillatorVisualContract(
+    range_mode="fixed_bounds",
+    bounds=(0.0, 100.0),
+    guide_levels=(
+        OscillatorGuideLevelContract("overbought", 80.0, label="Overbought"),
+        OscillatorGuideLevelContract("center", 50.0, label="Center"),
+        OscillatorGuideLevelContract("oversold", 20.0, label="Oversold"),
     ),
 )
 ZERO_CENTERED = OscillatorVisualContract(
@@ -66,11 +96,18 @@ OSCILLATOR_CONTRACTS: dict[str, ToolContract] = {
         key="arsi",
         title="ARSI",
         data_inputs=(CLOSE,),
-        params=(PERIOD, ParamContract("boost_breakouts", "bool", required=False, default=True)),
+        params=(PERIOD, ARSI_METHOD, ARSI_SIGNAL_PERIOD, ARSI_SIGNAL_METHOD),
         behavior=OSC,
-        output=line("oscillator:arsi"),
-        oscillator_visual=BOUNDED,
-        description="Augmented RSI with optional breakout boosting.",
+        output=OutputContract(
+            structure="multi-line-series",
+            naming_resolver="oscillator:arsi",
+            signals=(
+                OutputSignalContract(label="ARSI", semantic_role="primary"),
+                OutputSignalContract(label="ARSI Signal", semantic_role="signal"),
+            ),
+        ),
+        oscillator_visual=ARSI_BOUNDED,
+        description="Ultimate RSI-style ARSI with configurable main and signal smoothing.",
     ),
     "tdirsi": ToolContract(
         family="oscillator",

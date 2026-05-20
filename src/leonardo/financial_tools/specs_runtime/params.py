@@ -261,6 +261,36 @@ BOOST_BREAKOUTS_PARAM = ParamSpec(
     description="Boost fresh Donchian highs/lows in ARSI.",
 )
 
+ARSI_METHOD_PARAM = ParamSpec(
+    name="method",
+    dtype="str",
+    required=True,
+    default="RMA",
+    label="Method",
+    description="Smoothing method used for the primary ARSI numerator and denominator.",
+    choices=("EMA", "SMA", "RMA", "TMA"),
+)
+
+ARSI_SIGNAL_PERIOD_PARAM = ParamSpec(
+    name="signal_period",
+    dtype="int",
+    required=True,
+    default=14,
+    label="Signal Period",
+    description="Moving-average period for the ARSI signal line.",
+    minimum=1,
+)
+
+ARSI_SIGNAL_METHOD_PARAM = ParamSpec(
+    name="signal_method",
+    dtype="str",
+    required=True,
+    default="EMA",
+    label="Signal Method",
+    description="Smoothing method used for the ARSI signal line.",
+    choices=("EMA", "SMA", "RMA", "TMA"),
+)
+
 BAND_LENGTH_PARAM = ParamSpec(
     name="band_length",
     dtype="int",

@@ -88,7 +88,7 @@ class StudyStyleDialog(QDialog):
             QLabel {
                 color: rgb(210, 210, 220);
             }
-            QComboBox, QLineEdit, QSpinBox, QDoubleSpinBox {
+            QComboBox, QLineEdit {
                 background-color: rgb(30, 30, 36);
                 color: rgb(230, 230, 240);
                 border: 1px solid rgb(68, 68, 78);
@@ -446,8 +446,9 @@ class StudyStyleDialog(QDialog):
         width_spin = QSpinBox(parent)
         width_spin.setRange(1, 8)
         width_spin.setSingleStep(1)
+        width_spin.setMinimumWidth(72)
         width_spin.setValue(max(1, min(8, int(line_width))))
-
+        
         line_style_combo = QComboBox(parent)
         line_style_combo.addItem("Solid", "solid")
         line_style_combo.addItem("Dotted", "dotted")

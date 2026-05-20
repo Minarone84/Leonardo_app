@@ -280,6 +280,18 @@ ARSI_DEFAULTS = StudyStyleDefaults(
             line_style="solid",
             visible=True,
         ),
+        "signal": SignalStyleDefaults(
+            color="#FF5D00",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+        "arsi_signal": SignalStyleDefaults(
+            color="#FF5D00",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
     },
 )
 
@@ -536,21 +548,70 @@ def _signal_style_defaults_for(
     defaults: StudyStyleDefaults,
     signal_name: str,
 ) -> Optional[SignalStyleDefaults]:
-    """Resolve signal defaults, including period-dependent Volume mean outputs."""
+    """Resolve signal defaults for canonical and parameterized emitted names."""
     normalized_signal = str(signal_name).strip()
     signal_defaults = defaults.signal_defaults.get(normalized_signal)
     if signal_defaults is not None:
         return signal_defaults
 
-    if (
-        str(defaults.study_key).strip().lower() == "volume"
-        and normalized_signal.startswith("volume_mean_")
-    ):
-        signal_defaults = defaults.signal_defaults.get("volume_mean")
-        if signal_defaults is not None:
-            return signal_defaults
+    study_key = str(defaults.study_key).strip().lower()
+
+    def first_available(*keys: str) -> Optional[SignalStyleDefaults]:
+        for key in keys:
+            candidate = defaults.signal_defaults.get(key)
+            if candidate is not None:
+                return candidate
+        return None
+
+    if study_key == "rsi" and normalized_signal.startswith("rsi_"):
+        return first_available("rsi", "__primary__")
+
+    if study_key == "arsi":
+        if normalized_signal.startswith("arsi_signal_"):
+            return first_available("signal", "arsi_signal", "__primary__")
+        if normalized_signal.startswith("arsi_"):
+            return first_available("arsi", "__primary__")
+
+    if study_key == "mfi" and normalized_signal.startswith("mfi_"):
+        return first_available("mfi", "__primary__")
+
+    if study_key == "smi":
+        if normalized_signal.startswith("smi_signal_"):
+            return first_available("signal", "sig", "__primary__")
+        if normalized_signal.startswith("smi_"):
+            return first_available("smi", "__primary__")
+
+    if study_key in {"tdi", "tdirsi"}:
+        if normalized_signal.startswith("tdirsi_fast_ma_"):
+            return first_available("price_line", "pl")
+        if normalized_signal.startswith("tdirsi_slow_ma_"):
+            return first_available("trade_signal_line", "tsl", "signal")
+        if normalized_signal.startswith("tdirsi_up_"):
+            return first_available("upper_band", "ub")
+        if normalized_signal.startswith("tdirsi_dn_"):
+            return first_available("lower_band", "lb")
+        if normalized_signal.startswith("tdirsi_mid_"):
+            return first_available("market_base_line", "mbl")
+
+    if study_key == "volume" and normalized_signal.startswith("volume_mean_"):
+        return first_available("volume_mean")
 
     return defaults.signal_defaults.get("__primary__")
+
+
+def get_signal_style_defaults(
+    *,
+    study_key: str,
+    signal_name: str,
+) -> Optional[SignalStyleDefaults]:
+    """Resolve chart-local style defaults for one emitted study signal."""
+    normalized_study_key = str(study_key).strip().lower()
+    defaults_key = "tdi" if normalized_study_key == "tdirsi" else normalized_study_key
+    defaults = get_study_style_defaults(defaults_key)
+    return _signal_style_defaults_for(
+        defaults=defaults,
+        signal_name=signal_name,
+    )
 
 def build_default_series_style(
     *,
@@ -565,9 +626,8 @@ def build_default_series_style(
     2. "__primary__" fallback for single-line studies
     3. generic SeriesStyle()
     """
-    defaults = get_study_style_defaults(study_key)
-    signal_defaults = _signal_style_defaults_for(
-        defaults=defaults,
+    signal_defaults = get_signal_style_defaults(
+        study_key=study_key,
         signal_name=signal_name,
     )
 

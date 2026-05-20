@@ -179,4 +179,7 @@ def apply_smoother(x: pd.Series, n: int, mode: str) -> pd.Series:
         return rma_wilder(x, n)
     if mode == "SMA":
         return x.rolling(window=n, min_periods=n).mean()
+    if mode == "TMA":
+        first = x.rolling(window=n, min_periods=n).mean()
+        return first.rolling(window=n, min_periods=n).mean()
     raise ValueError(f"Unsupported smoothing type: {mode}")

@@ -149,9 +149,7 @@ class Oscillators:
     @staticmethod
     def arsi(data_dict):
         """
-        Compute **ARSI (Augmented RSI)** using a single RMA smoother on signed
-        and absolute deltas, with optional **breakout boost** on fresh Donchian
-        highs/lows over `period`.
+        Compute ARSI using Ultimate RSI-style smoothing.
 
         Legacy API preserved.
         """
@@ -160,7 +158,9 @@ class Oscillators:
             dcd_df=data_dict["dcd"],
             params={
                 "period": data_dict["period"],
-                "boost_breakouts": data_dict.get("boost_breakouts", True),
+                "method": data_dict.get("method", "RMA"),
+                "signal_period": data_dict.get("signal_period", 14),
+                "signal_method": data_dict.get("signal_method", "EMA"),
             },
         )
 

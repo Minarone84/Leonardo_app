@@ -24,6 +24,21 @@ def build_arsi_signal_name(period: Any) -> str:
     return build_oscillator_signal_name("arsi", period)
 
 
+def build_arsi_signal_names(
+    period: Any,
+    method: Any,
+    signal_period: Any,
+    signal_method: Any,
+) -> tuple[str, str]:
+    """
+    Canonical Ultimate RSI-style ARSI output names.
+    """
+    return (
+        build_oscillator_signal_name("arsi", period, method),
+        build_oscillator_signal_name("arsi_signal", period, method, signal_period, signal_method),
+    )
+
+
 def build_tdirsi_signal_names(
     period: Any,
     band_length: Any,
@@ -85,7 +100,12 @@ def get_oscillator_signal_names(oscillator_key: str, **params: Any) -> tuple[str
         return (build_rsi_signal_name(params["period"]),)
 
     if key == "arsi":
-        return (build_arsi_signal_name(params["period"]),)
+        return build_arsi_signal_names(
+            params.get("period", 14),
+            params.get("method", "RMA"),
+            params.get("signal_period", 14),
+            params.get("signal_method", "EMA"),
+        )
 
     if key == "tdirsi":
         return build_tdirsi_signal_names(

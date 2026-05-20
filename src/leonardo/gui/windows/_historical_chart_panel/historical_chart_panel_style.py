@@ -10,6 +10,7 @@ from leonardo.gui.chart.panes.contracts import PaneBackgroundRegion
 from leonardo.gui.chart.study_style_defaults import (
     build_default_background_region_styles,
     build_default_overlay_fills,
+    get_signal_style_defaults,
     get_study_style_defaults,
 )
 from leonardo.gui.chart.study_style_resolver import resolve_study_render_state
@@ -219,22 +220,10 @@ class HistoricalChartPanelStyleMixin:
         if not resolved_defaults_study_key or not resolved_line_key:
             return None
 
-        try:
-            defaults = get_study_style_defaults(resolved_defaults_study_key)
-        except Exception:
-            return None
-
-        signal_defaults = defaults.signal_defaults.get(resolved_line_key)
-        if (
-            signal_defaults is None
-            and self._is_volume_mean_line_key(
-                defaults_study_key=resolved_defaults_study_key,
-                line_key=resolved_line_key,
-            )
-        ):
-            signal_defaults = defaults.signal_defaults.get("volume_mean")
-        if signal_defaults is None:
-            signal_defaults = defaults.signal_defaults.get("__primary__")
+        signal_defaults = get_signal_style_defaults(
+            study_key=resolved_defaults_study_key,
+            signal_name=resolved_line_key,
+        )
         if signal_defaults is None:
             return None
 

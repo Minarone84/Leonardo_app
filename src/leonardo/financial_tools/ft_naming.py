@@ -45,6 +45,7 @@ from .naming_runtime.oscillators import (
     build_oscillator_signal_name,
     build_rsi_signal_name,
     build_arsi_signal_name,
+    build_arsi_signal_names,
     build_tdirsi_signal_names,
     build_smi_signal_names,
     build_mfi_signal_name,

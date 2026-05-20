@@ -111,6 +111,32 @@ class HistoricalChartPanelOscillatorPolicyMixin:
             "overbought_color": "#EF4444",
         }
 
+    def _line_key_from_oscillator_render_key(self, render_key: str) -> str:
+        text = str(render_key).strip()
+        if not text:
+            return ""
+        return text.rsplit("|", 1)[-1].strip()
+
+    def _tdirsi_band_fill_signal_names_for_study(
+        self,
+        study: ChartStudyInstance,
+    ) -> Optional[tuple[str, str]]:
+        upper_signal = ""
+        lower_signal = ""
+
+        for render_key in getattr(study.runtime, "render_keys", []) or []:
+            line_key = self._line_key_from_oscillator_render_key(str(render_key))
+            if not line_key:
+                continue
+            if not upper_signal and line_key.startswith("tdirsi_up_"):
+                upper_signal = line_key
+            elif not lower_signal and line_key.startswith("tdirsi_dn_"):
+                lower_signal = line_key
+
+        if upper_signal and lower_signal:
+            return (upper_signal, lower_signal)
+        return None
+
     def _default_oscillator_visual_policy_for_study(
         self,
         study: ChartStudyInstance,
@@ -167,9 +193,11 @@ class HistoricalChartPanelOscillatorPolicyMixin:
         if tool_key == "tdirsi":
             defaults = get_study_style_defaults("tdi")
             fill_defaults = list(getattr(defaults, "fill_defaults", []) or [])
+            band_signal_names = self._tdirsi_band_fill_signal_names_for_study(study)
 
-            if fill_defaults:
+            if fill_defaults and band_signal_names is not None:
                 policy.setdefault("fills", [])
+                series_a, series_b = band_signal_names
 
                 for fill_def in fill_defaults:
                     fill_key = str(getattr(fill_def, "fill_key", "")).strip().lower()
@@ -180,9 +208,6 @@ class HistoricalChartPanelOscillatorPolicyMixin:
                     signal_b_role = str(getattr(fill_def, "signal_b_role", "")).strip()
                     if not signal_a_role or not signal_b_role:
                         continue
-
-                    series_a = f"tdirsi_{signal_a_role}"
-                    series_b = f"tdirsi_{signal_b_role}"
 
                     if any(
                         existing_fill.get("series_a") == series_a
@@ -227,4 +252,3 @@ class HistoricalChartPanelOscillatorPolicyMixin:
                     f"Oscillator visual policy apply failed for "
                     f"'{study.display_name}': {e!r}"
                 )
-

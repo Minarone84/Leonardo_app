@@ -8,7 +8,7 @@ from leonardo.financial_tools.ft_naming import (
     PEAKS_TROUGHS_FRACTAL_LENGTHS,
     STRATEGY_EMA_SLOT_COUNT,
     STRATEGY_SMA_SLOT_COUNT,
-    build_arsi_signal_name,
+    build_arsi_signal_names,
     build_bb_signal_names,
     build_ema_signal_name,
     build_hck_signal_names,
@@ -486,7 +486,12 @@ def _resolve_rsi_output_names(params: Mapping[str, Any]) -> tuple[str, ...]:
 
 
 def _resolve_arsi_output_names(params: Mapping[str, Any]) -> tuple[str, ...]:
-    return (build_arsi_signal_name(params["period"]),)
+    return build_arsi_signal_names(
+        params.get("period", 14),
+        params.get("method", "RMA"),
+        params.get("signal_period", 14),
+        params.get("signal_method", "EMA"),
+    )
 
 
 def _resolve_tdirsi_output_names(params: Mapping[str, Any]) -> tuple[str, ...]:
@@ -534,15 +539,30 @@ def _resolve_rsi_output_signals(params: Mapping[str, Any]) -> tuple[OutputSignal
 
 
 def _resolve_arsi_output_signals(params: Mapping[str, Any]) -> tuple[OutputSignalSpec, ...]:
-    name = build_arsi_signal_name(params["period"])
+    arsi_name, signal_name = build_arsi_signal_names(
+        params.get("period", 14),
+        params.get("method", "RMA"),
+        params.get("signal_period", 14),
+        params.get("signal_method", "EMA"),
+    )
     return (
         OutputSignalSpec(
-            name=name,
+            name=arsi_name,
             signal_type="signal",
             renderable=True,
             analysis_usable=True,
             label="ARSI",
-            description="Primary augmented RSI line.",
+            description="Primary Ultimate RSI-style ARSI line.",
+            semantic_role="primary",
+        ),
+        OutputSignalSpec(
+            name=signal_name,
+            signal_type="signal",
+            renderable=True,
+            analysis_usable=True,
+            label="ARSI Signal",
+            description="Moving average signal line of ARSI.",
+            semantic_role="signal",
         ),
     )
 
@@ -865,5 +885,4 @@ def _resolve_angle_momentum_output_signals(params: Mapping[str, Any]) -> tuple[O
         )
         for name in names
     )
-
 

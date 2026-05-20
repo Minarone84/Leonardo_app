@@ -11,18 +11,18 @@ class _PaneOverlay(QWidget):
         super().__init__(parent)
 
         self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(8, 8, 8, 8)
-        self._layout.setSpacing(4)
+        self._layout.setContentsMargins(4, 4, 4, 4)
+        self._layout.setSpacing(2)
 
         self.setStyleSheet(
-            "QWidget { background: rgba(0, 0, 0, 90); border-radius: 6px; }"
+            "QWidget { background: rgba(0, 0, 0, 90); border-radius: 4px; }"
             "QLabel { color: white; }"
             "QToolButton {"
             "  color: white;"
             "  background: rgba(255, 255, 255, 22);"
             "  border: 1px solid rgba(255, 255, 255, 40);"
-            "  border-radius: 4px;"
-            "  padding: 2px 6px;"
+            "  border-radius: 3px;"
+            "  padding: 1px 3px;"
             "}"
             "QToolButton:hover {"
             "  background: rgba(255, 255, 255, 36);"

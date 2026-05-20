@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from bisect import bisect_left
 from dataclasses import dataclass, field
 from typing import Any, Dict, Optional
 
@@ -148,6 +149,23 @@ class ChartDataSession:
 
     def ts_ms_to_global_index(self, ts_ms: int) -> Optional[int]:
         return self.timeline_index_by_ts_ms.get(int(ts_ms))
+
+    def nearest_global_index_for_ts_ms(self, ts_ms: int) -> Optional[int]:
+        if not self.timeline_ts_ms:
+            return None
+
+        target = int(ts_ms)
+        pos = bisect_left(self.timeline_ts_ms, target)
+        if pos <= 0:
+            return 0
+        if pos >= len(self.timeline_ts_ms):
+            return len(self.timeline_ts_ms) - 1
+
+        before = self.timeline_ts_ms[pos - 1]
+        after = self.timeline_ts_ms[pos]
+        if abs(target - before) <= abs(after - target):
+            return pos - 1
+        return pos
 
     def global_index_to_ts_ms(self, global_index: int) -> Optional[int]:
         idx = int(global_index)

@@ -260,6 +260,31 @@ class HistoricalChartController(
             )
         )
 
+    def center_view_on_timestamp_ms(self, ts_ms: int) -> bool:
+        if self._is_disposed:
+            return False
+
+        if self._dataset is None:
+            return False
+
+        if not self._session.timeline_ts_ms:
+            return False
+
+        index = self._session.nearest_global_index_for_ts_ms(int(ts_ms))
+        if index is None:
+            self.error.emit("Cannot center chart: the active dataset timeline is empty.")
+            return False
+
+        viewport = self._workspace.viewport
+        if hasattr(viewport, "center_on_index"):
+            viewport.center_on_index(index)  # type: ignore[attr-defined]
+            return True
+
+        visible = max(1, int(getattr(viewport, "visible", self.DEFAULT_VISIBLE_BARS)))
+        start = int(index) - (visible // 2)
+        viewport.set_window(start, start + visible)
+        return True
+
     def _on_dataset_opened(
         self,
         fut,

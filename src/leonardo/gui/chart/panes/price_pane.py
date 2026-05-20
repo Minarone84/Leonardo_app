@@ -9,6 +9,12 @@ from leonardo.common.market_types import Candle
 from leonardo.gui.chart.chart_render import ChartRenderSurface
 from leonardo.gui.chart.crosshair import Crosshair
 from leonardo.gui.chart.model import ChartModel, Series
+from leonardo.gui.chart.overlay_display_policy import (
+    OverlayStudyDisplayPolicy,
+    build_overlay_study_display_policy,
+    compact_signal_label,
+    line_key_from_render_key,
+)
 from leonardo.gui.chart.viewport import ChartViewport
 
 from .contracts import ManagedOverlayRowProjection, _shared_mutable_view_state
@@ -79,14 +85,15 @@ class PricePane(QWidget):
 
         self._study_rows_host = QWidget(self._overlay)
         self._study_rows_layout = QVBoxLayout(self._study_rows_host)
-        self._study_rows_layout.setContentsMargins(0, 4, 0, 0)
-        self._study_rows_layout.setSpacing(4)
+        self._study_rows_layout.setContentsMargins(0, 2, 0, 0)
+        self._study_rows_layout.setSpacing(2)
         self._overlay.layout_box.addWidget(self._study_rows_host)
 
         self._study_rows: dict[str, _StudyRow] = {}
         self._asset_label_text = "ASSET · TF"
         self._last_header_line1 = ""
         self._last_row_texts: dict[str, str] = {}
+        self._overlay_values_expanded_by_row_key: dict[str, bool] = {}
         self._overlay_layout_dirty = True
 
         layout = QVBoxLayout(self)
@@ -297,18 +304,28 @@ class PricePane(QWidget):
             local = len(candles) - 1
         return local
 
-    def _ensure_study_row(self, row_key: str) -> _StudyRow:
+    def _ensure_study_row(
+        self,
+        row_key: str,
+        *,
+        action_id: Optional[str] = None,
+        values_allowed: bool = True,
+        values_expanded: bool = False,
+    ) -> _StudyRow:
         row = self._study_rows.get(row_key)
-        if row is not None:
-            return row
+        if row is None:
+            row = _StudyRow(row_key, parent=self._study_rows_host)
+            row.style_requested.connect(self.study_style_requested)
+            row.edit_requested.connect(self.study_edit_requested)
+            row.remove_requested.connect(self.study_remove_requested)
+            row.value_toggled.connect(self._on_overlay_row_value_toggled)
+            self._study_rows_layout.addWidget(row)
+            self._study_rows[row_key] = row
+            self._overlay_layout_dirty = True
 
-        row = _StudyRow(row_key, parent=self._study_rows_host)
-        row.style_requested.connect(self.study_style_requested)
-        row.edit_requested.connect(self.study_edit_requested)
-        row.remove_requested.connect(self.study_remove_requested)
-        self._study_rows_layout.addWidget(row)
-        self._study_rows[row_key] = row
-        self._overlay_layout_dirty = True
+        row.set_action_id(action_id or row_key)
+        row.set_values_allowed(values_allowed)
+        row.set_values_expanded(values_expanded)
         return row
 
     def _clear_missing_study_rows(self, active_keys: set[str]) -> None:
@@ -316,11 +333,21 @@ class PricePane(QWidget):
         for key in to_remove:
             row = self._study_rows.pop(key, None)
             self._last_row_texts.pop(key, None)
+            self._overlay_values_expanded_by_row_key.pop(key, None)
             if row is not None:
                 self._study_rows_layout.removeWidget(row)
                 row.setParent(None)
                 row.deleteLater()
                 self._overlay_layout_dirty = True
+
+    def _on_overlay_row_value_toggled(self, row_key: str, expanded: bool) -> None:
+        resolved_key = str(row_key).strip()
+        if not resolved_key:
+            return
+        self._overlay_values_expanded_by_row_key[resolved_key] = bool(expanded)
+        self._last_row_texts.pop(resolved_key, None)
+        self._overlay_layout_dirty = True
+        self._update_overlay()
 
     def _format_value_text(self, raw: object) -> str:
         try:
@@ -364,6 +391,96 @@ class PricePane(QWidget):
             return bool(getattr(getattr(series, "style", None), "visible", True))
         except Exception:
             return True
+
+    def _overlay_policy(
+        self,
+        *,
+        title: str,
+        render_keys: List[str],
+    ) -> OverlayStudyDisplayPolicy:
+        return build_overlay_study_display_policy(
+            title=title,
+            render_keys=render_keys,
+        )
+
+    def _overlay_values_expanded(
+        self,
+        row_key: str,
+        policy: OverlayStudyDisplayPolicy,
+    ) -> bool:
+        if not policy.values_allowed:
+            self._overlay_values_expanded_by_row_key[row_key] = False
+            return False
+        if row_key not in self._overlay_values_expanded_by_row_key:
+            self._overlay_values_expanded_by_row_key[row_key] = bool(
+                policy.values_default_expanded
+            )
+        return bool(self._overlay_values_expanded_by_row_key.get(row_key, False))
+
+    def _visible_series_entries(
+        self,
+        render_keys: List[str],
+        overlay_series_by_key: Mapping[str, Series],
+    ) -> List[tuple[str, Series]]:
+        entries: List[tuple[str, Series]] = []
+        for render_key in render_keys:
+            series = overlay_series_by_key.get(render_key)
+            if series is None or not self._series_is_visible(series):
+                continue
+            entries.append((render_key, series))
+        return entries
+
+    def _overlay_row_text(
+        self,
+        policy: OverlayStudyDisplayPolicy,
+        *,
+        entries: List[tuple[str, Series]],
+        local_idx: int,
+        expanded: bool,
+    ) -> str:
+        row_text = policy.compact_label
+        if not policy.values_allowed or not expanded:
+            return row_text
+
+        fragments: List[str] = []
+        for render_key, series in entries:
+            value_text = self._format_value_text(float("nan"))
+            if local_idx < len(series.values):
+                value_text = self._format_value_text(series.values[local_idx])
+
+            signal_label = compact_signal_label(
+                policy.tool_key,
+                line_key_from_render_key(render_key),
+            )
+            if len(entries) == 1 and not signal_label:
+                fragments.append(value_text)
+            elif signal_label:
+                fragments.append(f"{signal_label} {value_text}")
+            else:
+                fragments.append(value_text)
+
+        if fragments:
+            return f"{row_text}: " + " | ".join(fragments)
+        return row_text
+
+    def _primary_visible_series_color(self, entries: List[tuple[str, Series]]) -> Optional[str]:
+        for _, series in entries:
+            style = getattr(series, "style", None)
+            color = self._safe_overlay_label_color(getattr(style, "color", None))
+            if color:
+                return color
+        return None
+
+    def _safe_overlay_label_color(self, color: object) -> Optional[str]:
+        resolved = str(color or "").strip()
+        if not resolved.startswith("#"):
+            return None
+        hex_part = resolved[1:]
+        if len(hex_part) not in {3, 6, 8}:
+            return None
+        if not all(char in "0123456789abcdefABCDEF" for char in hex_part):
+            return None
+        return resolved
 
     def _update_overlay(self) -> None:
         candles: List[Candle] = self._base_price_bars()
@@ -420,30 +537,27 @@ class PricePane(QWidget):
             if not study_instance_id:
                 continue
 
-            fragments: List[str] = []
-            for render_key in render_keys:
-                series = overlay_series_by_key.get(render_key)
-                # Source-of-truth rule: managed overlay rows consume the explicit
-                # pane payload only. The overlay card must not reach into the
-                # model as a second discovery path for managed series.
-                if series is None or not self._series_is_visible(series):
-                    continue
-
-                value_text = "—"
-                if local_idx < len(series.values):
-                    value_text = self._format_value_text(series.values[local_idx])
-
-                if len(render_keys) == 1:
-                    fragments.append(value_text)
-                else:
-                    fragments.append(f"{self._series_tail_label(series.title)}: {value_text}")
-
-            row_text = str(row_projection.title).strip() or study_instance_id
-            if fragments:
-                row_text = f"{row_text}: " + "  |  ".join(fragments)
-
+            title = str(row_projection.title).strip() or study_instance_id
+            policy = self._overlay_policy(title=title, render_keys=render_keys)
+            expanded = self._overlay_values_expanded(study_instance_id, policy)
+            # Source-of-truth rule: managed overlay rows consume the explicit
+            # pane payload only. The overlay card must not reach into the
+            # model as a second discovery path for managed series.
+            entries = self._visible_series_entries(render_keys, overlay_series_by_key)
+            row_text = self._overlay_row_text(
+                policy,
+                entries=entries,
+                local_idx=local_idx,
+                expanded=expanded,
+            )
             active_keys.add(study_instance_id)
-            row = self._ensure_study_row(study_instance_id)
+            row = self._ensure_study_row(
+                study_instance_id,
+                action_id=study_instance_id,
+                values_allowed=policy.values_allowed,
+                values_expanded=expanded,
+            )
+            row.set_label_color(self._primary_visible_series_color(entries))
             if self._last_row_texts.get(study_instance_id) != row_text:
                 row.set_text(row_text)
                 self._last_row_texts[study_instance_id] = row_text
@@ -459,17 +573,25 @@ class PricePane(QWidget):
                 continue
 
             active_keys.add(key)
-            row = self._ensure_study_row(key)
-
-            value_text = "—"
-            if local_idx < len(series.values):
-                value_text = self._format_value_text(series.values[local_idx])
-
-            row_text = f"{series.title}: {value_text}"
+            policy = self._overlay_policy(title=str(series.title), render_keys=[key])
+            expanded = self._overlay_values_expanded(key, policy)
+            entries = [(key, series)]
+            row = self._ensure_study_row(
+                key,
+                action_id=key,
+                values_allowed=policy.values_allowed,
+                values_expanded=expanded,
+            )
+            row.set_label_color(self._primary_visible_series_color(entries))
+            row_text = self._overlay_row_text(
+                policy,
+                entries=entries,
+                local_idx=local_idx,
+                expanded=expanded,
+            )
             if self._last_row_texts.get(key) != row_text:
                 row.set_text(row_text)
                 self._last_row_texts[key] = row_text
 
         self._clear_missing_study_rows(active_keys)
         self._refresh_overlay_geometry()
-

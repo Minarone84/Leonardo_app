@@ -209,6 +209,12 @@ class ChartViewport(QObject):
     def set_range(self, start: int, end: int) -> None:
         self.set_window(start, end)
 
+    def center_on_index(self, index: int) -> None:
+        visible = max(1, int(self._visible))
+        center = int(index)
+        start = center - (visible // 2)
+        self.set_window(start, start + visible)
+
     def _recompute_total_and_clamp(self, *, preserve_position: bool) -> None:
         old_total = self._total
         old_visible = self._visible

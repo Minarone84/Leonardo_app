@@ -10,6 +10,7 @@ class _StudyRow(QWidget):
     style_requested = Signal(str)
     edit_requested = Signal(str)
     remove_requested = Signal(str)
+    value_toggled = Signal(str, bool)
 
     def __init__(
         self,
@@ -25,14 +26,20 @@ class _StudyRow(QWidget):
         self._label = QLabel("", self)
 
         self._style_btn = QToolButton(self)
-        self._style_btn.setText("Style")
+        self._style_btn.setText("S")
         self._style_btn.setToolTip("Edit display style")
         self._style_btn.clicked.connect(self._emit_style)
 
         self._edit_btn = QToolButton(self)
-        self._edit_btn.setText("Edit")
+        self._edit_btn.setText("E")
         self._edit_btn.setToolTip("Edit computation parameters")
         self._edit_btn.clicked.connect(self._emit_edit)
+
+        self._value_toggle_btn = QToolButton(self)
+        self._value_toggle_btn.setText("V")
+        self._value_toggle_btn.setToolTip("Show or hide current values")
+        self._value_toggle_btn.setCheckable(True)
+        self._value_toggle_btn.clicked.connect(self._emit_value_toggle)
 
         self._remove_btn = QToolButton(self)
         self._remove_btn.setText("X")
@@ -41,8 +48,9 @@ class _StudyRow(QWidget):
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(6)
+        layout.setSpacing(3)
         layout.addWidget(self._label, 1)
+        layout.addWidget(self._value_toggle_btn, 0)
         layout.addWidget(self._style_btn, 0)
         layout.addWidget(self._edit_btn, 0)
         layout.addWidget(self._remove_btn, 0)
@@ -62,11 +70,32 @@ class _StudyRow(QWidget):
     def set_text(self, text: str) -> None:
         self._label.setText(text)
 
+    def set_label_color(self, color: Optional[str]) -> None:
+        resolved = str(color or "").strip()
+        if resolved:
+            self._label.setStyleSheet(f"color: {resolved};")
+        else:
+            self._label.setStyleSheet("")
+
+    def set_values_allowed(self, allowed: bool) -> None:
+        self._value_toggle_btn.setVisible(bool(allowed))
+        self._value_toggle_btn.setEnabled(bool(allowed))
+
+    def set_values_expanded(self, expanded: bool) -> None:
+        old_blocked = self._value_toggle_btn.blockSignals(True)
+        try:
+            self._value_toggle_btn.setChecked(bool(expanded))
+        finally:
+            self._value_toggle_btn.blockSignals(old_blocked)
+
     def _emit_style(self) -> None:
         self.style_requested.emit(self._action_id)
 
     def _emit_edit(self) -> None:
         self.edit_requested.emit(self._action_id)
+
+    def _emit_value_toggle(self, checked: bool = False) -> None:
+        self.value_toggled.emit(self._row_key, self._value_toggle_btn.isChecked())
 
     def _emit_remove(self) -> None:
         self.remove_requested.emit(self._action_id)

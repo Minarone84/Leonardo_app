@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -8,6 +9,7 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFrame,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QToolButton,
     QVBoxLayout,
@@ -158,6 +160,12 @@ class HistoricalChartPanel(
             self._position_combo.addItem(str(slot_number), slot_number)
         self._position_combo.currentIndexChanged.connect(self._on_position_changed)
         status_layout.addWidget(self._position_combo)
+
+        self._go_to_button = QToolButton(self._status_bar)
+        self._go_to_button.setText("Go to")
+        self._go_to_button.setToolTip("Center this chart on a date or datetime")
+        self._go_to_button.clicked.connect(self._on_go_to_clicked)
+        status_layout.addWidget(self._go_to_button)
 
         self._financial_tools_button = QToolButton(self._status_bar)
         self._financial_tools_button.setText("Financial Tools")
@@ -730,6 +738,79 @@ class HistoricalChartPanel(
         # but the panel surface presented to users is the price-pane autoscale
         # contract rather than a latest-edge zoom lock.
         self._workspace.set_anchor_zoom_enabled(bool(checked))
+
+    def _go_to_uses_date_only_format(self) -> bool:
+        timeframe = str(self._timeframe or "").strip()
+        lowered = timeframe.lower()
+        return (
+            timeframe in {"D", "W", "M"}
+            or timeframe.endswith("M")
+            or lowered.endswith("d")
+            or lowered.endswith("w")
+        )
+
+    def _go_to_input_format_hint(self) -> str:
+        if self._go_to_uses_date_only_format():
+            return "YYYY-MM-DD"
+        return "YYYY-MM-DD HH:MM"
+
+    def _parse_go_to_input_to_ts_ms(self, text: str) -> int:
+        value = str(text or "").strip()
+        if not value:
+            raise ValueError("Go to date is empty.")
+
+        if self._go_to_uses_date_only_format():
+            formats = (
+                "%Y-%m-%d",
+                "%Y-%m-%d %H:%M",
+                "%Y-%m-%dT%H:%M",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+            )
+        else:
+            formats = (
+                "%Y-%m-%d %H:%M",
+                "%Y-%m-%dT%H:%M",
+                "%Y-%m-%d %H:%M:%S",
+                "%Y-%m-%dT%H:%M:%S",
+                "%Y-%m-%d",
+            )
+
+        for fmt in formats:
+            try:
+                parsed = datetime.strptime(value, fmt)
+                parsed = parsed.replace(tzinfo=timezone.utc)
+                return int(parsed.timestamp() * 1000)
+            except ValueError:
+                continue
+
+        raise ValueError(f"Expected {self._go_to_input_format_hint()} for timeframe {self._timeframe or 'unknown'}.")
+
+    def _on_go_to_clicked(self) -> None:
+        if not self.dataset_key():
+            self._on_error("Open a historical dataset before using Go to.")
+            return
+
+        hint = self._go_to_input_format_hint()
+        text, accepted = QInputDialog.getText(
+            self,
+            "Go to date",
+            f"Timeframe: {self._timeframe or 'unknown'}\nEnter {hint} (UTC):",
+        )
+        if not accepted:
+            return
+
+        if not str(text or "").strip():
+            return
+
+        try:
+            ts_ms = self._parse_go_to_input_to_ts_ms(text)
+        except ValueError as exc:
+            self._on_error(f"Invalid Go to date: {exc}")
+            return
+
+        if not self._controller.center_view_on_timestamp_ms(ts_ms):
+            self._on_error("Could not center chart on the requested date.")
 
     def _on_error(self, msg: str) -> None:
         if self._is_disposed:

@@ -233,6 +233,12 @@ class WorkspaceOscillatorMixin:
             self._oscillator_panes_by_id[pane_id] = pane
             self._splitter.addWidget(pane)
 
+        self._sync_managed_oscillator_pane_contract(
+            pane=pane,
+            state=state,
+            resident_base_index=self._resident_base_index(),
+        )
+        
         self._refresh_oscillator_pane_capabilities()
         self._refresh_aux_pane_bindings()
         self._refresh_studies_labels()

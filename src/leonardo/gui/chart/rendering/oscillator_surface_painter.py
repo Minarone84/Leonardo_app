@@ -9,6 +9,17 @@ from leonardo.gui.chart.model import Series
 
 
 class OscillatorSurfacePaintMixin:
+    def _draw_line_path(self, p: QPainter, path: QPainterPath, pen: QPen) -> None:
+        """Draw an oscillator line path without inheriting an active fill brush.
+
+        Histogram and policy-fill rendering use QPainter brushes. QPainter
+        state is persistent, and drawPath(...) consumes both pen and brush.
+        Line series must therefore explicitly clear the brush before drawing.
+        """
+        p.setPen(pen)
+        p.setBrush(QBrush(Qt.NoBrush))
+        p.drawPath(path)
+
     def _series_render_mode(self, series: Series) -> str:
         style = getattr(series, "style", None)
         try:
@@ -298,8 +309,7 @@ class OscillatorSurfacePaintMixin:
                 v = self._value_at_global_for_values(global_index, values)
                 if v is None:
                     if current_pen is not None and path_points >= 2:
-                        p.setPen(current_pen)
-                        p.drawPath(path)
+                        self._draw_line_path(p, path, current_pen)
                     current_pen = None
                     path = QPainterPath()
                     path_points = 0
@@ -328,8 +338,7 @@ class OscillatorSurfacePaintMixin:
                 # pen resolved for the current value `v`.
                 if current_pen is None or pen != current_pen:
                     if current_pen is not None and path_points >= 2:
-                        p.setPen(current_pen)
-                        p.drawPath(path)
+                        self._draw_line_path(p, path, current_pen)
 
                     current_pen = pen
                     path = QPainterPath()
@@ -343,12 +352,12 @@ class OscillatorSurfacePaintMixin:
                 prev_x, prev_y, prev_value = x, y, v
 
             if current_pen is not None and path_points >= 2:
-                p.setPen(current_pen)
-                p.drawPath(path)
+                self._draw_line_path(p, path, current_pen)
 
             if valid_points == 1 and last_point is not None:
                 point_x, point_y, point_value = last_point
                 p.setPen(self._pen_for_series_value(series, point_value))
+                p.setBrush(QBrush(Qt.NoBrush))
                 p.drawEllipse(QRectF(point_x - 2.0, point_y - 2.0, 4.0, 4.0))
 
         p.restore()

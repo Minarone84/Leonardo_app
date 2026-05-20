@@ -159,6 +159,13 @@ class HistoricalChartPanelStyleMixin:
             return "universal_trend_classifier"
         return normalized
 
+    def _is_volume_mean_line_key(self, *, defaults_study_key: str, line_key: str) -> bool:
+        """Return whether a signal key should use the Volume mean line default."""
+        return (
+            str(defaults_study_key).strip().lower() == "volume"
+            and str(line_key).strip().startswith("volume_mean_")
+        )
+
     def _current_workspace_series_for_render_key(
         self,
         *,
@@ -220,8 +227,10 @@ class HistoricalChartPanelStyleMixin:
         signal_defaults = defaults.signal_defaults.get(resolved_line_key)
         if (
             signal_defaults is None
-            and resolved_defaults_study_key == "volume"
-            and resolved_line_key.startswith("volume_mean_")
+            and self._is_volume_mean_line_key(
+                defaults_study_key=resolved_defaults_study_key,
+                line_key=resolved_line_key,
+            )
         ):
             signal_defaults = defaults.signal_defaults.get("volume_mean")
         if signal_defaults is None:
@@ -290,24 +299,57 @@ class HistoricalChartPanelStyleMixin:
             if not line_key:
                 continue
 
+            canonical_signal_style: Optional[StudySignalStyle] = None
+            if self._is_volume_mean_line_key(
+                defaults_study_key=defaults_study_key,
+                line_key=line_key,
+            ):
+                canonical_signal_style = self._default_signal_style_for_line_key(
+                    defaults_study_key=defaults_study_key,
+                    line_key=line_key,
+                    show_label=bool(updated_style.show_label),
+                    show_value=bool(updated_style.show_value),
+                )
+
             # Preserve existing chart-local per-signal style on edit/reapply.
             # Missing line keys are still seeded below so new outputs inherit the
             # canonical default pipeline.
             if line_key in updated_style.signal_styles:
+                if canonical_signal_style is not None:
+                    existing_signal_style = updated_style.signal_styles[line_key]
+                    corrected_signal_style = existing_signal_style
+                    if (
+                        str(getattr(corrected_signal_style, "render_mode", "") or "").strip().lower()
+                        != "line"
+                    ):
+                        corrected_signal_style = replace(corrected_signal_style, render_mode="line")
+                    if not str(getattr(corrected_signal_style, "color", "") or "").strip():
+                        corrected_signal_style = replace(
+                            corrected_signal_style,
+                            color=canonical_signal_style.color,
+                        )
+                    if corrected_signal_style != existing_signal_style:
+                        updated_style = updated_style.with_signal_style(
+                            line_key,
+                            style=corrected_signal_style,
+                        )
+                        touched = True
                 continue
 
-            workspace_series = self._current_workspace_series_for_render_key(
-                study=study,
-                render_key=render_key,
-            )
-            source_series = workspace_series or input_series_by_key.get(render_key)
-
-            seeded_signal_style: Optional[StudySignalStyle] = None
+            seeded_signal_style: Optional[StudySignalStyle] = canonical_signal_style
 
             # Prefer the style currently present on the applied workspace/model
             # series because that already reflects any static default resolution
             # performed downstream during the first apply.
-            source_style_obj = getattr(source_series, "style", None) if source_series is not None else None
+            if seeded_signal_style is None:
+                workspace_series = self._current_workspace_series_for_render_key(
+                    study=study,
+                    render_key=render_key,
+                )
+                source_series = workspace_series or input_series_by_key.get(render_key)
+                source_style_obj = getattr(source_series, "style", None) if source_series is not None else None
+            else:
+                source_style_obj = None
             if source_style_obj is not None:
                 resolved_color = str(getattr(source_style_obj, "color", "") or "").strip()
                 resolved_width = max(1, int(getattr(source_style_obj, "line_width", 1) or 1))
@@ -420,6 +462,9 @@ class HistoricalChartPanelStyleMixin:
         updated_study = study.with_style(updated_style)
         self._study_registry.add(updated_study)
         return updated_study
+
+
+
 
     def _signal_names_for_study(self, study: ChartStudyInstance) -> List[str]:
         names: List[str] = []
@@ -752,6 +797,20 @@ class HistoricalChartPanelStyleMixin:
         """
         line_key = self._line_key_from_render_key(render_key)
         signal_style: Optional[StudySignalStyle] = study.style.signal_styles.get(line_key)
+        defaults_study_key = self._defaults_study_key_for_tool_key(study.computation.tool_key)
+        volume_mean_default_style: Optional[StudySignalStyle] = None
+        if self._is_volume_mean_line_key(
+            defaults_study_key=defaults_study_key,
+            line_key=line_key,
+        ):
+            volume_mean_default_style = self._default_signal_style_for_line_key(
+                defaults_study_key=defaults_study_key,
+                line_key=line_key,
+                show_label=bool(getattr(study.style, "show_label", True)),
+                show_value=bool(getattr(study.style, "show_value", True)),
+            )
+            if signal_style is None:
+                signal_style = volume_mean_default_style
 
         existing_style = getattr(existing_series, "style", None) if existing_series is not None else None
 
@@ -830,6 +889,11 @@ class HistoricalChartPanelStyleMixin:
             marker_offset_px_value = getattr(signal_style, "marker_offset_px", None)
             if marker_offset_px_value is not None:
                 marker_offset_px = int(marker_offset_px_value)
+
+        if volume_mean_default_style is not None:
+            if not color:
+                color = volume_mean_default_style.color
+            render_mode = "line"
 
         return SeriesStyle(
             color=color,
@@ -1456,4 +1520,3 @@ class HistoricalChartPanelStyleMixin:
             self._force_surface_static_reset_for_study(updated_study)
 
         return updated_study
-

@@ -1,7 +1,7 @@
 # Financial Tools Contract System
 
-Version: v1.2  
-Date: 2026-05-12
+Version: v1.3
+Date: 2026-05-20
 
 ## Purpose
 
@@ -170,6 +170,25 @@ Sidecars are consumers of contract data. They must not define new tool behavior,
 3. Register the runtime function in `oscillators/oscillators.py`.
 4. Define semantic guide metadata in contracts/specs only when it is semantic metadata, not renderer behavior.
 5. Keep pane bounds, guide rendering, fills, and threshold coloring downstream in chart-local visual policy.
+
+
+## Current oscillator contract baseline
+
+Current oscillator contracts include:
+
+| Oscillator | Params | Runtime outputs | Visual guide metadata |
+|---|---|---|---|
+| RSI | `period` | `rsi_{period}` | fixed `0–100`, guides `70 / 50 / 30` |
+| ARSI | `period`, `method`, `signal_period`, `signal_method` | `arsi_{period}_{method}`, `arsi_signal_{period}_{method}_{signal_period}_{signal_method}` | fixed `0–100`, guides `80 / 50 / 20` |
+| MFI | `period` | `mfi_{period}` | fixed `0–100`, guides `70 / 50 / 30` |
+| TDI RSI | `period`, `band_length`, `band_mult`, `fast_len`, `slow_len`, `fast_smo`, `slow_smo` | `tdirsi_fast_ma_*`, `tdirsi_slow_ma_*`, `tdirsi_up_*`, `tdirsi_dn_*`, `tdirsi_mid_*` | fixed `0–100`, guides `70 / 50 / 30` |
+| SMI | `k_length`, `d_length` | `smi_{k_length}_{d_length}`, `smi_signal_{k_length}_{d_length}` | auto range, zero guide |
+| OBV | none | `obv` | auto range |
+| Volume | `period` / mean period | `volume`, `volume_mean_{period}` | auto range |
+
+ARSI now follows the Ultimate RSI-style two-line structure: the main ARSI line plus a signal/mean line. The runtime may tolerate old saved params such as `boost_breakouts` for backward compatibility, but new public specs/contracts expose the current smoothing and signal parameters.
+
+Concrete GUI colors, widths, histogram modes, threshold coloring, and pane fills remain downstream chart-local style/policy concerns. Contract manifests describe structural and semantic truth only.
 
 ## Adding a new construct
 

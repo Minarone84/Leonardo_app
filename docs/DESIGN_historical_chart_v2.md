@@ -1,7 +1,7 @@
 # Leonardo — Historical Chart Architecture (Current State)
 
-Version: v4.3  
-Date: 2026-04-23
+Version: v4.4
+Date: 2026-05-20
 
 Scope: historical chart sessions, chart-space ownership, viewport/camera behavior, autoscale/manual-y behavior, resident slicing, study projection, pane contracts, and renderer execution.
 
@@ -520,7 +520,22 @@ Current workspace historical policy:
 
 Realtime/snapshot flows use zero domain padding unless a dedicated realtime policy says otherwise.
 
-### 12.4 Pane contract ownership
+
+### 12.4 Compact workspace layout policy
+
+The historical workspace may reduce visual margins, grid spacing, splitter handle width, and renderer plot padding to maximize room for actual chart data. This is a presentation/layout concern and must not redefine chart-space domain behavior.
+
+Current compact-layout rules:
+
+- inter-pane and embedded-grid spacing should stay compact;
+- pane separation should be provided by subtle pane/splitter borders rather than large gaps;
+- price, volume, and oscillator surfaces may reduce internal plot padding as long as right-axis labels and time labels remain readable;
+- view-mode UI belongs to the historical workspace/window shell, not to chart-session compute/render ownership;
+- `Scroll 4` / `Fit 8` remain shell visualization modes and must preserve chart-session identity.
+
+The fixed historical domain padding remains `1000 / 1000`. That padding is chart-space/navigation behavior and must not be treated as cosmetic whitespace.
+
+### 12.5 Pane contract ownership
 
 Workspace owns durable pane view state and explicit pane contracts.
 
@@ -532,7 +547,7 @@ Examples:
 - oscillator pane visual policy payload
 - pane-local gesture write-back target mapping
 
-### 12.5 Price-pane vertical contract
+### 12.6 Price-pane vertical contract
 
 User-facing Autoscale is a workspace-owned price-pane vertical-fit contract.
 
@@ -547,7 +562,7 @@ Rules:
 - Autoscale OFF hands the price-pane y-range back to user-owned manual control
 - re-enabling Autoscale immediately recomputes the y-range from the current visible x-window
 
-### 12.6 Batched reapply rule
+### 12.7 Batched reapply rule
 
 Workspace must reapply resident-slice/projected-study updates as a batch.
 
@@ -823,6 +838,8 @@ This file should not drift back into a Financial Tools document.
 ---
 
 ## 21. Validation Basis
+
+This version also records the compact historical workspace layout update: chart-area margins, embedded grid gaps, splitter handle width, and renderer plot padding may be reduced to maximize data area, while fixed historical chart-space domain padding remains unchanged. View-mode controls are shell-level UI exposed through the historical workspace/window menu, not chart-session semantic ownership.
 M1–M6 hardening validated the current implementation with static checks, targeted regression tests, GUI release checks, and full uploaded test validation.
 
 

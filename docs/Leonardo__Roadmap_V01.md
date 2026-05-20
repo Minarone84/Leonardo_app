@@ -1,8 +1,8 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.14
+Version: v0.15
 Status: Living document (expected to change)
-Updated: 2026-05-18
+Updated: 2026-05-20
 
 Purpose
 
@@ -387,6 +387,15 @@ Implemented baseline:
   - M8H added dataset-service cache invalidation after OHLCV rewrites and completed full uploaded test validation.
   - M8I aligned historical chart saved-artifact lookup, chart save, and chart-opened Financial Tool Manager paths with the configured historical root.
 
+- M9 Oscillator/rendering and historical workspace polish is accepted:
+  - Volume is accepted as an oscillator-pane study with histogram bars and configurable `volume_mean_{period}`.
+  - Oscillator threshold coloring now splits rendered line segments at actual threshold crossings instead of coloring whole segments by endpoint state.
+  - Dynamic oscillator default-style resolution now handles RSI, ARSI, MFI, SMI, TDI RSI, OBV, and Volume emitted names.
+  - ARSI has been upgraded to an Ultimate RSI-style two-line oscillator with configurable smoothing and an orange signal/mean line.
+  - ARSI uses dedicated `80 / 50 / 20` visual guide levels while RSI/MFI keep `70 / 50 / 30`.
+  - Historical workspace compact layout reduces chart-area margins, pane gaps, splitter width, and renderer plot padding without changing domain-padding/refill behavior.
+  - Historical workspace visualization mode controls moved to the `Window` menu and the menu bar shows the current mode.
+
 Next direction:
 
 - Treat the current Historical Download Manager M7 behavior as the accepted OHLCV ingestion baseline.
@@ -400,7 +409,15 @@ Next direction:
 6) FINANCIAL TOOLS
 ------------------------------------------------------------
 
-[UNCHANGED]
+Current accepted updates:
+
+- ARSI now follows the Ultimate RSI-style two-line model: main ARSI output plus signal/mean output.
+- ARSI public params include `period`, `method`, `signal_period`, and `signal_method`.
+- Supported ARSI smoothing methods are `EMA`, `SMA`, `RMA`, and `TMA`.
+- ARSI output names are `arsi_{period}_{method}` and `arsi_signal_{period}_{method}_{signal_period}_{signal_method}`.
+- Volume is accepted as an oscillator with raw histogram output and configurable rolling mean output.
+- Oscillator naming/spec/contract validation remains required after any public output change.
+- GUI colors and widths remain chart-local style defaults, not financial-tool runtime truth.
 
 ------------------------------------------------------------
 7) BACKTESTING + SIMULATION
@@ -450,6 +467,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.15: Oscillator styling, ARSI upgrade, and historical workspace compact layout. Documents Volume histogram/mean behavior, threshold-aware oscillator segment splitting, dynamic oscillator default-style resolution, Ultimate RSI-style ARSI with orange signal/mean line and 80/50/20 guides, compact chart workspace spacing, Window-menu view mode controls, and current-mode menu-bar label.
+
 v0.14: Historical chart/study hardening. Documents Core-backed dataset catalog selection, GUI-thread/stale-result guards for dataset open and slicing, renderability/analysis-source separation, explicit save metadata, construct saved-identity hashes, public render-cache invalidation, Sequence-safe series values, dataset-service cache invalidation, and full uploaded test validation.
 
 

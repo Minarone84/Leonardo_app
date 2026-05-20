@@ -1,7 +1,7 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.16  
-Date: 2026-05-19
+Version: v3.18
+Date: 2026-05-20
 
 ## Overview
 
@@ -338,6 +338,14 @@ The logical slot order remains:
 `Fit 8` fits the current embedded chart layout into the usable workspace area without vertical scrolling.
 
 Both modes preserve the same logical slot order and chart-session identity.
+
+The mode selector is exposed through the `Window` menu as checkable `Scroll 4` / `Fit 8` actions. The top-right menu-bar mode label displays the current mode and updates when the mode changes. This is shell UI only; mode state remains owned by `HistoricalWorkspaceWidget`.
+
+### Compact chart-area layout
+
+The historical workspace uses compact chart-area margins and grid spacing to reserve more screen space for data. Pane separation should come from subtle pane/splitter borders and splitter handles rather than large dead gaps. Render surfaces use reduced plot padding while preserving readable right-axis and time-axis labels.
+
+Historical chart-space domain padding remains unchanged. The `1000 / 1000` left/right domain padding is chart behavior owned by workspace/controller/refill contracts, not cosmetic spacing.
 
 ### Adaptive visual layout
 
@@ -897,10 +905,18 @@ Policy is:
 
 ### Oscillator families
 
-- single-line bounded: RSI, ARSI, MFI
+- single-line bounded: RSI, MFI
+- two-line bounded: ARSI main line plus ARSI signal/mean line
 - multi-line bounded: TDI RSI
 - multi-line signal: SMI
 - unbounded: OBV
+- histogram + line: Volume and `volume_mean_{period}`
+
+Current oscillator style/policy notes:
+
+- ARSI uses dedicated `80 / 50 / 20` guide levels; RSI and MFI use `70 / 50 / 30`.
+- Dynamic oscillator output names resolve to canonical chart-local defaults before style state is persisted.
+- Threshold-aware line coloring splits at actual threshold crossings and leaves neutral regions controlled by the user-selected line style.
 
 ### Bounded oscillator behavior
 
@@ -1385,6 +1401,8 @@ Recommended tooling (in the GUI package):
 ---
 
 ## Change log
+
+- **v3.18 (2026-05-20)** — Historical workspace compact-layout polish: chart-area margins, embedded grid gaps, splitter handle width, and renderer plot padding were reduced; pane separation is handled by subtle borders/separators; `Scroll 4` / `Fit 8` moved into the `Window` menu; a top-right menu-bar label displays the current visualization mode. Historical domain padding and controller/refill behavior are unchanged.
 
 - **v3.17 (2026-05-20)** — Root and boundary documentation sync: GUI/chart/download paths pass configured historical roots explicitly, `WindowManager` registration is documented as GUI-owned lookup, `CoreBridge` ignores stale realtime future completions, and Data Manager main widgets use the shared right-side button rack layout.
 

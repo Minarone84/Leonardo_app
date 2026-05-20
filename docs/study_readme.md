@@ -1,7 +1,7 @@
 # Leonardo Study System (Current State)
 
-Version: v1.6  
-Date: 2026-04-24
+Version: v1.7
+Date: 2026-05-20
 
 ## Purpose
 
@@ -189,9 +189,29 @@ Oscillators are oscillator-pane studies.
 
 Rules:
 
-- pane target must be `oscillator`
-- visualization is governed by pane-local visual policy
-- oscillator studies do not own pane layout directly
+- pane target must be `oscillator`;
+- visualization is governed by pane-local visual policy;
+- oscillator studies do not own pane layout directly;
+- runtime may emit one or many renderable oscillator series;
+- chart-local style defaults must resolve dynamic parameterized signal names before persistence into study state.
+
+Current oscillator-family rendering baseline:
+
+- single-line bounded: RSI and MFI;
+- two-line bounded: ARSI main line plus ARSI signal/mean line;
+- multi-line bounded: TDI RSI;
+- multi-line signal: SMI;
+- unbounded: OBV;
+- histogram + line: Volume and `volume_mean_{period}`.
+
+Current dynamic oscillator style resolution includes:
+
+- `rsi_*`, `arsi_*`, `arsi_signal_*`, `mfi_*`;
+- `smi_*` and `smi_signal_*`;
+- `tdirsi_fast_ma_*`, `tdirsi_slow_ma_*`, `tdirsi_up_*`, `tdirsi_dn_*`, `tdirsi_mid_*`;
+- `volume_mean_*`.
+
+Threshold-aware oscillator coloring is visual-only. It splits line segments at the actual threshold crossing and uses the persisted/user-selected series color in the neutral region. Overbought/oversold colors come from pane visual policy.
 
 ### Constructs
 
@@ -614,6 +634,13 @@ Oscillator visual policy is:
 - visual-only
 - not part of computation
 - not part of persistence identity
+
+Current bounded oscillator policy notes:
+
+- RSI and MFI use the generic `70 / 50 / 30` guide model.
+- ARSI uses the Ultimate RSI-style `80 / 50 / 20` guide model.
+- Threshold-aware line coloring applies outside the configured upper/lower bounds and must not overwrite neutral user style.
+- Volume uses an unbounded auto-range pane; `volume` is histogram-rendered and `volume_mean_{period}` is a normal line series.
 
 ---
 

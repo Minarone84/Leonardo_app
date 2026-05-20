@@ -76,7 +76,7 @@ Accepted behavior includes:
 
 M6/M6B completed release-check/test reconciliation and full uploaded test validation without production-code changes.
 
-## Current Historical Data Manager / Workspace layout workflow — 2026-05-19
+## Current Historical Data Manager / Workspace layout workflow — 2026-05-20
 
 Historical chart sessions hosted by `HistoricalDataManagerWindow` now support an 8-slot embedded workspace without changing chart-session, controller, renderer, data, or financial-tool ownership.
 
@@ -98,6 +98,29 @@ Accepted workspace behavior includes:
   - 8 charts → 4x2.
 
 This is Historical Workspace shell behavior only. It does not move dataset truth, study truth, pane contracts, rendering semantics, or persistence ownership out of their existing layers.
+
+Current compact-layout behavior also includes:
+
+- compact chart-area margins and embedded-grid gaps;
+- reduced splitter handle width and pane spacing;
+- reduced price/volume/oscillator plot padding while preserving readable axes;
+- `Scroll 4` / `Fit 8` moved to the `Window` menu;
+- a top-right menu-bar label showing the current visualization mode;
+- unchanged historical chart-space domain padding.
+
+
+## Current Oscillator / ARSI workflow — 2026-05-20
+
+Oscillator outputs now include the accepted Volume and upgraded ARSI behavior:
+
+- Volume is an oscillator-pane artifact with `volume` histogram bars and `volume_mean_{period}` as a configurable rolling mean line.
+- ARSI is an Ultimate RSI-style two-line oscillator with `arsi_{period}_{method}` and `arsi_signal_{period}_{method}_{signal_period}_{signal_method}`.
+- ARSI defaults use configurable `EMA/SMA/RMA/TMA` smoothing, a signal/mean line defaulting to orange `#FF5D00`, and `80 / 50 / 20` guide levels.
+- RSI and MFI remain single-line bounded oscillators with the generic `70 / 50 / 30` guide policy.
+- Dynamic oscillator signal names resolve to their canonical chart-local style defaults before style state is persisted.
+- Threshold-aware oscillator coloring splits line segments at the actual threshold crossing and leaves neutral regions controlled by the user-selected series color.
+
+These are chart/apply/runtime contract changes only where appropriate. Renderer code remains execution-only, and GUI colors/widths remain downstream chart-local style defaults.
 
 ## Release packaging guardrails (GUI)
 

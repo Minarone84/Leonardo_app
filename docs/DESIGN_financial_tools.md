@@ -1,8 +1,8 @@
 # DESIGN — Financial Tools System
 
 Leonardo  
-Version: v1.16
-Date: 2026-05-12
+Version: v1.17
+Date: 2026-05-20
 Scope: Indicators, Oscillators, Constructs, Tool Specs, Naming Policy, Controller Integration, Panel Integration, Workspace Integration, Chart Application
 
 ---
@@ -118,6 +118,20 @@ They do **not** define:
 - conditional styling
 
 Oscillator visualization is governed downstream by a **chart-local visual policy system**.
+
+Current oscillator output baseline:
+
+| Oscillator | Outputs | Notes |
+|---|---|---|
+| RSI | `rsi_{period}` | single-line bounded oscillator using the generic RSI-family `70 / 50 / 30` visual guide policy |
+| ARSI | `arsi_{period}_{method}`, `arsi_signal_{period}_{method}_{signal_period}_{signal_method}` | Ultimate RSI-style two-line oscillator with configurable `EMA/SMA/RMA/TMA` smoothing and dedicated `80 / 50 / 20` guide levels |
+| MFI | `mfi_{period}` | single-line bounded oscillator using the generic RSI-family `70 / 50 / 30` visual guide policy |
+| TDI RSI | `tdirsi_fast_ma_*`, `tdirsi_slow_ma_*`, `tdirsi_up_*`, `tdirsi_dn_*`, `tdirsi_mid_*` | multi-line bounded oscillator; band fills are chart-local visual policy |
+| SMI | `smi_{k_length}_{d_length}`, `smi_signal_{k_length}_{d_length}` | multi-line signal oscillator with auto range and zero guide |
+| OBV | `obv` | unbounded auto-range oscillator |
+| Volume | `volume`, `volume_mean_{period}` | histogram volume plus configurable rolling mean line; chart-local renderer/policy owns visual treatment |
+
+ARSI's orange signal/mean line is a static GUI default, not contract truth. The contract/spec/naming layers only define the two runtime outputs and their metadata.
 
 ### 3.3 Constructs
 
@@ -739,6 +753,9 @@ The Financial Tools system now enforces:
 - chart-local marker-style event rendering for indicator studies such as `peaks_troughs`
 - chart-local grouped Above/Below spacing controls for event-style marker families
 - chart-local oscillator visual policy
+- dynamic oscillator default-style resolution for parameterized output names
+- Ultimate RSI-style ARSI with main and signal outputs
+- Volume oscillator rendering as histogram plus configurable rolling mean line
 - strict separation between computation and visualization
 - renderer as execution-only
 

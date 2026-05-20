@@ -307,6 +307,9 @@ class CoreBridge(QObject):
         forced back to False so the GUI does not remain stuck in a fake
         streaming state.
         """
+        if fut is not self._realtime_future:
+            return
+
         self._realtime_future = None
     
         # --- Proper cancellation handling ---

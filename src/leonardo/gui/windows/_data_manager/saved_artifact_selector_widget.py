@@ -12,6 +12,7 @@ from leonardo.gui.windows._data_manager.saved_artifact_columns import (
     SavedArtifactColumn,
     load_saved_artifact_columns,
 )
+from leonardo.gui.windows._data_manager.button_rack import make_button_rack
 
 
 class SavedArtifactSelectorWidget(QGroupBox):
@@ -30,9 +31,13 @@ class SavedArtifactSelectorWidget(QGroupBox):
         self._columns: list[SavedArtifactColumn] = []
         self._build_selection_mode = False
 
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
         root.setSpacing(8)
+
+        content = QVBoxLayout()
+        content.setSpacing(8)
+        root.addLayout(content, 1)
 
         self._hint_label = QLabel(
             "Select a dataset to list saved artifacts. Check a column to select it; "
@@ -40,7 +45,7 @@ class SavedArtifactSelectorWidget(QGroupBox):
             self,
         )
         self._hint_label.setWordWrap(True)
-        root.addWidget(self._hint_label)
+        content.addWidget(self._hint_label)
 
         self._preview_button = QPushButton("Preview Selected Artifact", self)
         self._preview_button.setToolTip("Preview is enabled only when exactly one artifact column is checked.")
@@ -54,18 +59,19 @@ class SavedArtifactSelectorWidget(QGroupBox):
         self._refresh_button = QPushButton("Refresh Saved Artifacts", self)
         self._refresh_button.clicked.connect(self.refresh)
 
-        button_row = QHBoxLayout()
-        button_row.setSpacing(8)
-        button_row.addWidget(self._preview_button)
-        button_row.addWidget(self._exit_selection_button)
-        button_row.addWidget(self._refresh_button)
-        button_row.addStretch(1)
-        root.addLayout(button_row, 0)
+        root.addLayout(
+            make_button_rack(
+                self._preview_button,
+                self._exit_selection_button,
+                self._refresh_button,
+            ),
+            0,
+        )
 
         self._list = QListWidget(self)
         self._list.itemChanged.connect(self._on_item_changed)
         self._list.currentItemChanged.connect(lambda _current, _previous: self._refresh_preview_button())
-        root.addWidget(self._list, 1)
+        content.addWidget(self._list, 1)
 
     def set_market(self, market: Optional[MarketId]) -> None:
         self._market = market

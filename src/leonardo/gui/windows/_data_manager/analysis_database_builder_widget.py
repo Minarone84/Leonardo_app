@@ -24,6 +24,7 @@ from leonardo.data.naming import MarketId
 from leonardo.gui.windows._data_manager.analysis_database_feature_builder import (
     build_manifest_features_from_saved_columns,
 )
+from leonardo.gui.windows._data_manager.button_rack import make_button_rack
 from leonardo.gui.windows._data_manager.saved_artifact_selector_widget import SavedArtifactColumn
 
 
@@ -46,17 +47,21 @@ class AnalysisDatabaseBuilderWidget(QGroupBox):
         self._name_prefix = ""
         self._selected_columns: list[SavedArtifactColumn] = []
 
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
         root.setSpacing(8)
 
+        content = QVBoxLayout()
+        content.setSpacing(8)
+        root.addLayout(content, 1)
+
         self._summary = QLabel("Select a dataset and saved artifact columns to prepare an analysis database.", self)
         self._summary.setWordWrap(True)
-        root.addWidget(self._summary)
+        content.addWidget(self._summary)
 
         form = QFormLayout()
         form.setSpacing(8)
-        root.addLayout(form)
+        content.addLayout(form)
 
         self._name_edit = QLineEdit(self)
         self._name_edit.setPlaceholderText("Example: BTCUSDT_30m_trend_pack")
@@ -81,13 +86,14 @@ class AnalysisDatabaseBuilderWidget(QGroupBox):
         base_action_row.addWidget(QLabel("Base columns", self))
         base_action_row.addWidget(self._include_volume)
         base_action_row.addStretch(1)
-        base_action_row.addWidget(self._button)
-        root.addLayout(base_action_row, 0)
+        content.addLayout(base_action_row, 0)
 
         self._base_policy = QLabel("Locked by contract: ts_ms, open, high, low, close. Volume is selectable.", self)
         self._base_policy.setWordWrap(True)
-        root.addWidget(self._base_policy)
-        root.addStretch(1)
+        content.addWidget(self._base_policy)
+        content.addStretch(1)
+
+        root.addLayout(make_button_rack(self._button), 0)
 
     def set_market(self, market: Optional[MarketId]) -> None:
         previous_prefix = self._name_prefix

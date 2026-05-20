@@ -8,6 +8,7 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QPushButton, QTableView, QVBoxLayout, QWidget
 
 from leonardo.data.historical.artifact_metadata_naming import format_ts_ms_rome, format_ts_ms_utc
+from leonardo.gui.windows._data_manager.button_rack import make_button_rack
 
 
 class _DataFrameTableModel(QAbstractTableModel):
@@ -74,13 +75,17 @@ class DataFramePreviewWidget(QGroupBox):
         self._max_rows = max(1, int(max_rows))
         self._model = _DataFrameTableModel(parent=self)
 
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
         root.setSpacing(8)
 
+        content = QVBoxLayout()
+        content.setSpacing(8)
+        root.addLayout(content, 1)
+
         preview_header = QHBoxLayout()
         preview_header.setSpacing(12)
-        root.addLayout(preview_header, 0)
+        content.addLayout(preview_header, 0)
 
         self._summary = QLabel("Select an OHLCV file, saved artifact, or materialized analysis database to preview.", self)
         self._summary.setWordWrap(True)
@@ -99,7 +104,6 @@ class DataFramePreviewWidget(QGroupBox):
         timestamp_title_row.addStretch(1)
         self._clear_button = QPushButton("Clear Preview", self)
         self._clear_button.clicked.connect(self.clear)
-        timestamp_title_row.addWidget(self._clear_button)
         timestamp_area.addLayout(timestamp_title_row, 0)
 
         timestamp_values_row = QHBoxLayout()
@@ -121,7 +125,9 @@ class DataFramePreviewWidget(QGroupBox):
         self._table.setSortingEnabled(False)
         self._table.setSelectionBehavior(QTableView.SelectRows)
         self._table.setEditTriggers(QTableView.NoEditTriggers)
-        root.addWidget(self._table, 1)
+        content.addWidget(self._table, 1)
+
+        root.addLayout(make_button_rack(self._clear_button), 0)
 
     def clear(self) -> None:
         self._model.clear()

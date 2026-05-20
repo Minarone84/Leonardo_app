@@ -12,6 +12,7 @@ from leonardo.data.historical.artifact_metadata_backfill import (
     ArtifactMetadataBackfillReport,
 )
 from leonardo.data.naming import MarketId
+from leonardo.gui.windows._data_manager.button_rack import make_button_rack
 
 
 class MetadataToolsWidget(QGroupBox):
@@ -30,30 +31,30 @@ class MetadataToolsWidget(QGroupBox):
         self._historical_root = Path(historical_root)
         self._market: Optional[MarketId] = None
 
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
         root.setSpacing(8)
+
+        content = QVBoxLayout()
+        content.setSpacing(8)
+        root.addLayout(content, 1)
 
         self._summary = QLabel(
             "Select a dataset to check and restore missing or unreadable CSV metadata sidecars.",
             self,
         )
         self._summary.setWordWrap(True)
-        root.addWidget(self._summary)
+        content.addWidget(self._summary)
 
         self._report = QPlainTextEdit(self)
         self._report.setReadOnly(True)
         self._report.setPlaceholderText("Run metadata restore to see scanned, restored, skipped, and failed counts.")
-        root.addWidget(self._report, 1)
+        content.addWidget(self._report, 1)
 
         self._restore_button = QPushButton("Check / Restore Missing or Corrupt Metadata", self)
         self._restore_button.setEnabled(False)
         self._restore_button.clicked.connect(self._restore_selected_dataset_metadata)
-        button_row = QHBoxLayout()
-        button_row.setSpacing(8)
-        button_row.addWidget(self._restore_button)
-        button_row.addStretch(1)
-        root.addLayout(button_row, 0)
+        root.addLayout(make_button_rack(self._restore_button), 0)
 
     def set_market(self, market: Optional[MarketId]) -> None:
         self._market = market

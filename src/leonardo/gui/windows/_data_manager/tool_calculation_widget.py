@@ -49,6 +49,7 @@ from leonardo.gui.windows._data_manager.artifact_recipe_collection_dialog import
 from leonardo.gui.windows._data_manager.artifact_recipe_dialog import (
     ArtifactRecipeDialog,
 )
+from leonardo.gui.windows._data_manager.button_rack import make_button_rack
 from leonardo.gui.windows.financial_tools_manager_window import (
     FinancialToolsManagerWindow,
 )
@@ -109,9 +110,13 @@ class ToolCalculationWidget(QGroupBox):
             collection_store=self._collection_store,
         )
 
-        root = QVBoxLayout(self)
+        root = QHBoxLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
         root.setSpacing(8)
+
+        content = QVBoxLayout()
+        content.setSpacing(8)
+        root.addLayout(content, 1)
 
         self._description = QLabel(
             "Calculate one full-dataset financial-tool artifact for the selected "
@@ -120,12 +125,12 @@ class ToolCalculationWidget(QGroupBox):
             self,
         )
         self._description.setWordWrap(True)
-        root.addWidget(self._description)
+        content.addWidget(self._description)
 
         self._selected_dataset = QLabel("Selected dataset: none", self)
         self._selected_dataset.setWordWrap(True)
-        root.addWidget(self._selected_dataset)
-        root.addStretch(1)
+        content.addWidget(self._selected_dataset)
+        content.addStretch(1)
 
         self._button = QPushButton("Calculate and Save Artifact", self)
         self._button.setEnabled(False)
@@ -139,13 +144,14 @@ class ToolCalculationWidget(QGroupBox):
         self._collections_button.setEnabled(False)
         self._collections_button.clicked.connect(self._open_collection_dialog)
 
-        button_row = QHBoxLayout()
-        button_row.setSpacing(8)
-        button_row.addWidget(self._button)
-        button_row.addWidget(self._recipes_button)
-        button_row.addWidget(self._collections_button)
-        button_row.addStretch(1)
-        root.addLayout(button_row, 0)
+        root.addLayout(
+            make_button_rack(
+                self._button,
+                self._recipes_button,
+                self._collections_button,
+            ),
+            0,
+        )
 
     def set_market(self, market: Optional[MarketId]) -> None:
         self._market = market

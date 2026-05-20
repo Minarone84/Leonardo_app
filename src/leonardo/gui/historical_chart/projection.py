@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any, Dict
 
 import pandas as pd
@@ -529,6 +530,7 @@ class HistoricalChartProjectionMixin:
         tool_key: str,
         tool_title: str,
         params: Dict[str, Any],
+        source_payload: Mapping[str, Any] | None = None,
     ) -> Dict[str, Any]:
         effective_params = dict(getattr(result, "params", params) or params)
         projection_key = self._build_projection_key(tool_key=tool_key, params=effective_params)
@@ -541,6 +543,28 @@ class HistoricalChartProjectionMixin:
             tool_title=tool_title,
             effective_params=effective_params,
         )
+        source_payload = source_payload or {}
+        raw_input_bindings = source_payload.get("input_bindings", {}) or {}
+        input_bindings = dict(raw_input_bindings) if isinstance(raw_input_bindings, Mapping) else {}
+        raw_input_binding_meta = source_payload.get("input_binding_meta", {}) or {}
+        input_binding_meta = (
+            dict(raw_input_binding_meta)
+            if isinstance(raw_input_binding_meta, Mapping)
+            else {}
+        )
+        raw_required_inputs = source_payload.get("required_inputs", ()) or ()
+        required_inputs = (
+            list(raw_required_inputs)
+            if isinstance(raw_required_inputs, (list, tuple))
+            else []
+        )
+        raw_saved_artifact_ref = source_payload.get("saved_artifact_ref")
+        saved_artifact_ref = (
+            dict(raw_saved_artifact_ref)
+            if isinstance(raw_saved_artifact_ref, Mapping)
+            else None
+        )
+        source_kind = str(source_payload.get("source_kind", "temporary") or "temporary").strip().lower()
 
         return {
             "study_projection_key": projection_key,
@@ -553,6 +577,11 @@ class HistoricalChartProjectionMixin:
             "style_driver_series_list": list(study.projected_style_driver_series_list),
             "behavior": dict(study.behavior),
             "output": dict(study.output),
+            "input_bindings": input_bindings,
+            "input_binding_meta": input_binding_meta,
+            "required_inputs": required_inputs,
+            "saved_artifact_ref": saved_artifact_ref,
+            "source_kind": source_kind,
         }
 
     def _result_to_dataframe(self, result) -> pd.DataFrame:

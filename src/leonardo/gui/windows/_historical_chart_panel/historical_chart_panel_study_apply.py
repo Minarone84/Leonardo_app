@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Sequence
 
 from leonardo.gui.chart.model import Series
@@ -487,6 +488,11 @@ class HistoricalChartPanelStudyApplyMixin:
         render_keys: List[str],
         series_list: List[Series],
         instance_id: Optional[str] = None,
+        source_kind: str = STUDY_SOURCE_TEMPORARY,
+        input_bindings: Optional[Mapping[str, Any]] = None,
+        input_binding_meta: Optional[Mapping[str, Any]] = None,
+        required_inputs: Optional[Sequence[Any]] = None,
+        saved_artifact_ref: Optional[Mapping[str, Any]] = None,
     ) -> ChartStudyInstance:
         last_value = None
         if supports_last_value:
@@ -509,7 +515,11 @@ class HistoricalChartPanelStudyApplyMixin:
                 family=family,
                 tool_key=tool_key,
                 params=dict(params),
-                source_kind=STUDY_SOURCE_TEMPORARY,
+                source_kind=str(source_kind).strip().lower() or STUDY_SOURCE_TEMPORARY,
+                input_bindings=dict(input_bindings or {}),
+                input_binding_meta=dict(input_binding_meta or {}),
+                required_inputs=tuple(required_inputs or ()),
+                saved_artifact_ref=dict(saved_artifact_ref) if saved_artifact_ref is not None else None,
             ),
             runtime=ChartStudyRuntimeState(
                 last_value=last_value,
@@ -591,6 +601,27 @@ class HistoricalChartPanelStudyApplyMixin:
         projection_key = str(payload.get("study_projection_key", "")).strip()
         display_name = str(payload.get("display_name", payload.get("tool_title", tool_key))).strip()
         params = dict(payload.get("params", {}) or {})
+        source_kind = str(payload.get("source_kind", STUDY_SOURCE_TEMPORARY) or STUDY_SOURCE_TEMPORARY).strip()
+        raw_input_bindings = payload.get("input_bindings", {}) or {}
+        input_bindings = dict(raw_input_bindings) if isinstance(raw_input_bindings, Mapping) else {}
+        raw_input_binding_meta = payload.get("input_binding_meta", {}) or {}
+        input_binding_meta = (
+            dict(raw_input_binding_meta)
+            if isinstance(raw_input_binding_meta, Mapping)
+            else {}
+        )
+        raw_required_inputs = payload.get("required_inputs", ()) or ()
+        required_inputs = (
+            tuple(raw_required_inputs)
+            if isinstance(raw_required_inputs, (list, tuple))
+            else ()
+        )
+        raw_saved_artifact_ref = payload.get("saved_artifact_ref")
+        saved_artifact_ref = (
+            dict(raw_saved_artifact_ref)
+            if isinstance(raw_saved_artifact_ref, Mapping)
+            else None
+        )
         series_list = list(payload.get("series_list", []) or [])
         style_driver_series_list = list(payload.get("style_driver_series_list", []) or [])
 
@@ -672,6 +703,11 @@ class HistoricalChartPanelStudyApplyMixin:
             render_keys=render_keys,
             series_list=chart_local_series_list,
             instance_id=provisional_instance_id,
+            source_kind=source_kind,
+            input_bindings=input_bindings,
+            input_binding_meta=input_binding_meta,
+            required_inputs=required_inputs,
+            saved_artifact_ref=saved_artifact_ref,
         )
         if edited_study is not None:
             study = study.with_style(edited_study.style)
@@ -709,4 +745,3 @@ class HistoricalChartPanelStudyApplyMixin:
             f"Applied {seeded_study.computation.family} study '{seeded_study.display_name}' "
             f"to chart session (output_mode={output_mode}, structure={output_structure})."
         )
-

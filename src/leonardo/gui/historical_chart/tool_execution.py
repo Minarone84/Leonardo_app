@@ -269,6 +269,7 @@ class HistoricalChartToolExecutionMixin:
                         tool_key=tool_key,
                         tool_title=tool_title,
                         params=params,
+                        source_payload=payload,
                     )
                 )
                 return
@@ -285,6 +286,7 @@ class HistoricalChartToolExecutionMixin:
                         tool_key=tool_key,
                         tool_title=tool_title,
                         params=params,
+                        source_payload=payload,
                     )
                 )
                 return
@@ -301,6 +303,7 @@ class HistoricalChartToolExecutionMixin:
                         tool_key=tool_key,
                         tool_title=tool_title,
                         params=params,
+                        source_payload=payload,
                     )
                 )
                 return

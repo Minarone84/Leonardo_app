@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional
+from typing import Any, Dict, Iterable, Iterator, List, Mapping, Optional, Tuple
 
 
 STUDY_FAMILY_INDICATOR = "indicator"
@@ -29,6 +29,10 @@ class StudyComputationConfig:
     source_kind: str = STUDY_SOURCE_TEMPORARY
     artifact_path: Optional[str] = None
     saved_artifact_name: Optional[str] = None
+    input_bindings: Dict[str, Any] = field(default_factory=dict)
+    input_binding_meta: Dict[str, Any] = field(default_factory=dict)
+    required_inputs: Tuple[Any, ...] = field(default_factory=tuple)
+    saved_artifact_ref: Optional[Dict[str, Any]] = None
 
     def with_params(self, params: Dict[str, Any]) -> "StudyComputationConfig":
         return replace(self, params=dict(params))

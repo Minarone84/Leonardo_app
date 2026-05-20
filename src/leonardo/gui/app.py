@@ -20,7 +20,9 @@ def run_gui() -> int:
     core.start()
     ctx = core.context
 
-    # GUI-owned WindowManager (must live in GUI thread)
+    # WindowManager is a GUI-owned QObject and is registered only after Qt
+    # construction so service lookup can find it without transferring lifecycle
+    # ownership to the Core application.
     win.window_manager = WindowManager(ctx=ctx, core_bridge=core, parent=win)  # type: ignore[attr-defined]
     core.window_manager = win.window_manager  # optional convenience
     ctx.register_service(SVC_GUI_WINDOW_MANAGER, win.window_manager)  # type: ignore[attr-defined]

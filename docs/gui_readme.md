@@ -116,6 +116,8 @@ The GUI:
 - must not manage connection lifecycle directly
 - must not own feed futures or async feed execution
 
+`CoreBridge` owns the active realtime future and ignores completion callbacks from stale futures that are no longer the active feed future.
+
 Adapters remain transport-only and must not expose lifecycle or runtime state.
 
 The current `MainWindow` feed controls remain a temporary integration surface, not a permanent connection-management interface.
@@ -162,6 +164,8 @@ The GUI Window Manager tracks all top-level windows:
 
 Embedded chart panels are not tracked as top-level windows.
 
+`WindowManager` is a GUI-owned QObject. Registering it in `AppContext` provides service lookup only and does not transfer lifecycle ownership to Core.
+
 Window lifecycle events are reflected into Core runtime state so Core maintains a consistent system-wide view of active windows.
 
 ---
@@ -176,6 +180,7 @@ Responsibilities include:
 - collecting exchange, market, symbol, timeframe, optional range, and optional limit input;
 - displaying supported exchanges, markets, and timeframes supplied through CoreBridge/capability callbacks;
 - requesting Core-owned preflight plans;
+- passing the configured historical root, `Path(ctx.config.runtime.data_dir) / "historical"`, into downloader preflight and execution paths;
 - showing the Confirm OHLCV Download dialog before execution;
 - opening the OHLCV Download Task monitor for progress, validation, cancellation, and final recap display;
 - requesting Stop/Cancel through CoreBridge.
@@ -247,8 +252,9 @@ Current Analysis Database UI behavior:
 - saving component changes intentionally changes the manifest recipe, resets materialization to draft, removes stale `dataframe.csv` when present, and requires a later build;
 - rename and delete are exposed as user actions, but durable mutation is store-owned;
 - Data Manager opens maximized and uses a compact layout where the top row contains Dataset and Calculate and Save Tool Outputs, the middle row contains DataFrame Preview and Saved Indicators / Oscillators / Constructs, and the lower area keeps Data Checks / Metadata Tools plus Database seed creator on the left with Database Builder on the right;
-- DataFrame Preview keeps source, row-limit, and visible timestamp information in a compact header so the table keeps maximum usable space;
-- saved artifact actions sit above the artifact list so the list uses the full widget width;
+- main Data Manager widgets use the shared right-side `make_button_rack(...)` action layout;
+- DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack;
+- saved artifact actions use the shared button rack so the list retains content width;
 - Database Builder gives the database list and manifest/details area equal display space;
 - Data Manager-local text is enlarged and widget titles are bold while normal labels/buttons remain normal weight;
 - Saved Artifact Recipes and Saved Recipe Collections dialogs use larger readable list areas so long names are visible.
@@ -279,7 +285,7 @@ It must not:
 - consume checked artifact columns inside Database Builder;
 - replace Analysis Database components during build/rebuild.
 
-Data Manager maintenance actions such as metadata backfill are restore-only operations. They may recreate missing or unreadable `.meta.json` sidecars from existing CSV files, but they must not rewrite CSV data and must not be treated as the normal save path. Analysis Database create, rename, delete, build, rebuild, and explicit component-edit operations must go through the appropriate data-layer service, because `manifest.json` is the metadata-sidecar equivalent for the folder-backed `dataframe.csv` artifact. GUI release checks enforce that Database Builder does not consume artifact selections, does not call feature-replacement rebuild APIs, and keeps build/rebuild separate and manifest-driven. Layout-oriented release guardrails should stay aligned with the accepted Data Manager visual baseline rather than hard-coding obsolete button-rack placement.
+Data Manager maintenance actions such as metadata backfill are restore-only operations. They may recreate missing or unreadable `.meta.json` sidecars from existing CSV files, but they must not rewrite CSV data and must not be treated as the normal save path. Analysis Database create, rename, delete, build, rebuild, and explicit component-edit operations must go through the appropriate data-layer service, because `manifest.json` is the metadata-sidecar equivalent for the folder-backed `dataframe.csv` artifact. GUI release checks enforce that Database Builder does not consume artifact selections, does not call feature-replacement rebuild APIs, keeps build/rebuild separate and manifest-driven, and keeps main Data Manager actions in the shared right-side button rack layout.
 
 
 ## Historical Workspace Model
@@ -1090,6 +1096,8 @@ The GUI workflow remains:
 
 `selection → configuration → preview/apply/save`
 
+When opened from a historical chart panel, `FinancialToolsManagerWindow` receives the configured historical root from the chart session. The constructor fallback may still exist for unsupported direct construction, but supported chart and Data Manager flows pass historical roots explicitly.
+
 The GUI owns:
 
 - chart-session apply integration
@@ -1377,6 +1385,8 @@ Recommended tooling (in the GUI package):
 ---
 
 ## Change log
+
+- **v3.17 (2026-05-20)** — Root and boundary documentation sync: GUI/chart/download paths pass configured historical roots explicitly, `WindowManager` registration is documented as GUI-owned lookup, `CoreBridge` ignores stale realtime future completions, and Data Manager main widgets use the shared right-side button rack layout.
 
 - **v3.16 (2026-05-19)** — Historical Workspace layout update: embedded Historical Data Manager charts now support 8 stable logical slots, Scroll 4 / Fit 8 visualization modes, dock-back slot preservation, chart Position controls, and adaptive visual layouts for 1–8 embedded charts.
 

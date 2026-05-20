@@ -19,7 +19,7 @@ Primary architecture documents live in `docs/`:
 
 ## Current Historical Download Manager baseline — 2026-05-18
 
-The Historical Download Manager is now a Core-supervised OHLCV ingestion flow. The GUI collects user input, displays exchange capabilities, requests preflight plans, shows the Confirm OHLCV Download dialog, opens the OHLCV Download Task monitor, and observes audit events. Core owns execution through TaskManager, HistoricalDownloader owns planning/paging/persistence/validation, and the exchange adapter owns venue-specific markets, timeframes, aliases, interval mappings, historical limits, and range-discovery behavior.
+The Historical Download Manager is now a Core-supervised OHLCV ingestion flow. The GUI collects user input, displays exchange capabilities, requests preflight plans, shows the Confirm OHLCV Download dialog, opens the OHLCV Download Task monitor, and observes audit events. Core owns execution through TaskManager, HistoricalDownloader owns planning/paging/persistence/validation, and the exchange adapter owns venue-specific markets, timeframes, aliases, interval mappings, historical limits, and range-discovery behavior. Supported GUI download flows pass the active historical storage root, `Path(ctx.config.runtime.data_dir) / "historical"`, into the downloader instead of relying on the default root fallback.
 
 Important accepted behavior:
 
@@ -46,8 +46,9 @@ Data Manager remains dataset/artifact oriented and separate from chart sessions.
 - larger Saved Recipes and Saved Recipe Collections dialogs for readable long names;
 - recipe-collection recovery controls for checking artifact status, regenerating planner-actionable missing/stale/unknown artifacts, and rebuilding a linked Analysis Database when the collection carries `source_database_id`;
 - Data Manager opens maximized and uses the accepted compact M6F visual layout: Dataset and Calculate and Save Tool Outputs on the top row, DataFrame Preview and Saved Indicators / Oscillators / Constructs on the middle row, Data Checks / Metadata Tools plus Database seed creator on the lower-left area, and Database Builder on the lower-right area;
-- DataFrame Preview keeps source, row-limit, and visible timestamp information in a compact header so the table retains maximum usable space;
-- Saved artifact actions sit above the artifact list, and Database Builder gives the database list and manifest/details area equal display space.
+- Data Manager main widgets use the shared right-side `make_button_rack(...)` action layout;
+- DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack;
+- saved artifact and Database Builder actions use the shared button rack so lists and details retain content width.
 
 GUI code collects user selections and presents dialogs. It must not manually rewrite `manifest.json`, move/delete `analysis_databases/{database_id}/`, invent persistence rules, classify artifact recovery state locally, or replace Analysis Database components during build/rebuild. Recovery UI actions are intent surfaces only: status classification belongs to `ArtifactRecoveryPlanner`, artifact regeneration belongs to `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor`, and linked database materialization belongs to `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`.
 
@@ -67,6 +68,7 @@ Accepted behavior includes:
 - renderable outputs are the only outputs that become chart series; accidental empty render payloads fail unless the tool explicitly allows empty render output;
 - non-renderable but `analysis_usable` outputs remain valid temporary construct sources without entering the renderer;
 - save writes full-dataset artifacts with explicit params, bindings, and durable saved-source lineage where available;
+- chart save, saved-dependency lookup, and chart-opened `FinancialToolsManagerWindow` paths use the configured historical storage root from runtime config;
 - active construct saved identity includes deterministic `__h<hash8>` identity;
 - style changes invalidate static render caches through public workspace/pane/surface contracts instead of panel reach-through into renderer internals;
 - `Series.values` consumers honor the `Sequence` contract;

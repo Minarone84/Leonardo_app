@@ -253,6 +253,8 @@ The Core is **not** responsible for:
 
 Canonical dataset structure:
 
+Historical storage is rooted at `Path(config.runtime.data_dir) / "historical"` for configured Core/GUI flows. With the default runtime data directory, the shape is:
+
 `data/historical/{exchange}/{market_type}/{symbol}/{timeframe}/ohlcv/candles.csv`
 
 Example:
@@ -532,6 +534,8 @@ Typical subfolders include:
 Example shape:
 
 `data/historical/{exchange}/{market_type}/{symbol}/{timeframe}/...`
+
+This is the default configured root shape. Callers that run with a non-default `runtime.data_dir` must resolve the same partition layout under that configured data directory.
 
 ### CSV-backed artifact contract
 

@@ -272,6 +272,7 @@ Current behavior:
 
 MainWindow requests realtime actions through CoreBridge  
 CoreBridge owns the temporary realtime feed future  
+CoreBridge ignores completion callbacks from stale realtime futures that are no longer active  
 GUI no longer launches feed tasks directly  
 GUI reacts to bridge signals and runtime state instead of owning feed lifecycle  
 
@@ -339,8 +340,9 @@ Implemented baseline:
 - Analysis Database rename preserves immutable `database_id`; delete removes the folder-backed artifact.
 - Duplicate visible-name validation applies to draft creation and rename, not to build/rebuild of an existing database by `database_id`.
 - Data Manager opens maximized and uses the accepted M6F compact visual layout: Dataset and Calculate and Save Tool Outputs on the top row, DataFrame Preview and Saved Indicators / Oscillators / Constructs on the middle row, Data Checks / Metadata Tools plus Database seed creator on the lower-left area, and Database Builder on the lower-right area.
-- DataFrame Preview keeps source, row-limit, and visible timestamp information in a compact header so the table keeps maximum usable space.
-- Saved artifact actions sit above the artifact list, and Database Builder gives the database list and manifest/details area equal display space.
+- Main Data Manager widgets use the shared right-side button rack for actions.
+- DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack.
+- Saved artifact actions and Database Builder actions use the shared button rack so lists and details retain content width.
 - Data Manager-local text is enlarged and widget titles are bold while normal labels/buttons remain normal weight.
 - Saved Artifact Recipes and Saved Recipe Collections dialogs now use larger/readable list areas for long names.
 - CSV-backed historical artifacts use adjacent `.meta.json` sidecars for identity, metadata, lineage, fingerprint, and quality metadata.
@@ -365,7 +367,7 @@ Implemented baseline:
   - M6C extracted the shared GUI feature-builder helper.
   - M6D added the explicit component editor GUI.
   - M6E split build/rebuild, added the dedicated build dialog, auto-loaded saved artifacts in build/edit dialogs, highlighted existing components, enlarged recipe/collection dialogs, and validated the final smoke test.
-  - M6F finalized Data Manager visual polish: maximized opening, compact top/middle/lower screen layout, contextual button placement, improved DataFrame Preview header, equal Database Builder list/details display space, enlarged local font, and bold widget titles without changing data semantics.
+  - M6F finalized Data Manager visual polish: maximized opening, compact top/middle/lower screen layout, shared right-side button rack placement, improved DataFrame Preview content header, equal Database Builder list/details display space, enlarged local font, and bold widget titles without changing data semantics.
 - M7 Historical Download Manager hardening is accepted:
   - M7A kept exchange-specific markets, timeframes, aliases, interval mappings, and limits in the adapter/capability layer instead of the GUI.
   - M7B wired Historical Download Manager market/timeframe display through CoreBridge capability callbacks.
@@ -373,6 +375,7 @@ Implemented baseline:
   - M7D accepted multi-timeframe OHLCV selection, task monitor progress, Stop/OK flow, final recap, and batch validation summary.
   - M7E made Bybit's historical page limit adapter-owned, with GUI `Limit = 0` resolving to the adapter default and explicit values clamped to the adapter maximum.
   - M7F normalized validation so fixed canonical timeframes such as `3m`, `2h`, `6h`, and `12h` validate without moving exchange-specific support truth into the validator.
+  - M7G passes the configured historical root, `Path(ctx.config.runtime.data_dir) / "historical"`, into downloader preflight and execution paths.
 - M8 Historical chart/study hardening is accepted:
   - M8A hardened historical dataset opening with GUI-thread result marshalling, open-generation guards, and stale slice-result protection.
   - M8B moved historical chart dataset selection onto CoreBridge/HistoricalDatasetService catalog surfaces instead of GUI filesystem discovery.
@@ -382,6 +385,7 @@ Implemented baseline:
   - M8F saved full-dataset artifacts now receive explicit params/bindings/source lineage where available, and active construct saved identity includes deterministic `__h<hash8>`.
   - M8G replaced panel private render-cache reach-through with public workspace/pane/surface invalidation contracts and enforced `Sequence`-safe series values handling.
   - M8H added dataset-service cache invalidation after OHLCV rewrites and completed full uploaded test validation.
+  - M8I aligned historical chart saved-artifact lookup, chart save, and chart-opened Financial Tool Manager paths with the configured historical root.
 
 Next direction:
 

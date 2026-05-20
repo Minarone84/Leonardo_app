@@ -332,6 +332,8 @@ Trend and range dependency intents are separate even when they are satisfied fro
 
 This dependency preparation does not change the compute/render contract. Full UTC output remains controller-owned full-study truth, and resident-local projection remains the only payload sent downstream. The renderer remains execution-only. Historical UTC range replay is sequential: bars are processed in order and confirmed range swings are fed only at their knowable confirmation bar so active ranges can continue/break through later bars in the same way a future realtime path would. Invalid OHLC/source rows remain hard continuity breaks: historical UTC must split directional trend detection by contiguous valid-data segments so uptrend/downtrend intervals never bridge NaN or malformed candle/source gaps.
 
+Saved dependency lookup uses the active historical storage root derived from runtime config, `Path(ctx.config.runtime.data_dir) / "historical"`, rather than the default root fallback.
+
 ### 9.4 Refill ownership
 
 Viewport movement is only an input signal.
@@ -675,6 +677,8 @@ No recomputation is required just because the resident window moved.
 ### 15.3 Save
 
 Save remains a full-dataset persistence operation and is independent from the current resident window.
+
+Historical chart save paths use the active configured historical root, and chart-opened `FinancialToolsManagerWindow` instances receive that root from the panel.
 
 ---
 

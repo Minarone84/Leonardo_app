@@ -186,7 +186,7 @@ Responsibility
 The HistoricalDownloader orchestrates:
 
 • input canonicalization
-• path resolution
+• path resolution from the injected historical root
 • exchange paging
 • idempotent merge
 • atomic persistence
@@ -364,6 +364,7 @@ Updated Interaction Model
 The GUI:
 
 • asks the active capability surface for supported market/timeframe values
+• resolves the active historical root as `Path(ctx.config.runtime.data_dir) / "historical"` and passes it into downloader preflight and execution paths
 • submits preflight and confirmed download requests to Core
 • does NOT execute downloads
 • does NOT own exchange parameters
@@ -439,8 +440,8 @@ GUI (HistoricalDownloadWindow)
 HistoricalDownloader
   │
   ├──▶ CsvOHLCVStore
-  │       ├──▶ data/historical/{...}/ohlcv/candles.csv
-  │       └──▶ data/historical/{...}/ohlcv/candles.meta.json
+  │       ├──▶ {configured historical root}/{...}/ohlcv/candles.csv
+  │       └──▶ {configured historical root}/{...}/ohlcv/candles.meta.json
   │
   ├──▶ HistoricalDatasetValidator
   │

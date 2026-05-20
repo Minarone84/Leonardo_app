@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Dict, Optional
 
 from PySide6.QtCore import Qt, Signal
@@ -618,6 +619,10 @@ class HistoricalChartPanel(
         except Exception:
             return []
 
+    def _configured_historical_root(self) -> Path:
+        """Return the active historical root from the Core runtime config."""
+        return Path(self._core.context.config.runtime.data_dir) / "historical"
+
     def _ensure_financial_tools_manager_window(self) -> FinancialToolsManagerWindow:
         if self._financial_tools_manager_window is None:
             self._financial_tools_manager_window = FinancialToolsManagerWindow(
@@ -626,6 +631,7 @@ class HistoricalChartPanel(
                 symbol=self._symbol,
                 timeframe=self._timeframe,
                 source_options_provider=self._list_available_construct_source_options,
+                historical_root=self._configured_historical_root(),
                 parent=self,
             )
             self._connect_financial_tools_manager_signals(self._financial_tools_manager_window)
@@ -645,6 +651,7 @@ class HistoricalChartPanel(
             symbol=self._symbol,
             timeframe=self._timeframe,
             source_options_provider=self._list_available_construct_source_options,
+            historical_root=self._configured_historical_root(),
             parent=self,
         )
         self._connect_financial_tools_manager_signals(self._financial_tools_manager_window)

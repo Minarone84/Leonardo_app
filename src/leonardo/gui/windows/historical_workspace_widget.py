@@ -91,6 +91,21 @@ class HistoricalWorkspaceWidget(QWidget):
     def chart_count(self) -> int:
         return sum(1 for panel in self._chart_slots if panel is not None)
 
+    def list_embedded_chart_panels(self) -> list[tuple[int, HistoricalChartPanel]]:
+        """Return embedded chart panels with one-based workspace positions."""
+        return [
+            (index + 1, panel)
+            for index, panel in enumerate(self._chart_slots)
+            if panel is not None
+        ]
+
+    def get_panel_by_position(self, position: int) -> Optional[HistoricalChartPanel]:
+        """Return the embedded chart panel at a one-based workspace position."""
+        index = int(position) - 1
+        if index < 0 or index >= self.MAX_CHARTS:
+            return None
+        return self._chart_slots[index]
+
     def visualization_mode(self) -> str:
         return self._visualization_mode
 

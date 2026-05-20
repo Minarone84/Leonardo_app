@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Dict, Optional
+from typing import Any, Dict, Mapping, Optional, Sequence
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -21,6 +22,12 @@ from leonardo.gui.chart.studies import (
     ChartStudyInstance,
     ChartStudyRegistry,
     PANE_TARGET_OSCILLATOR,
+)
+from leonardo.gui.chart.study_serialization import (
+    deserialize_chart_study_payload,
+    deserialize_study_style_payload,
+    serialize_chart_study,
+    validate_serialized_chart_study,
 )
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget
 from leonardo.gui.historical_chart_controller import HistoricalChartController
@@ -219,6 +226,193 @@ class HistoricalChartPanel(
     @property
     def study_registry(self) -> ChartStudyRegistry:
         return self._study_registry
+
+    def dataset_descriptor(self) -> dict[str, str]:
+        """
+        Return the chart dataset identity used as informational preset metadata.
+
+        The descriptor is not a persistence path and does not bind a study setup
+        to the source market partition.
+        """
+        return {
+            "exchange": self._exchange,
+            "market_type": self._market_type,
+            "symbol": self._symbol,
+            "timeframe": self._timeframe,
+        }
+
+    def study_setup_recap_entries(self) -> list[dict[str, Any]]:
+        """Return compact study metadata for study setup save/load dialogs."""
+        entries: list[dict[str, Any]] = []
+        for study in self._study_registry.list_all():
+            entries.append(
+                {
+                    "family": study.computation.family,
+                    "tool_key": study.computation.tool_key,
+                    "display_name": study.display_name,
+                    "pane_target": study.pane_target,
+                    "params": dict(study.computation.params),
+                    "source_kind": study.computation.source_kind,
+                    "input_bindings": dict(study.computation.input_bindings),
+                    "visible": bool(study.style.visible),
+                }
+            )
+        return entries
+
+    def export_serialized_studies(self) -> list[dict[str, Any]]:
+        """
+        Export chart-local studies as durable, JSON-safe study setup payloads.
+
+        Runtime render keys, computed values, and controller projection state are
+        intentionally excluded by the chart study serialization layer.
+        """
+        payloads: list[dict[str, Any]] = []
+        for study in self._study_registry.list_all():
+            payload = serialize_chart_study(study)
+            errors = validate_serialized_chart_study(payload)
+            if errors:
+                raise ValueError(
+                    "Invalid serialized chart study: " + "; ".join(errors)
+                )
+            payloads.append(payload)
+        return payloads
+
+    def apply_serialized_study_setup(
+        self,
+        studies: Sequence[Mapping[str, Any]],
+        *,
+        mode: str = "append",
+    ) -> dict[str, Any]:
+        """
+        Apply serialized study setup entries through the normal chart apply path.
+
+        The method restores durable study intent through the controller, then
+        reapplies chart-local style after each study is registered. It does not
+        inject computed arrays or renderer payloads from serialized data.
+        """
+        normalized_mode = str(mode or "append").strip().lower()
+        if normalized_mode not in {"append", "replace"}:
+            raise ValueError(f"Unsupported study setup load mode: {mode!r}")
+
+        normalized_studies: list[dict[str, Any]] = []
+        errors: list[str] = []
+        for index, raw_study in enumerate(studies):
+            try:
+                normalized_studies.append(deserialize_chart_study_payload(raw_study))
+            except Exception as exc:
+                errors.append(f"Study {index + 1}: {exc!r}")
+
+        if errors:
+            return {"applied_count": 0, "errors": errors}
+
+        if normalized_mode == "replace":
+            for existing in list(self._study_registry.list_all()):
+                self.remove_study_instance(existing.instance_id)
+
+        applied_instance_ids: list[str] = []
+        for study_payload in normalized_studies:
+            before_ids = set(self._study_registry.ids())
+            controller_payload = self._controller_payload_from_serialized_study(
+                study_payload,
+            )
+            try:
+                self._controller.apply_financial_tool(controller_payload)
+            except Exception as exc:
+                errors.append(
+                    f"{study_payload.get('display_name') or study_payload.get('tool_key')}: {exc!r}"
+                )
+                continue
+
+            new_instance_ids = [
+                instance_id
+                for instance_id in self._study_registry.ids()
+                if instance_id not in before_ids
+            ]
+            if not new_instance_ids:
+                errors.append(
+                    "Study did not register after apply: "
+                    f"{study_payload.get('display_name') or study_payload.get('tool_key')}"
+                )
+                continue
+
+            restored = self._restore_serialized_study_style(
+                new_instance_ids[-1],
+                study_payload,
+            )
+            if restored is not None:
+                applied_instance_ids.append(restored.instance_id)
+
+        return {
+            "applied_count": len(applied_instance_ids),
+            "errors": errors,
+            "instance_ids": applied_instance_ids,
+        }
+
+    def _controller_payload_from_serialized_study(
+        self,
+        study_payload: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        saved_artifact_ref = study_payload.get("saved_artifact_ref")
+        return {
+            "tool_type": str(study_payload.get("family", "")).strip().lower(),
+            "tool_key": str(study_payload.get("tool_key", "")).strip().lower(),
+            "tool_title": str(
+                study_payload.get("display_name")
+                or study_payload.get("tool_key")
+                or ""
+            ).strip(),
+            "exchange": self._exchange,
+            "market_type": self._market_type,
+            "symbol": self._symbol,
+            "timeframe": self._timeframe,
+            "params": dict(study_payload.get("params", {}) or {}),
+            "input_bindings": dict(study_payload.get("input_bindings", {}) or {}),
+            "input_binding_meta": dict(
+                study_payload.get("input_binding_meta", {}) or {}
+            ),
+            "required_inputs": list(study_payload.get("required_inputs", []) or []),
+            "saved_artifact_ref": (
+                dict(saved_artifact_ref)
+                if isinstance(saved_artifact_ref, Mapping)
+                else None
+            ),
+            "source_kind": str(
+                study_payload.get("source_kind", "temporary") or "temporary"
+            ).strip().lower(),
+        }
+
+    def _restore_serialized_study_style(
+        self,
+        instance_id: str,
+        study_payload: Mapping[str, Any],
+    ) -> Optional[ChartStudyInstance]:
+        study = self._study_registry.get(instance_id)
+        if study is None:
+            return None
+
+        style_payload = study_payload.get("style", {})
+        style = deserialize_study_style_payload(
+            style_payload if isinstance(style_payload, Mapping) else {}
+        )
+        display_name = str(study_payload.get("display_name", "") or "").strip()
+        restored = replace(
+            study,
+            display_name=display_name or study.display_name,
+            style=style,
+        )
+        self._study_registry.add(restored)
+
+        restored = self._reapply_study_render_series(
+            restored,
+            force_surface_static_reset=True,
+        )
+        self._study_registry.add(restored)
+
+        if restored.pane_target == PANE_TARGET_OSCILLATOR:
+            self._connect_oscillator_pane_signals_for_study(restored.instance_id)
+            self._apply_oscillator_visual_policy_for_study(restored)
+
+        return restored
 
     def set_floating(self, floating: bool) -> None:
         self._is_floating = bool(floating)

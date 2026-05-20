@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Optional
+from pathlib import Path
+from typing import Any, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent
@@ -17,12 +18,19 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStatusBar,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
 
 from leonardo.core.context import AppContext
+from leonardo.data.chart_presets.study_setup_store import ChartStudySetupStore
 from leonardo.gui.core_bridge import CoreBridge
+from leonardo.gui.chart.study_serialization import validate_serialized_chart_study
+from leonardo.gui.windows._historical_data_manager.study_setup_dialogs import (
+    LoadStudySetupDialog,
+    SaveStudySetupDialog,
+)
 from leonardo.gui.windows.historical_workspace_widget import HistoricalWorkspaceWidget
 
 
@@ -485,8 +493,11 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._menu_file: Optional[QMenu] = None
         self._menu_window: Optional[QMenu] = None
         self._menu_historical: Optional[QMenu] = None
+        self._study_setup_toolbar: Optional[QToolBar] = None
 
         self._action_new_chart: Optional[QAction] = None
+        self._action_save_study_setup: Optional[QAction] = None
+        self._action_load_study_setup: Optional[QAction] = None
         self._action_close: Optional[QAction] = None
         self._action_placeholder_tile: Optional[QAction] = None
         self._action_placeholder_open_chart: Optional[QAction] = None
@@ -559,6 +570,26 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         menu_file.addSeparator()
 
+        action_save_study_setup = QAction("Save Study Setup...", self)
+        action_save_study_setup.setToolTip(
+            "Save the studies, parameters, and styles from one chart."
+        )
+        action_save_study_setup.setStatusTip(
+            "Save the studies, parameters, and styles from one chart."
+        )
+        action_save_study_setup.triggered.connect(self._on_save_study_setup)
+        self._action_save_study_setup = action_save_study_setup
+        menu_file.addAction(action_save_study_setup)
+
+        action_load_study_setup = QAction("Load Study Setup...", self)
+        action_load_study_setup.setToolTip("Apply a saved study setup to a chart.")
+        action_load_study_setup.setStatusTip("Apply a saved study setup to a chart.")
+        action_load_study_setup.triggered.connect(self._on_load_study_setup)
+        self._action_load_study_setup = action_load_study_setup
+        menu_file.addAction(action_load_study_setup)
+
+        menu_file.addSeparator()
+
         action_close = QAction("Close", self)
         action_close.triggered.connect(self.close)
         self._action_close = action_close
@@ -617,6 +648,14 @@ class HistoricalDataManagerWindow(QMainWindow):
         action_refresh.triggered.connect(self._on_refresh_placeholder)
         self._action_placeholder_refresh = action_refresh
         menu_historical.addAction(action_refresh)
+
+        study_setup_toolbar = QToolBar("Study Setups", self)
+        study_setup_toolbar.setObjectName("historicalDataManagerStudySetupToolbar")
+        study_setup_toolbar.setMovable(False)
+        study_setup_toolbar.addAction(self._action_save_study_setup)
+        study_setup_toolbar.addAction(self._action_load_study_setup)
+        self.addToolBar(Qt.TopToolBarArea, study_setup_toolbar)
+        self._study_setup_toolbar = study_setup_toolbar
 
     def _build_status_bar(self) -> None:
         status_bar = QStatusBar(self)
@@ -717,6 +756,222 @@ class HistoricalDataManagerWindow(QMainWindow):
         exchange_display = exchange[:1].upper() + exchange[1:] if exchange else exchange
         self._set_status(
             f"Embedded chart loaded: {exchange_display}_{market_type}_{symbol}_{timeframe}"
+        )
+
+    def _chart_study_setup_store_root(self) -> Path:
+        return Path(self._ctx.config.runtime.data_dir) / "chart_presets" / "study_setups"
+
+    def _chart_study_setup_store(self) -> ChartStudySetupStore:
+        return ChartStudySetupStore(self._chart_study_setup_store_root())
+
+    def _chart_options(self) -> list[dict[str, Any]]:
+        workspace = self._workspace_widget
+        if workspace is None:
+            return []
+
+        options: list[dict[str, Any]] = []
+        for position, panel in workspace.list_embedded_chart_panels():
+            dataset = panel.dataset_descriptor()
+            studies = panel.study_setup_recap_entries()
+            label = (
+                f"Position {position}: "
+                f"{dataset.get('exchange', '')} / "
+                f"{dataset.get('market_type', '')} / "
+                f"{dataset.get('symbol', '')} / "
+                f"{dataset.get('timeframe', '')}"
+            )
+            options.append(
+                {
+                    "position": position,
+                    "label": label,
+                    "dataset": dataset,
+                    "study_count": len(studies),
+                    "studies": studies,
+                }
+            )
+        return options
+
+    def _panel_for_chart_position(self, position: int):
+        workspace = self._workspace_widget
+        if workspace is None:
+            return None
+        return workspace.get_panel_by_position(int(position))
+
+    def _on_save_study_setup(self) -> None:
+        chart_options = self._chart_options()
+        if not chart_options:
+            QMessageBox.information(
+                self,
+                "Save Study Setup",
+                "Open a historical chart before saving a study setup.",
+            )
+            return
+
+        dialog = SaveStudySetupDialog(chart_options=chart_options, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            self._set_status("Study setup save cancelled")
+            return
+
+        panel = self._panel_for_chart_position(dialog.selected_chart_position())
+        if panel is None:
+            QMessageBox.warning(
+                self,
+                "Save Study Setup",
+                "Selected source chart is no longer available.",
+            )
+            return
+
+        try:
+            studies = panel.export_serialized_studies()
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Save Study Setup",
+                f"Could not serialize chart studies: {exc!r}",
+            )
+            return
+
+        if not studies:
+            QMessageBox.information(
+                self,
+                "Save Study Setup",
+                "The selected chart has no studies to save.",
+            )
+            return
+
+        store = self._chart_study_setup_store()
+        try:
+            setup = store.create_setup(
+                display_name=dialog.display_name(),
+                description=dialog.description(),
+                created_from=panel.dataset_descriptor(),
+                studies=studies,
+            )
+            saved = store.save_setup(setup)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Save Study Setup",
+                f"Could not save study setup: {exc!r}",
+            )
+            return
+
+        self._set_status(f"Saved study setup: {saved.display_name}")
+        QMessageBox.information(
+            self,
+            "Save Study Setup",
+            f"Saved study setup '{saved.display_name}'.",
+        )
+
+    def _load_study_setup_objects(self):
+        store = self._chart_study_setup_store()
+        setups = []
+        for summary in store.list_summaries():
+            try:
+                setups.append(store.load_setup(summary.setup_id))
+            except Exception:
+                continue
+        return setups
+
+    def _validate_setup_studies_for_load(self, studies: list[dict[str, Any]]) -> list[str]:
+        errors: list[str] = []
+        for index, study in enumerate(studies, start=1):
+            for error in validate_serialized_chart_study(study):
+                errors.append(f"Study {index}: {error}")
+        return errors
+
+    def _on_load_study_setup(self) -> None:
+        chart_options = self._chart_options()
+        if not chart_options:
+            QMessageBox.information(
+                self,
+                "Load Study Setup",
+                "Open a historical chart before loading a study setup.",
+            )
+            return
+
+        setups = self._load_study_setup_objects()
+        if not setups:
+            QMessageBox.information(
+                self,
+                "Load Study Setup",
+                "No saved study setups were found.",
+            )
+            return
+
+        dialog = LoadStudySetupDialog(
+            setups=setups,
+            chart_options=chart_options,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            self._set_status("Study setup load cancelled")
+            return
+
+        store = self._chart_study_setup_store()
+        try:
+            setup = store.load_setup(dialog.selected_setup_id())
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Load Study Setup",
+                f"Could not load study setup: {exc!r}",
+            )
+            return
+
+        studies = [dict(study) for study in setup.studies]
+        validation_errors = self._validate_setup_studies_for_load(studies)
+        if validation_errors:
+            QMessageBox.warning(
+                self,
+                "Load Study Setup",
+                "Selected setup is structurally invalid:\n"
+                + "\n".join(validation_errors[:8]),
+            )
+            return
+
+        panel = self._panel_for_chart_position(dialog.selected_target_chart_position())
+        if panel is None:
+            QMessageBox.warning(
+                self,
+                "Load Study Setup",
+                "Selected target chart is no longer available.",
+            )
+            return
+
+        try:
+            report = panel.apply_serialized_study_setup(
+                studies,
+                mode=dialog.load_mode(),
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Load Study Setup",
+                f"Could not apply study setup: {exc!r}",
+            )
+            return
+
+        applied_count = int(report.get("applied_count", 0) or 0)
+        errors = list(report.get("errors", []) or [])
+        if errors:
+            QMessageBox.warning(
+                self,
+                "Load Study Setup",
+                f"Applied {applied_count} study/studies with errors:\n"
+                + "\n".join(str(error) for error in errors[:8]),
+            )
+            return
+
+        self._set_status(
+            f"Loaded study setup '{setup.display_name}' "
+            f"({applied_count} study/studies)"
+        )
+        QMessageBox.information(
+            self,
+            "Load Study Setup",
+            f"Loaded study setup '{setup.display_name}' "
+            f"onto the selected chart.",
         )
 
     def _on_open_dataset_placeholder(self) -> None:

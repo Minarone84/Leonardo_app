@@ -1,0 +1,419 @@
+{
+  "content_hash": "a370e2583423eebc3a7bdb119d3aeb1cf4a6b8ec4a31e7568b6afddd45b52a55",
+  "created_at_ms": 1779316621289,
+  "created_from": {
+    "exchange": "bybit",
+    "market_type": "linear",
+    "symbol": "BTCUSDT",
+    "timeframe": "30m"
+  },
+  "description": "Ciccialculo test A",
+  "display_name": "TEST_A",
+  "object_type": "chart_study_setup",
+  "schema_version": 1,
+  "setup_id": "8d9d9199d7ae47d08f8e40987308eab0",
+  "studies": [
+    {
+      "display_name": "EMA(14)",
+      "family": "indicator",
+      "input_binding_meta": {},
+      "input_bindings": {},
+      "pane_target": "price",
+      "params": {
+        "period": 14
+      },
+      "required_inputs": [
+        "close"
+      ],
+      "saved_artifact_ref": null,
+      "schema_version": 1,
+      "source_kind": "temporary",
+      "style": {
+        "color": "",
+        "fill_styles": {},
+        "line_style": "solid",
+        "line_width": 1,
+        "show_label": true,
+        "show_value": true,
+        "signal_styles": {
+          "ema_14": {
+            "color": "#22C55E",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          }
+        },
+        "style_modules": [],
+        "visible": true
+      },
+      "tool_key": "ema"
+    },
+    {
+      "display_name": "HCK(13,48)",
+      "family": "indicator",
+      "input_binding_meta": {},
+      "input_bindings": {},
+      "pane_target": "price",
+      "params": {
+        "fast_vwap_l": 13,
+        "slow_vwap_l": 48
+      },
+      "required_inputs": [
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "saved_artifact_ref": null,
+      "schema_version": 1,
+      "source_kind": "temporary",
+      "style": {
+        "color": "",
+        "fill_styles": {
+          "hck_band": {
+            "color": "#94A3B8",
+            "fill_id": "hck_band",
+            "opacity": 0.12,
+            "signal_a": "fast_vwap",
+            "signal_b": "slow_vwap",
+            "visible": true
+          }
+        },
+        "line_style": "solid",
+        "line_width": 1,
+        "show_label": true,
+        "show_value": true,
+        "signal_styles": {
+          "fast_vwap": {
+            "color": "#22C55E",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          },
+          "slow_vwap": {
+            "color": "#EF4444",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          }
+        },
+        "style_modules": [
+          {
+            "config": {
+              "condition": {
+                "lhs_signal": "fast_vwap",
+                "operator": "gt",
+                "rhs_signal": "slow_vwap",
+                "scope": "historical"
+              },
+              "targets": [
+                {
+                  "false_color": "#EF4444",
+                  "signal": "fast_vwap",
+                  "true_color": "#22C55E"
+                },
+                {
+                  "false_color": "#EF4444",
+                  "signal": "slow_vwap",
+                  "true_color": "#22C55E"
+                }
+              ]
+            },
+            "enabled": true,
+            "module_key": "conditional_line_color"
+          },
+          {
+            "config": {
+              "condition": {
+                "lhs_signal": "fast_vwap",
+                "operator": "gt",
+                "rhs_signal": "slow_vwap",
+                "scope": "historical"
+              },
+              "false_color": "#EF4444",
+              "false_opacity": 0.08,
+              "target_fill_id": "hck_band",
+              "true_color": "#22C55E",
+              "true_opacity": 0.08
+            },
+            "enabled": true,
+            "module_key": "conditional_fill_color"
+          }
+        ],
+        "visible": true
+      },
+      "tool_key": "hck"
+    },
+    {
+      "display_name": "BB(14,2.0)",
+      "family": "indicator",
+      "input_binding_meta": {},
+      "input_bindings": {},
+      "pane_target": "price",
+      "params": {
+        "period": 14,
+        "std": 2.0
+      },
+      "required_inputs": [
+        "close"
+      ],
+      "saved_artifact_ref": null,
+      "schema_version": 1,
+      "source_kind": "temporary",
+      "style": {
+        "color": "",
+        "fill_styles": {
+          "bb_band": {
+            "color": "#60A5FA",
+            "fill_id": "bb_band",
+            "opacity": 0.12,
+            "signal_a": "bb_upper_band",
+            "signal_b": "bb_lower_band",
+            "visible": true
+          }
+        },
+        "line_style": "solid",
+        "line_width": 1,
+        "show_label": true,
+        "show_value": true,
+        "signal_styles": {
+          "bb_lower_band": {
+            "color": "#60A5FA",
+            "line_style": "dashed",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          },
+          "bb_middle": {
+            "color": "#F59E0B",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          },
+          "bb_upper_band": {
+            "color": "#60A5FA",
+            "line_style": "dashed",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          }
+        },
+        "style_modules": [],
+        "visible": true
+      },
+      "tool_key": "bb"
+    },
+    {
+      "display_name": "ARSI(14,RMA)",
+      "family": "oscillator",
+      "input_binding_meta": {},
+      "input_bindings": {},
+      "pane_target": "oscillator",
+      "params": {
+        "method": "RMA",
+        "period": 14,
+        "signal_method": "EMA",
+        "signal_period": 14
+      },
+      "required_inputs": [
+        "close"
+      ],
+      "saved_artifact_ref": null,
+      "schema_version": 1,
+      "source_kind": "temporary",
+      "style": {
+        "color": "",
+        "fill_styles": {},
+        "line_style": "solid",
+        "line_width": 1,
+        "show_label": true,
+        "show_value": true,
+        "signal_styles": {
+          "arsi_14_rma": {
+            "color": "#8B5CF6",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          },
+          "arsi_signal_14_rma_14_ema": {
+            "color": "#FF5D00",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          }
+        },
+        "style_modules": [],
+        "visible": true
+      },
+      "tool_key": "arsi"
+    },
+    {
+      "display_name": "Angles",
+      "family": "construct",
+      "input_binding_meta": {
+        "source": {
+          "analysis_usable": true,
+          "artifact_path": "",
+          "column_name": "ema_14",
+          "display_name": "Current Chart \u00b7 EMA [period=14]  ->  ema_14",
+          "family": "indicator",
+          "instance_key": "ema__default__period-14",
+          "projection_key": "ema__default__period-14",
+          "renderable": true,
+          "series_key": "ema_14",
+          "source_kind": "temporary",
+          "temporary_source_role": "renderable",
+          "tool_key": "ema",
+          "tool_title": "EMA"
+        }
+      },
+      "input_bindings": {
+        "source": "ema_14"
+      },
+      "pane_target": "oscillator",
+      "params": {
+        "axis": "bar",
+        "eps": 1e-12,
+        "scheme": "central",
+        "source": "ema_14",
+        "unit": "deg"
+      },
+      "required_inputs": [],
+      "saved_artifact_ref": null,
+      "schema_version": 1,
+      "source_kind": "temporary",
+      "style": {
+        "color": "",
+        "fill_styles": {},
+        "line_style": "solid",
+        "line_width": 1,
+        "show_label": true,
+        "show_value": true,
+        "signal_styles": {},
+        "style_modules": [],
+        "visible": true
+      },
+      "tool_key": "angle"
+    },
+    {
+      "display_name": "Volume(20)",
+      "family": "oscillator",
+      "input_binding_meta": {},
+      "input_bindings": {},
+      "pane_target": "oscillator",
+      "params": {
+        "period": 20
+      },
+      "required_inputs": [
+        "volume"
+      ],
+      "saved_artifact_ref": null,
+      "schema_version": 1,
+      "source_kind": "temporary",
+      "style": {
+        "color": "",
+        "fill_styles": {},
+        "line_style": "solid",
+        "line_width": 1,
+        "show_label": true,
+        "show_value": true,
+        "signal_styles": {
+          "volume": {
+            "color": "#22C55E",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "histogram",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          },
+          "volume_mean_20": {
+            "color": "#06B6D4",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          }
+        },
+        "style_modules": [],
+        "visible": true
+      },
+      "tool_key": "volume"
+    }
+  ],
+  "updated_at_ms": 1779316621289
+}

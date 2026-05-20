@@ -61,7 +61,7 @@ class StudySignalStyle:
     visible: bool = True
     show_label: bool = True
     show_value: bool = True
-    render_mode: str = "line"
+    render_mode: str = "line"  # line | marker | histogram
     marker_shape: str = ""
     marker_size: int = 0
     marker_text: str = ""

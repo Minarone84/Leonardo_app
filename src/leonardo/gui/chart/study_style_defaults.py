@@ -457,6 +457,29 @@ OBV_DEFAULTS = StudyStyleDefaults(
     },
 )
 
+
+VOLUME_DEFAULTS = StudyStyleDefaults(
+    study_key="volume",
+    signal_defaults={
+        "volume": SignalStyleDefaults(
+            color="#22C55E",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+            render_mode="histogram",
+        ),
+        # Period-specific runtime outputs use names such as volume_mean_20.
+        # Style resolution maps those outputs to this prefix/default key.
+        "volume_mean": SignalStyleDefaults(
+            color="#E5E7EB",  # gray-200
+            line_width=1,
+            line_style="solid",
+            visible=True,
+            render_mode="line",
+        ),
+    },
+)
+
 # ---------------------------------------------------------------------------
 # Registries
 # ---------------------------------------------------------------------------
@@ -480,6 +503,7 @@ OSCILLATOR_STUDY_STYLE_DEFAULTS: Dict[str, StudyStyleDefaults] = {
     "tdi": TDI_DEFAULTS,
     "smi": SMI_DEFAULTS,
     "obv": OBV_DEFAULTS,
+    "volume": VOLUME_DEFAULTS,
 }
 
 STUDY_STYLE_DEFAULTS_REGISTRY: Dict[str, StudyStyleDefaults] = {
@@ -506,6 +530,28 @@ def build_default_background_region_styles(study_key: str) -> List[BackgroundReg
     return list(defaults.background_region_defaults)
 
 
+
+def _signal_style_defaults_for(
+    *,
+    defaults: StudyStyleDefaults,
+    signal_name: str,
+) -> Optional[SignalStyleDefaults]:
+    """Resolve signal defaults, including period-dependent Volume mean outputs."""
+    normalized_signal = str(signal_name).strip()
+    signal_defaults = defaults.signal_defaults.get(normalized_signal)
+    if signal_defaults is not None:
+        return signal_defaults
+
+    if (
+        str(defaults.study_key).strip().lower() == "volume"
+        and normalized_signal.startswith("volume_mean_")
+    ):
+        signal_defaults = defaults.signal_defaults.get("volume_mean")
+        if signal_defaults is not None:
+            return signal_defaults
+
+    return defaults.signal_defaults.get("__primary__")
+
 def build_default_series_style(
     *,
     study_key: str,
@@ -520,10 +566,10 @@ def build_default_series_style(
     3. generic SeriesStyle()
     """
     defaults = get_study_style_defaults(study_key)
-    signal_defaults = defaults.signal_defaults.get(str(signal_name).strip())
-
-    if signal_defaults is None:
-        signal_defaults = defaults.signal_defaults.get("__primary__")
+    signal_defaults = _signal_style_defaults_for(
+        defaults=defaults,
+        signal_name=signal_name,
+    )
 
     if signal_defaults is None:
         return SeriesStyle()

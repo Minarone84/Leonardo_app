@@ -225,6 +225,7 @@ class WorkspaceOscillatorMixin:
                 crosshair=self._crosshair,
                 study_instance_id=normalized_study_id,
                 series_list=normalized_series,
+                candles=self._model.candles,
                 visual_policy=state.visual_policy,
                 view_state=state.view_state,
                 parent=self,
@@ -367,6 +368,14 @@ class WorkspaceOscillatorMixin:
             return bool(getattr(style_obj, "visible", True))
         except Exception:
             return True
+
+    def _series_render_mode(self, series: Series) -> str:
+        """Return the chart-local render mode for one oscillator series."""
+        style_obj = getattr(series, "style", None)
+        try:
+            return str(getattr(style_obj, "render_mode", "line") or "line").strip().lower()
+        except Exception:
+            return "line"
 
     def _oscillator_policy_bounds(
         self,
@@ -545,6 +554,7 @@ class WorkspaceOscillatorMixin:
             series_key_parts.append(
                 (
                     str(getattr(series, "key", "")),
+                    self._series_render_mode(series),
                     int(nvals),
                     int(id(values)),
                     _values_fingerprint(values),
@@ -600,10 +610,14 @@ class WorkspaceOscillatorMixin:
         visible_hi: Optional[float] = None
         resident_lo: Optional[float] = None
         resident_hi: Optional[float] = None
+        has_histogram_series = False
 
         for series in self._managed_oscillator_series_for_state(state):
             if not self._series_is_visible(series):
                 continue
+
+            if self._series_render_mode(series) == "histogram":
+                has_histogram_series = True
 
             values = getattr(series, "values", None)
             if not isinstance(values, list) or not values:
@@ -642,6 +656,17 @@ class WorkspaceOscillatorMixin:
                     resident_lo = numeric
                 if resident_hi is None or numeric > resident_hi:
                     resident_hi = numeric
+
+        def include_zero_if_needed(
+            lo: Optional[float],
+            hi: Optional[float],
+        ) -> tuple[Optional[float], Optional[float]]:
+            if not has_histogram_series or lo is None or hi is None:
+                return lo, hi
+            return min(float(lo), 0.0), max(float(hi), 0.0)
+
+        visible_lo, visible_hi = include_zero_if_needed(visible_lo, visible_hi)
+        resident_lo, resident_hi = include_zero_if_needed(resident_lo, resident_hi)
 
         visible_lo, visible_hi = apply_policy(visible_lo, visible_hi)
         resolved = normalize(visible_lo, visible_hi)
@@ -755,6 +780,7 @@ class WorkspaceOscillatorMixin:
             study_instance_id=state.study_instance_id,
             title=state.title,
             series_list=series_list,
+            candles=self._model.candles,
             visual_policy=state.visual_policy,
             view_state=state.view_state,
             resident_base_index=resident_base_index,

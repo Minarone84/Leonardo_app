@@ -4,6 +4,7 @@ import ast
 import sys
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Mapping
 from typing import Iterable
 
 
@@ -620,6 +621,84 @@ def _check_data_manager_recipe_dialog_readability(gui_root: Path) -> list[CheckF
                 )
     return failures
 
+
+def _check_volume_oscillator_histogram_contract(gui_root: Path) -> list[CheckFailure]:
+    """Keep the Volume financial-tool study on the old histogram visual contract.
+
+    The financial-tool runtime owns the Volume data outputs. The chart stack owns
+    their visual form: raw ``volume`` renders as direction-colored histogram bars
+    while period-specific ``volume_mean_*`` outputs remain ordinary lines.
+    """
+    chart_root = gui_root / "chart"
+    watched_paths = (
+        chart_root / "study_style_defaults.py",
+        chart_root / "series_render.py",
+        chart_root / "panes" / "oscillator_pane.py",
+        chart_root / "_workspace" / "workspace_oscillators.py",
+        chart_root / "rendering" / "oscillator_surface_painter.py",
+    )
+    if not any(path.exists() for path in watched_paths):
+        return []
+
+    failures: list[CheckFailure] = []
+
+    def require(path: Path, fragments: Mapping[str, str]) -> None:
+        txt = _read_optional(path)
+        if txt is None:
+            return
+        rel = _relpath(gui_root, path)
+        for fragment, detail in fragments.items():
+            if fragment not in txt:
+                failures.append(
+                    CheckFailure(
+                        code="volume_oscillator_histogram",
+                        path=rel,
+                        detail=f"{detail}: missing {fragment!r}",
+                    )
+                )
+
+    require(
+        chart_root / "study_style_defaults.py",
+        {
+            "VOLUME_DEFAULTS": "Volume must have chart-local style defaults",
+            "render_mode=\"histogram\"": "raw volume output must default to histogram rendering",
+            "volume_mean_": "period-specific Volume mean outputs must resolve to line defaults by prefix",
+            "\"volume\": VOLUME_DEFAULTS": "Volume defaults must be registered as oscillator defaults",
+        },
+    )
+    require(
+        chart_root / "series_render.py",
+        {
+            "candles: Optional[List[Candle]]": "OscillatorRenderSurface must accept resident candles for histogram coloring",
+            "self._candles": "OscillatorRenderSurface must store resident candles",
+        },
+    )
+    require(
+        chart_root / "panes" / "oscillator_pane.py",
+        {
+            "candles: Optional[List[Candle]]": "OscillatorPane must receive resident candles from workspace",
+            "candles=self._candles": "OscillatorPane must hand resident candles to OscillatorRenderSurface",
+        },
+    )
+    require(
+        chart_root / "_workspace" / "workspace_oscillators.py",
+        {
+            "candles=self._model.candles": "workspace must pass model-owned resident candles to oscillator panes",
+            "has_histogram_series": "workspace y-range must detect histogram series",
+            "include_zero_if_needed": "histogram oscillator y-ranges must include zero baseline",
+        },
+    )
+    require(
+        chart_root / "rendering" / "oscillator_surface_painter.py",
+        {
+            "== \"histogram\"": "oscillator renderer must branch on histogram render mode",
+            "float(candle.close) >= float(candle.open)": "Volume histogram color must follow candle direction",
+            "QBrush": "histogram rendering must draw filled bars",
+        },
+    )
+
+    return failures
+
 def run_all_checks(gui_root: Path) -> list[CheckFailure]:
     failures: list[CheckFailure] = []
     failures.extend(_check_compile(gui_root))
@@ -628,6 +707,7 @@ def run_all_checks(gui_root: Path) -> list[CheckFailure]:
     failures.extend(_check_no_swallowed_apply_contract(gui_root))
     failures.extend(_check_no_surface_setters(gui_root))
     failures.extend(_check_pricepane_no_model_overlay_fallback(gui_root))
+    failures.extend(_check_volume_oscillator_histogram_contract(gui_root))
     failures.extend(_check_data_manager_database_builder_boundaries(gui_root))
     # M6F accepted Data Manager layout no longer requires right-side button racks.
     # The older button-rack guardrail was intentionally removed from release

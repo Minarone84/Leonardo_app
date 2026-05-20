@@ -323,7 +323,7 @@ def test_release_checks_reject_missing_or_invalid_build_dialog(tmp_path: Path) -
 
 
 
-def test_release_checks_reject_main_widget_without_button_rack(tmp_path: Path) -> None:
+def test_release_checks_do_not_enforce_obsolete_button_rack_layout(tmp_path: Path) -> None:
     gui_root = _minimal_clean_gui_tree(tmp_path)
     _write(
         gui_root / "windows" / "_data_manager" / "metadata_tools_widget.py",
@@ -336,7 +336,7 @@ class MetadataToolsWidget:
 """,
     )
 
-    assert "data_manager_button_rack" in _failure_codes(gui_root)
+    assert "data_manager_button_rack" not in _failure_codes(gui_root)
 
 
 
@@ -366,3 +366,45 @@ class ArtifactRecipeCollectionDialog:
     )
 
     assert "data_manager_recipe_dialog_readability" in _failure_codes(gui_root)
+
+
+def test_release_checks_reject_volume_oscillator_without_histogram_contract(tmp_path: Path) -> None:
+    gui_root = _minimal_clean_gui_tree(tmp_path)
+    _write(
+        gui_root / "chart" / "study_style_defaults.py",
+        """
+class Placeholder:
+    pass
+""",
+    )
+    _write(
+        gui_root / "chart" / "series_render.py",
+        """
+class OscillatorRenderSurface:
+    pass
+""",
+    )
+    _write(
+        gui_root / "chart" / "panes" / "oscillator_pane.py",
+        """
+class OscillatorPane:
+    pass
+""",
+    )
+    _write(
+        gui_root / "chart" / "_workspace" / "workspace_oscillators.py",
+        """
+class WorkspaceOscillatorMixin:
+    pass
+""",
+    )
+    _write(
+        gui_root / "chart" / "rendering" / "oscillator_surface_painter.py",
+        """
+class OscillatorSurfacePaintMixin:
+    pass
+""",
+    )
+
+    assert "volume_oscillator_histogram" in _failure_codes(gui_root)
+

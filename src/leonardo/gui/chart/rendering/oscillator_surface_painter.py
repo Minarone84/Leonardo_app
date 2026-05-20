@@ -3,12 +3,75 @@ from __future__ import annotations
 from typing import Optional
 
 from PySide6.QtCore import QRectF, Qt, QTimer
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap
+from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QBrush
 
 from leonardo.gui.chart.model import Series
 
 
 class OscillatorSurfacePaintMixin:
+    def _series_render_mode(self, series: Series) -> str:
+        style = getattr(series, "style", None)
+        try:
+            return str(getattr(style, "render_mode", "line") or "line").strip().lower()
+        except Exception:
+            return "line"
+
+    def _candle_at_global(self, global_index: int):
+        local = int(global_index) - int(getattr(self, "_resident_base_index", 0))
+        candles = getattr(self, "_candles", []) or []
+        try:
+            if 0 <= local < len(candles):
+                return candles[local]
+        except Exception:
+            return None
+        return None
+
+    def _volume_histogram_colors_for_global(self, global_index: int) -> tuple[QColor, QColor]:
+        candle = self._candle_at_global(global_index)
+        if candle is None:
+            return QColor(80, 120, 220), QColor(80, 120, 220)
+
+        try:
+            is_up = float(candle.close) >= float(candle.open)
+        except Exception:
+            is_up = True
+
+        if is_up:
+            return QColor(14, 203, 129), QColor(38, 226, 160)
+        return QColor(246, 70, 93), QColor(255, 110, 128)
+
+    def _draw_histogram_series(
+        self,
+        p: QPainter,
+        *,
+        plot: QRectF,
+        series: Series,
+        values: list[float],
+        start: int,
+        end: int,
+        x_positions: list[float],
+        dx: float,
+        y_to_px,
+    ) -> None:
+        baseline_y = y_to_px(0.0)
+        bar_w = max(1.0, min(dx * 0.8, dx - 1.0 if dx > 2.0 else dx))
+
+        for i, global_index in enumerate(range(start, end)):
+            v = self._value_at_global_for_values(global_index, values)
+            if v is None:
+                continue
+
+            x = x_positions[i]
+            y = y_to_px(v)
+            top = min(y, baseline_y)
+            height = max(1.0, abs(baseline_y - y))
+            fill_color, line_color = self._volume_histogram_colors_for_global(global_index)
+
+            rect = QRectF(x - bar_w / 2.0, top, bar_w, height)
+            p.setPen(QPen(line_color))
+            p.setBrush(QBrush(fill_color))
+            p.drawRect(rect)
+
     # ------------------------------------------------------------------
     # Static cache helpers
     # ------------------------------------------------------------------
@@ -46,6 +109,8 @@ class OscillatorSurfacePaintMixin:
             int(getattr(self, "_static_version", 0)),
             y_key,
             y_offset,
+            len(getattr(self, "_candles", []) or []),
+            int(id(getattr(self, "_candles", None))),
             len(getattr(self, "_series_list", []) or []),
         )
 
@@ -202,6 +267,20 @@ class OscillatorSurfacePaintMixin:
 
             values = getattr(series, "values", None)
             if not isinstance(values, list) or not values:
+                continue
+
+            if self._series_render_mode(series) == "histogram":
+                self._draw_histogram_series(
+                    p,
+                    plot=plot,
+                    series=series,
+                    values=values,
+                    start=start,
+                    end=end,
+                    x_positions=x_positions,
+                    dx=dx,
+                    y_to_px=y_to_px,
+                )
                 continue
 
             prev_x: Optional[float] = None

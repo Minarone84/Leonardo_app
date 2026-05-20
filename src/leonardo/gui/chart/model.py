@@ -20,7 +20,7 @@ class SeriesStyle:
     line_width: int = 1
     line_style: str = "solid"  # solid | dotted | dashed | dash_dot
     visible: bool = True
-    render_mode: str = "line"  # line | marker
+    render_mode: str = "line"  # line | marker | histogram
     marker_shape: Optional[str] = None  # triangle_up | triangle_down
     marker_size: int = 0
     marker_text: str = ""

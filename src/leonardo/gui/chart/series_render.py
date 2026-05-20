@@ -106,12 +106,14 @@ class OscillatorRenderSurface(
         parent: Optional[QWidget] = None,
         *,
         visual_policy: Optional[Mapping[str, Any]] = None,
+        candles: Optional[List[Candle]] = None,
     ) -> None:
         super().__init__(parent)
         self._title = str(title).strip() or "Oscillator"
         self._viewport = viewport
         self._crosshair = crosshair
         self._values = values if isinstance(values, list) else list(values)
+        self._candles: List[Candle] = candles if isinstance(candles, list) else list(candles or [])
 
         self._series_list: List[Series] = [
             Series(
@@ -188,6 +190,7 @@ class OscillatorRenderSurface(
         visual_policy: Optional[Mapping[str, Any]],
         view_state: Optional[Mapping[str, Any]],
         resident_base_index: int,
+        candles: Optional[List[Candle]] = None,
     ) -> None:
         """Apply the full pane-owned oscillator render contract in one update."""
         self._title = str(title).strip() or "Oscillator"
@@ -195,6 +198,8 @@ class OscillatorRenderSurface(
         primary = self._primary_series()
         self._values = primary.values if primary is not None else []
         self._visual_policy = dict(visual_policy or {})
+        if candles is not None:
+            self._candles = candles if isinstance(candles, list) else list(candles)
         if isinstance(view_state, dict):
             self._view_state = view_state
         else:

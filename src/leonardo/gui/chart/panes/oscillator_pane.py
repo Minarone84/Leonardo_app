@@ -6,6 +6,7 @@ from typing import Any, List, Mapping, Optional
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QLabel, QHBoxLayout, QToolButton, QVBoxLayout, QWidget
 
+from leonardo.common.market_types import Candle
 from leonardo.gui.chart.crosshair import Crosshair
 from leonardo.gui.chart.model import Series
 from leonardo.gui.chart.series_render import OscillatorRenderSurface
@@ -45,6 +46,7 @@ class OscillatorPane(QWidget):
         *,
         study_instance_id: str = "",
         series_list: Optional[List[Series]] = None,
+        candles: Optional[List[Candle]] = None,
         visual_policy: Optional[Mapping[str, Any]] = None,
         view_state: Optional[Mapping[str, Any]] = None,
         parent: Optional[QWidget] = None,
@@ -56,6 +58,7 @@ class OscillatorPane(QWidget):
         self._viewport = viewport
         self._crosshair = crosshair
         self._resident_base_index = 0
+        self._candles: List[Candle] = candles if isinstance(candles, list) else list(candles or [])
         self._visual_policy: dict[str, Any] = dict(visual_policy or {})
         self._view_state: dict[str, Any] = _shared_mutable_view_state(view_state)
         self._last_overlay_text = ""
@@ -81,6 +84,7 @@ class OscillatorPane(QWidget):
             values=self._primary_values(),
             parent=self,
             visual_policy=self._visual_policy,
+            candles=self._candles,
         )
         self._overlay = _PaneOverlay(self)
 
@@ -180,6 +184,7 @@ class OscillatorPane(QWidget):
         study_instance_id: str,
         title: str,
         series_list: List[Series],
+        candles: Optional[List[Candle]],
         visual_policy: Optional[Mapping[str, Any]],
         view_state: Optional[Mapping[str, Any]],
         resident_base_index: int,
@@ -191,6 +196,8 @@ class OscillatorPane(QWidget):
         self._overlay_layout_dirty = True
         self._refresh_overlay_geometry(force=True)
         self._series_list = series_list if isinstance(series_list, list) else list(series_list)
+        if candles is not None:
+            self._candles = candles if isinstance(candles, list) else list(candles)
         self._visual_policy = dict(visual_policy or {})
         self._view_state = _shared_mutable_view_state(view_state)
         self._resident_base_index = max(0, int(resident_base_index))
@@ -217,6 +224,7 @@ class OscillatorPane(QWidget):
             visual_policy=self._visual_policy,
             view_state=self._view_state,
             resident_base_index=self._resident_base_index,
+            candles=self._candles,
         )
 
     def _global_to_local(self, global_index: int) -> Optional[int]:

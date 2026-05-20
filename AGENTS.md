@@ -21,6 +21,10 @@ This protocol is mandatory.
 Do not skip Audit.
 Do not skip Validation.
 Do not mix unrelated changes into the same task.
+Respect all applicable AGENTS.md instructions in the repository.
+Do not ignore AGENTS.md.
+If there are multiple AGENTS.md files in nested folders, apply the most specific one for each audited file.
+If an AGENTS.md instruction conflicts with this task, stop and report the conflict instead of guessing.
 
 ---
 

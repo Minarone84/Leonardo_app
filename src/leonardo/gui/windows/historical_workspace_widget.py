@@ -136,7 +136,7 @@ class HistoricalWorkspaceWidget(QWidget):
             timeframe=timeframe,
         )
         self._chart_slots[slot_index] = panel
-        self._relayout()
+        self._compact_embedded_chart_slots()
         return True
 
     def add_existing_panel(self, panel: HistoricalChartPanel) -> bool:
@@ -154,7 +154,7 @@ class HistoricalWorkspaceWidget(QWidget):
         self._connect_panel_workspace_signals(panel)
         panel.setParent(self._grid_host)
         self._chart_slots[slot_index] = panel
-        self._relayout()
+        self._compact_embedded_chart_slots()
         return True
 
     def remove_chart(self, panel: HistoricalChartPanel) -> bool:
@@ -209,7 +209,7 @@ class HistoricalWorkspaceWidget(QWidget):
         target_panel = self._chart_slots[target_index]
         self._chart_slots[target_index] = panel
         self._chart_slots[current_index] = target_panel
-        self._relayout()
+        self._compact_embedded_chart_slots()
         return True
 
     def _connect_panel_workspace_signals(self, panel: HistoricalChartPanel) -> None:
@@ -289,11 +289,34 @@ class HistoricalWorkspaceWidget(QWidget):
         return None
 
     def _first_available_slot_index(self) -> Optional[int]:
-        reserved_slots = set(self._detached_slots.values())
-        for index, panel in enumerate(self._chart_slots):
-            if panel is None and index not in reserved_slots:
+        for index in self._available_embedded_slot_indexes():
+            if self._chart_slots[index] is None:
                 return index
         return None
+
+    def _available_embedded_slot_indexes(self) -> List[int]:
+        reserved_slots = set(self._detached_slots.values())
+        return [
+            index
+            for index in range(self.MAX_CHARTS)
+            if index not in reserved_slots
+        ]
+
+    def _compact_embedded_chart_slots(self) -> None:
+        """Normalize embedded charts into the lowest non-reserved slots."""
+        embedded_panels = self._embedded_panels()
+        available_slots = self._available_embedded_slot_indexes()
+
+        if len(embedded_panels) > len(available_slots):
+            self._relayout()
+            return
+
+        normalized_slots: List[Optional[HistoricalChartPanel]] = [None] * self.MAX_CHARTS
+        for panel, slot_index in zip(embedded_panels, available_slots):
+            normalized_slots[slot_index] = panel
+
+        self._chart_slots = normalized_slots
+        self._relayout()
 
     def _remove_chart(
         self,
@@ -317,11 +340,12 @@ class HistoricalWorkspaceWidget(QWidget):
 
         self._clear_layout()
         panel.setParent(None)
-        self._relayout()
+        self._compact_embedded_chart_slots()
         return True
 
     def _forget_detached_panel(self, panel: HistoricalChartPanel) -> None:
-        self._detached_slots.pop(panel, None)
+        if self._detached_slots.pop(panel, None) is not None:
+            self._compact_embedded_chart_slots()
 
     def _sync_panel_position(self, panel: HistoricalChartPanel, slot_index: int) -> None:
         sync_position = getattr(panel, "set_workspace_position", None)

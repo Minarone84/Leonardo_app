@@ -14,6 +14,7 @@ CHART_RENDER = ROOT / "src" / "leonardo" / "gui" / "chart" / "chart_render.py"
 PRICE_PANE = ROOT / "src" / "leonardo" / "gui" / "chart" / "panes" / "price_pane.py"
 WORKSPACE = ROOT / "src" / "leonardo" / "gui" / "chart" / "workspace.py"
 Y_AXIS_INTERACTION = ROOT / "src" / "leonardo" / "gui" / "chart" / "rendering" / "y_axis_interaction.py"
+MARKER_PAINTER = ROOT / "src" / "leonardo" / "gui" / "chart" / "rendering" / "marker_painter.py"
 FINANCIAL_TOOLS = ROOT / "src" / "leonardo" / "financial_tools"
 
 
@@ -76,11 +77,21 @@ def test_runtime_tooltip_and_grouped_marker_support_are_plumbed() -> None:
     assert "grouped_by_local_index" in panel_body
     assert '"\\n".join(titles)' in panel_body
     assert 'marker_text = "+"' in panel_body
-    assert "marker_offset_px=18" in panel_body
+    assert 'marker_shape="circle"' in panel_body
+    assert "marker_offset_px=28" in panel_body
     assert "set_notebook_poi_tooltips" in render_source
     assert "set_notebook_poi_tooltips" in price_source
     assert "set_notebook_poi_tooltips" in workspace_source
     assert "_notebook_poi_tooltip_for_index" in interaction_source
+
+
+def test_notebook_poi_marker_shape_uses_supported_circle_marker() -> None:
+    panel_body = _function_source(PANEL, "_refresh_notebook_poi_overlay")
+    marker_painter_source = _source(MARKER_PAINTER)
+
+    assert 'marker_shape="circle"' in panel_body
+    assert '"circle"' in marker_painter_source
+    assert "drawEllipse" in marker_painter_source
 
 
 def test_notebook_marker_state_is_not_serialized_into_presets_or_studies() -> None:

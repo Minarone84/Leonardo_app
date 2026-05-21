@@ -54,6 +54,36 @@ def test_file_menu_and_menu_bar_corner_reuse_workspace_snapshot_qactions() -> No
     assert "study_setup_toolbar" not in source
 
 
+def test_menu_bar_corner_inserts_open_notebook_before_save_study() -> None:
+    source = _source(HDM)
+    corner_body = _function_source(HDM, "_build_menu_bar_corner_widget")
+
+    assert "_action_open_assigned_notebook" in source
+    assert 'QAction("Open Notebook"' in source
+    assert "self._on_open_assigned_notebook" in source
+    assert "action=self._action_open_assigned_notebook" in corner_body
+    assert "text=\"Notebook\"" in corner_body
+    assert corner_body.index("action=self._action_open_assigned_notebook") < (
+        corner_body.index("action=self._action_save_study_setup")
+    )
+
+
+def test_open_assigned_notebook_action_tracks_current_notebook_ref() -> None:
+    source = _source(HDM)
+    sync_body = _function_source(HDM, "_sync_open_assigned_notebook_action")
+    setter_body = _function_source(HDM, "_set_current_workspace_notebook_ref")
+    open_body = _function_source(HDM, "_on_open_assigned_notebook")
+    load_body = _function_source(HDM, "_on_load_workspace_snapshot")
+
+    assert "_current_workspace_notebook_ref" in source
+    assert "action_open_assigned_notebook.setEnabled(False)" in source
+    assert "No notebook assigned to the current workspace snapshot." in sync_body
+    assert "Open the notebook assigned to the current workspace snapshot." in sync_body
+    assert "self._current_workspace_notebook_ref = resolved if notebook_id else None" in setter_body
+    assert "self._open_notebook_ref_from_snapshot(notebook_ref)" in open_body
+    assert "self._set_current_workspace_notebook_ref(snapshot.notebook_ref)" in load_body
+
+
 def test_workspace_snapshot_store_root_uses_runtime_chart_presets_path() -> None:
     body = _function_source(HDM, "_workspace_snapshot_store_root")
 

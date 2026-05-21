@@ -437,11 +437,11 @@ class HistoricalChartPanel(
                     color="#38BDF8",
                     visible=True,
                     render_mode="marker",
-                    marker_shape="triangle_up",
+                    marker_shape="circle",
                     marker_size=12,
                     marker_text=marker_text,
                     marker_text_color="#0B1220",
-                    marker_offset_px=18,
+                    marker_offset_px=28,
                 ),
             )
         )

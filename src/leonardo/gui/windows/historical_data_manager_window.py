@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 import time
-from typing import Any, Optional
+from typing import Any, Mapping, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent
@@ -538,6 +538,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_save_notebook: Optional[QAction] = None
         self._action_load_notebook: Optional[QAction] = None
         self._action_assign_notebook_to_workspace_snapshot: Optional[QAction] = None
+        self._action_open_assigned_notebook: Optional[QAction] = None
         self._action_view_mode_scroll_4: Optional[QAction] = None
         self._action_view_mode_fit_8: Optional[QAction] = None
         self._view_mode_action_group: Optional[QActionGroup] = None
@@ -545,6 +546,7 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         self._workspace_widget: Optional[HistoricalWorkspaceWidget] = None
         self._notebook_window: Optional[HistoricalNotebookWindow] = None
+        self._current_workspace_notebook_ref: Optional[dict[str, Any]] = None
         self._applying_notebook_poi_markers: bool = False
         self._is_closing: bool = False
 
@@ -699,6 +701,18 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_create_notebook = action_create_notebook
         menu_notes.addAction(action_create_notebook)
 
+        action_open_assigned_notebook = QAction("Open Notebook", self)
+        action_open_assigned_notebook.setToolTip(
+            "No notebook assigned to the current workspace snapshot."
+        )
+        action_open_assigned_notebook.setStatusTip(
+            "No notebook assigned to the current workspace snapshot."
+        )
+        action_open_assigned_notebook.setEnabled(False)
+        action_open_assigned_notebook.triggered.connect(self._on_open_assigned_notebook)
+        self._action_open_assigned_notebook = action_open_assigned_notebook
+        menu_notes.addAction(action_open_assigned_notebook)
+
         action_save_notebook = QAction("Save Notebook", self)
         action_save_notebook.setToolTip("Save the active historical notebook.")
         action_save_notebook.setStatusTip("Save the active historical notebook.")
@@ -730,7 +744,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         # already lived there. So instead of creating a second toolbar row, we
         # build one compact corner widget that contains:
         #
-        #   Save Study | Load Study | Save Workspace | Load Workspace | View label
+        #   Open Notebook | Save Study | Load Study | Save Workspace | Load Workspace | View label
         #
         # Each button still uses the same QAction object that is already in the
         # File menu. This preserves one command source and avoids duplicated
@@ -755,6 +769,14 @@ class HistoricalDataManagerWindow(QMainWindow):
         corner_layout = QHBoxLayout(corner_widget)
         corner_layout.setContentsMargins(0, 0, 6, 0)
         corner_layout.setSpacing(4)
+
+        corner_layout.addWidget(
+            self._make_menu_bar_action_button(
+                action=self._action_open_assigned_notebook,
+                text="Notebook",
+                icon=self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
+            )
+        )
 
         # Study Setup quick actions.
         #
@@ -1254,6 +1276,7 @@ class HistoricalDataManagerWindow(QMainWindow):
             return
 
         self._sync_view_mode_controls()
+        self._set_current_workspace_notebook_ref(snapshot.notebook_ref)
         notebook_notice = self._open_notebook_ref_from_snapshot(snapshot.notebook_ref)
         self._set_status(
             f"Loading workspace snapshot '{snapshot.display_name}' "
@@ -1435,6 +1458,64 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._notebook_window.refresh_from_chart_options(self._chart_options())
         self._apply_notebook_poi_markers()
 
+    def _set_current_workspace_notebook_ref(
+        self,
+        notebook_ref: Mapping[str, Any] | None,
+    ) -> None:
+        if isinstance(notebook_ref, Mapping):
+            resolved = dict(notebook_ref)
+            notebook_id = str(resolved.get("notebook_id", "") or "").strip()
+            self._current_workspace_notebook_ref = resolved if notebook_id else None
+        else:
+            self._current_workspace_notebook_ref = None
+        self._sync_open_assigned_notebook_action()
+
+    def _sync_open_assigned_notebook_action(self) -> None:
+        action = self._action_open_assigned_notebook
+        if action is None:
+            return
+
+        notebook_ref = self._current_workspace_notebook_ref
+        notebook_id = ""
+        if isinstance(notebook_ref, Mapping):
+            notebook_id = str(notebook_ref.get("notebook_id", "") or "").strip()
+
+        enabled = bool(notebook_id)
+        action.setEnabled(enabled)
+        if enabled:
+            action.setToolTip("Open the notebook assigned to the current workspace snapshot.")
+            action.setStatusTip("Open the notebook assigned to the current workspace snapshot.")
+        else:
+            action.setToolTip("No notebook assigned to the current workspace snapshot.")
+            action.setStatusTip("No notebook assigned to the current workspace snapshot.")
+
+    def _on_open_assigned_notebook(self) -> None:
+        notebook_ref = self._current_workspace_notebook_ref
+        if not isinstance(notebook_ref, Mapping) or not str(notebook_ref.get("notebook_id", "") or "").strip():
+            self._sync_open_assigned_notebook_action()
+            QMessageBox.information(
+                self,
+                "Open Notebook",
+                "No notebook is assigned to the current workspace snapshot.",
+            )
+            return
+
+        notice = self._open_notebook_ref_from_snapshot(notebook_ref)
+        if not notice:
+            self._set_current_workspace_notebook_ref(None)
+            QMessageBox.warning(
+                self,
+                "Open Notebook",
+                "The assigned notebook reference is invalid.",
+            )
+            return
+
+        if notice.startswith("Assigned notebook could not be loaded"):
+            QMessageBox.warning(self, "Open Notebook", notice)
+            return
+
+        self._set_status(notice)
+
     def _on_notebook_window_destroyed(self, *_args: Any) -> None:
         """Forget the notebook window reference after Qt destroys the window."""
         self._clear_notebook_poi_markers()
@@ -1557,13 +1638,14 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         index = labels.index(selected)
         try:
+            notebook_ref = {
+                "notebook_id": notebook_window.notebook_id(),
+                "display_name": notebook_window.display_name(),
+            }
             snapshot = snapshot_store.load_snapshot(summaries[index].snapshot_id)
             updated = replace(
                 snapshot,
-                notebook_ref={
-                    "notebook_id": notebook_window.notebook_id(),
-                    "display_name": notebook_window.display_name(),
-                },
+                notebook_ref=notebook_ref,
                 updated_at_ms=int(time.time() * 1000),
             )
             saved = snapshot_store.save_snapshot(updated, overwrite=True)
@@ -1576,14 +1658,17 @@ class HistoricalDataManagerWindow(QMainWindow):
             return
 
         notebook_window.set_assigned_snapshot_label(saved.display_name)
+        self._set_current_workspace_notebook_ref(notebook_ref)
         self._set_status(
             f"Assigned notebook '{notebook_window.display_name()}' "
             f"to snapshot '{saved.display_name}'"
         )
 
     def _on_notebook_goto_requested(self, chart_key: str, ts_ms: int) -> None:
+        self._set_status(f"Notebook Go To requested for {chart_key} at {int(ts_ms)}")
         panel = self._panel_for_notebook_chart_key(chart_key)
         if panel is None:
+            self._set_status(f"Notebook Go To failed: chart not active for {chart_key}")
             QMessageBox.information(
                 self,
                 "Notebook Go To",
@@ -1593,11 +1678,17 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         navigate = getattr(panel, "center_on_notebook_timestamp", None)
         if not callable(navigate) or not navigate(int(ts_ms)):
+            self._set_status(
+                f"Notebook Go To failed: chart timeline is not ready for {chart_key}"
+            )
             QMessageBox.warning(
                 self,
                 "Notebook Go To",
                 "Could not center the chart on the requested notebook date.",
             )
+            return
+
+        self._set_status(f"Notebook Go To centered {chart_key} at {int(ts_ms)}")
 
     def _on_notebook_poi_markers_changed(self) -> None:
         if self._applying_notebook_poi_markers:

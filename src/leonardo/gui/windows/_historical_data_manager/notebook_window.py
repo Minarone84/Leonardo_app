@@ -631,6 +631,10 @@ class HistoricalNotebookWindow(QMainWindow):
             return
 
         date_text = self._item_text(table, row, 0)
+        item = table.item(row, 0)
+        if item is not None:
+            table.closePersistentEditor(item)
+            date_text = str(item.text() or "").strip()
         ts_ms = self._parse_date_text_to_ts_ms(date_text)
         if ts_ms is None:
             QMessageBox.warning(

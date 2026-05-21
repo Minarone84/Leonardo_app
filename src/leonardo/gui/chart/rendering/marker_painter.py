@@ -58,27 +58,30 @@ class MarkerPainterMixin:
     ) -> None:
         resolved_shape = str(shape or "").strip().lower()
         resolved_size = max(6, min(32, int(size)))
-        if resolved_shape not in {"triangle_up", "triangle_down"}:
+        if resolved_shape not in {"triangle_up", "triangle_down", "circle", "dot"}:
             return
 
         half = resolved_size / 2.0
         center_y = float(y) + float(y_offset_px)
-
-        path = QPainterPath()
-        if resolved_shape == "triangle_up":
-            path.moveTo(x, center_y - half)
-            path.lineTo(x - half, center_y + half)
-            path.lineTo(x + half, center_y + half)
-        else:
-            path.moveTo(x, center_y + half)
-            path.lineTo(x - half, center_y - half)
-            path.lineTo(x + half, center_y - half)
-        path.closeSubpath()
+        rect = QRectF(x - half, center_y - half, resolved_size, resolved_size)
 
         p.save()
         p.setPen(Qt.NoPen)
         p.setBrush(QBrush(color))
-        p.drawPath(path)
+        if resolved_shape in {"circle", "dot"}:
+            p.drawEllipse(rect)
+        else:
+            path = QPainterPath()
+            if resolved_shape == "triangle_up":
+                path.moveTo(x, center_y - half)
+                path.lineTo(x - half, center_y + half)
+                path.lineTo(x + half, center_y + half)
+            else:
+                path.moveTo(x, center_y + half)
+                path.lineTo(x - half, center_y - half)
+                path.lineTo(x + half, center_y - half)
+            path.closeSubpath()
+            p.drawPath(path)
 
         label = str(text or "").strip()
         if label:
@@ -87,6 +90,5 @@ class MarkerPainterMixin:
             font.setBold(True)
             p.setFont(font)
             p.setPen(QPen(text_color))
-            rect = QRectF(x - half, center_y - half, resolved_size, resolved_size)
             p.drawText(rect, Qt.AlignCenter, label)
         p.restore()

@@ -189,9 +189,11 @@ def test_workspace_snapshot_load_and_assign_paths_use_notebook_ref() -> None:
     open_body = _function_source(HDM, "_open_notebook_ref_from_snapshot")
 
     assert "_open_notebook_ref_from_snapshot(snapshot.notebook_ref)" in load_body
-    assert "notebook_ref={" in assign_body
+    assert "notebook_ref = {" in assign_body
     assert '"notebook_id": notebook_window.notebook_id()' in assign_body
     assert "snapshot_store.save_snapshot(updated, overwrite=True)" in assign_body
+    assert "self._set_current_workspace_notebook_ref(notebook_ref)" in assign_body
+    assert "self._set_current_workspace_notebook_ref(snapshot.notebook_ref)" in load_body
     assert "self._notebook_store().load_notebook(notebook_id)" in open_body
     assert "Assigned notebook could not be loaded" in open_body
     assert "notebook_store=self._notebook_store()" in manager_source

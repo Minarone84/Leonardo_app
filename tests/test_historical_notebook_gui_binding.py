@@ -43,6 +43,23 @@ def test_notebook_window_has_structured_tabs_and_tables() -> None:
     assert '"Description"' in source
 
 
+def test_all_notebook_tables_share_date_time_go_to_path() -> None:
+    source = _source(NOTEBOOK)
+    table_body = _function_source(NOTEBOOK, "_new_section_table")
+    goto_body = _function_source(NOTEBOOK, "_on_table_cell_double_clicked")
+
+    assert '_POI_COLUMNS = ("Date / Time", "Title", "Description")' in source
+    assert "notes_table = self._new_section_table" in source
+    assert "trades_table = self._new_section_table" in source
+    assert "poi_table = self._new_section_table" in source
+    assert "cellDoubleClicked.connect" in table_body
+    assert "_on_table_cell_double_clicked(table, row, column)" in table_body
+    assert "if column != 0:" in goto_body
+    assert "table.closePersistentEditor(item)" in goto_body
+    assert "self.goto_requested.emit(chart_key, int(ts_ms))" in goto_body
+    assert "_SECTION_POI" not in goto_body
+
+
 def test_notebook_chart_key_uses_dataset_identity_not_position() -> None:
     dataset = {
         "exchange": "bybit",
@@ -91,6 +108,19 @@ def test_date_go_to_emits_request_without_direct_chart_mutation() -> None:
     assert "self.goto_requested.emit(chart_key, int(ts_ms))" in body
     assert "center_view_on_timestamp_ms" not in source
     assert "center_on_index" not in source
+
+
+def test_data_manager_routes_notebook_go_to_through_panel_controller_path() -> None:
+    source = _source(HDM)
+    body = _function_source(HDM, "_on_notebook_goto_requested")
+    panel_lookup_body = _function_source(HDM, "_panel_for_notebook_chart_key")
+
+    assert "notebook_window.goto_requested.connect(self._on_notebook_goto_requested)" in source
+    assert "self._panel_for_notebook_chart_key(chart_key)" in body
+    assert "center_on_notebook_timestamp" in body
+    assert "Notebook Go To requested" in body
+    assert "Notebook Go To centered" in body
+    assert "notebook_chart_key(dataset) == target_key" in panel_lookup_body
 
 
 def test_poi_marker_checkbox_and_signal_exist() -> None:

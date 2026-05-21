@@ -1,0 +1,63 @@
+{
+  "charts": [
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "ADAUSDT",
+        "timeframe": "1h"
+      },
+      "position": 1,
+      "price_view_state": {},
+      "studies": [],
+      "viewport": {
+        "center_ts_ms": 1778302800000,
+        "fallback_global_index": 45070,
+        "visible_bars": 500
+      }
+    },
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m"
+      },
+      "position": 2,
+      "price_view_state": {},
+      "studies": [],
+      "viewport": {
+        "center_ts_ms": 1778659200000,
+        "fallback_global_index": 107515,
+        "visible_bars": 500
+      }
+    },
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "SOLUSDT",
+        "timeframe": "15m"
+      },
+      "position": 3,
+      "price_view_state": {},
+      "studies": [],
+      "viewport": {
+        "center_ts_ms": 1778969700000,
+        "fallback_global_index": 160793,
+        "visible_bars": 500
+      }
+    }
+  ],
+  "content_hash": "68d61eccf1d65efeba98a5d79f5b4ef183a898f45db54b07413b124544be4f01",
+  "created_at_ms": 1779353975480,
+  "description": "ciccialculo A",
+  "display_name": "Test_A",
+  "object_type": "historical_workspace_snapshot",
+  "schema_version": 1,
+  "snapshot_id": "9d4a9106c5e7436ba5486d740d2e6fff",
+  "updated_at_ms": 1779353975480,
+  "workspace": {
+    "visualization_mode": "scroll_4"
+  }
+}

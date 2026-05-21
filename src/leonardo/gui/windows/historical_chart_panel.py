@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Sequence
 
@@ -23,6 +24,7 @@ from leonardo.gui.chart.studies import (
     ChartStudyRegistry,
     PANE_TARGET_OSCILLATOR,
 )
+from leonardo.gui.chart.model import Series, SeriesStyle
 from leonardo.gui.chart.study_serialization import (
     deserialize_chart_study_payload,
     deserialize_study_style_payload,
@@ -102,6 +104,7 @@ class HistoricalChartPanel(
         self._editing_study_instance_id: Optional[str] = None
         self._wired_oscillator_pane_ids: set[int] = set()
         self._pending_workspace_snapshot_chart: Optional[dict[str, Any]] = None
+        self._notebook_poi_markers_by_notebook: dict[str, list[dict[str, Any]]] = {}
         self._is_disposed: bool = False
         self._updating_position_combo: bool = False
 
@@ -329,6 +332,141 @@ class HistoricalChartPanel(
                 viewport.center_on_index(fallback_index)  # type: ignore[attr-defined]
                 return True
         return False
+
+    def center_on_notebook_timestamp(self, ts_ms: int) -> bool:
+        """Center this chart on a notebook date through the existing chart path."""
+        return self._controller.center_view_on_timestamp_ms(int(ts_ms))
+
+    def set_notebook_poi_markers(
+        self,
+        notebook_id: str,
+        markers: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """Apply runtime notebook POI markers as chart annotations.
+
+        The markers are derived from notebook rows and are not registered as
+        chart studies. They are rebuilt against the current resident candle
+        slice whenever chart data changes.
+        """
+        normalized_notebook_id = str(notebook_id or "").strip()
+        if not normalized_notebook_id:
+            return
+
+        normalized_markers: list[dict[str, Any]] = []
+        for raw_marker in markers:
+            if not isinstance(raw_marker, Mapping):
+                continue
+            ts_ms = raw_marker.get("ts_ms")
+            if not isinstance(ts_ms, int):
+                continue
+            normalized_markers.append(
+                {
+                    "ts_ms": int(ts_ms),
+                    "title": str(raw_marker.get("title", "") or "").strip(),
+                    "description": str(raw_marker.get("description", "") or "").strip(),
+                }
+            )
+        self._notebook_poi_markers_by_notebook[normalized_notebook_id] = normalized_markers
+        self._refresh_notebook_poi_overlay()
+
+    def clear_notebook_poi_markers(self, notebook_id: str | None = None) -> None:
+        """Clear runtime notebook POI annotations from this chart."""
+        if notebook_id is None:
+            self._notebook_poi_markers_by_notebook.clear()
+        else:
+            self._notebook_poi_markers_by_notebook.pop(str(notebook_id or "").strip(), None)
+        self._refresh_notebook_poi_overlay()
+
+    def _refresh_notebook_poi_overlay(self) -> None:
+        overlay_key = "__notebook_poi_markers__"
+        all_markers = [
+            marker
+            for markers in self._notebook_poi_markers_by_notebook.values()
+            for marker in markers
+        ]
+
+        if not all_markers:
+            self._workspace.remove_overlay_series(overlay_key)
+            self._workspace.set_notebook_poi_tooltips({})
+            return
+
+        candles = list(self._workspace.model.candles)
+        if not candles:
+            self._workspace.remove_overlay_series(overlay_key)
+            self._workspace.set_notebook_poi_tooltips({})
+            return
+
+        grouped_by_local_index: dict[int, list[dict[str, Any]]] = {}
+        for marker in all_markers:
+            local_index = self._nearest_resident_local_index_for_ts_ms(
+                int(marker["ts_ms"]),
+                candles,
+            )
+            if local_index is None:
+                continue
+            grouped_by_local_index.setdefault(local_index, []).append(marker)
+
+        if not grouped_by_local_index:
+            self._workspace.remove_overlay_series(overlay_key)
+            self._workspace.set_notebook_poi_tooltips({})
+            return
+
+        values = [math.nan] * len(candles)
+        tooltips_by_global_index: dict[int, str] = {}
+        resident_base_index = int(getattr(self._workspace.model, "resident_base_index", 0) or 0)
+        for local_index, markers in grouped_by_local_index.items():
+            candle = candles[local_index]
+            values[local_index] = float(candle.low)
+            titles = [
+                str(marker.get("title", "") or "Point of Interest").strip()
+                for marker in markers
+            ]
+            global_index = resident_base_index + local_index
+            tooltips_by_global_index[global_index] = "\n".join(titles)
+
+        marker_text = "P"
+        if any(len(markers) > 1 for markers in grouped_by_local_index.values()):
+            marker_text = "+"
+
+        self._workspace.apply_overlay_series(
+            Series(
+                key=overlay_key,
+                title="Notebook POI",
+                values=values,
+                style=SeriesStyle(
+                    color="#38BDF8",
+                    visible=True,
+                    render_mode="marker",
+                    marker_shape="triangle_up",
+                    marker_size=12,
+                    marker_text=marker_text,
+                    marker_text_color="#0B1220",
+                    marker_offset_px=18,
+                ),
+            )
+        )
+        self._workspace.set_notebook_poi_tooltips(tooltips_by_global_index)
+
+    def _nearest_resident_local_index_for_ts_ms(
+        self,
+        ts_ms: int,
+        candles: Sequence[Any],
+    ) -> int | None:
+        if not candles:
+            return None
+        target = int(ts_ms)
+        best_index: int | None = None
+        best_delta: int | None = None
+        for local_index, candle in enumerate(candles):
+            try:
+                candle_ts = int(getattr(candle, "ts_ms"))
+            except Exception:
+                continue
+            delta = abs(candle_ts - target)
+            if best_delta is None or delta < best_delta:
+                best_delta = delta
+                best_index = local_index
+        return best_index
 
     def apply_serialized_study_setup(
         self,
@@ -960,6 +1098,7 @@ class HistoricalChartPanel(
         """
         self._refresh_rendered_studies_from_controller_projection()
         self._apply_pending_workspace_snapshot_chart()
+        self._refresh_notebook_poi_overlay()
 
     def _apply_pending_workspace_snapshot_chart(self) -> None:
         pending = self._pending_workspace_snapshot_chart

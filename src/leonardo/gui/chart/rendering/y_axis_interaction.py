@@ -205,6 +205,9 @@ class PriceYAxisInteractionMixin:
             self._crosshair.set_index(idx)
             self._crosshair.set_hover_on_price(True)
             self._mouse_pt = pt
+            tooltip_for_index = getattr(self, "_notebook_poi_tooltip_for_index", None)
+            if callable(tooltip_for_index):
+                self.setToolTip(str(tooltip_for_index(idx) or ""))
 
             crosshair_changed = (self._crosshair.index != old_idx) or (
                 self._crosshair.hover_on_price != old_hover
@@ -220,6 +223,7 @@ class PriceYAxisInteractionMixin:
         # Outside plot: clear hover line. Only repaint if hover state changed.
         self._crosshair.set_hover_on_price(False)
         self._mouse_pt = None
+        self.setToolTip("")
 
         if self._crosshair.hover_on_price != old_hover:
             # crosshair.changed schedules repaint
@@ -228,6 +232,7 @@ class PriceYAxisInteractionMixin:
     def leaveEvent(self, event) -> None:
         self._crosshair.set_hover_on_price(False)
         self._mouse_pt = None
+        self.setToolTip("")
         self._end_y_drag()
         self.update()
         super().leaveEvent(event)

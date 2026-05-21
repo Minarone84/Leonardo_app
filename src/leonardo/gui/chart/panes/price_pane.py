@@ -239,6 +239,12 @@ class PricePane(QWidget):
         self._overlay_layout_dirty = True
         self._update_overlay()
 
+    def set_notebook_poi_tooltips(self, tooltips_by_global_index: Mapping[int, str]) -> None:
+        """Forward runtime notebook POI tooltip labels to the render surface."""
+        setter = getattr(self._surface, "set_notebook_poi_tooltips", None)
+        if callable(setter):
+            setter(tooltips_by_global_index)
+
     def clear_managed_overlay_row_projection(self) -> None:
         self._managed_overlay_rows = []
         self._managed_overlay_render_key_to_study_id.clear()

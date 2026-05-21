@@ -23,6 +23,19 @@ from leonardo.data.chart_presets.workspace_snapshot_store import (
     snapshot_to_payload,
     validate_historical_workspace_snapshot_payload,
 )
+from leonardo.data.chart_presets.notebook_store import (
+    HISTORICAL_NOTEBOOK_OBJECT_TYPE,
+    HISTORICAL_NOTEBOOK_SCHEMA_VERSION,
+    HistoricalNotebook,
+    HistoricalNotebookStore,
+    HistoricalNotebookSummary,
+    build_historical_notebook_content_hash,
+    normalize_notebook_chart_entry,
+    notebook_chart_key,
+    notebook_from_payload,
+    notebook_to_payload,
+    validate_historical_notebook_payload,
+)
 
 __all__ = [
     "CHART_STUDY_SETUP_OBJECT_TYPE",
@@ -44,4 +57,15 @@ __all__ = [
     "snapshot_from_payload",
     "snapshot_to_payload",
     "validate_historical_workspace_snapshot_payload",
+    "HISTORICAL_NOTEBOOK_OBJECT_TYPE",
+    "HISTORICAL_NOTEBOOK_SCHEMA_VERSION",
+    "HistoricalNotebook",
+    "HistoricalNotebookStore",
+    "HistoricalNotebookSummary",
+    "build_historical_notebook_content_hash",
+    "normalize_notebook_chart_entry",
+    "notebook_chart_key",
+    "notebook_from_payload",
+    "notebook_to_payload",
+    "validate_historical_notebook_payload",
 ]

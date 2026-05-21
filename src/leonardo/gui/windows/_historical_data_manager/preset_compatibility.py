@@ -210,6 +210,7 @@ def evaluate_workspace_snapshot_compatibility(
     workspace: Any | None,
     core_bridge: Any | None,
     load_mode: str,
+    notebook_store: Any | None = None,
 ) -> PresetCompatibilityReport:
     """Evaluate whether a workspace snapshot can load into the current workspace."""
     issues: list[PresetCompatibilityIssue] = []
@@ -342,6 +343,37 @@ def evaluate_workspace_snapshot_compatibility(
                 {},
             )
         )
+
+    notebook_ref = getattr(snapshot, "notebook_ref", None)
+    if isinstance(notebook_ref, Mapping):
+        notebook_id = str(notebook_ref.get("notebook_id", "") or "").strip()
+        if not notebook_id:
+            issues.append(
+                _warning(
+                    "invalid_notebook_ref",
+                    "Workspace snapshot has a notebook reference without a notebook_id.",
+                    {},
+                )
+            )
+        elif notebook_store is None:
+            issues.append(
+                _warning(
+                    "notebook_ref_unverified",
+                    "Assigned notebook reference could not be preflighted.",
+                    {"notebook_id": notebook_id},
+                )
+            )
+        else:
+            try:
+                notebook_store.load_notebook(notebook_id)
+            except Exception as exc:
+                issues.append(
+                    _warning(
+                        "assigned_notebook_unavailable",
+                        f"Assigned notebook could not be loaded: {exc!r}.",
+                        {"notebook_id": notebook_id},
+                    )
+                )
 
     return build_compatibility_report(issues)
 

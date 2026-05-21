@@ -155,6 +155,12 @@ class ChartWorkspaceWidget(
         self._sync_price_pane_contract()
         self._refresh_price_pane()
 
+    def set_notebook_poi_tooltips(self, tooltips_by_global_index: dict[int, str]) -> None:
+        """Apply runtime notebook POI tooltip labels to the price surface."""
+        setter = getattr(self._price, "set_notebook_poi_tooltips", None)
+        if callable(setter):
+            setter(tooltips_by_global_index)
+
     @property
     def viewport(self) -> ChartViewport:
         return self._viewport

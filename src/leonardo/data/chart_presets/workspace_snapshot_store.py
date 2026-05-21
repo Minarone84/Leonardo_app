@@ -41,6 +41,7 @@ class HistoricalWorkspaceSnapshot:
     updated_at_ms: int
     workspace: dict[str, Any]
     charts: tuple[dict[str, Any], ...]
+    notebook_ref: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != HISTORICAL_WORKSPACE_SNAPSHOT_SCHEMA_VERSION:
@@ -73,6 +74,11 @@ class HistoricalWorkspaceSnapshot:
         )
         _validate_charts_payload(charts)
 
+        notebook_ref = self.notebook_ref
+        if notebook_ref is not None:
+            notebook_ref = _json_clone(dict(notebook_ref), field_name="notebook_ref")
+            _validate_notebook_ref_payload(notebook_ref)
+
         object.__setattr__(self, "snapshot_id", snapshot_id)
         object.__setattr__(self, "display_name", display_name)
         object.__setattr__(self, "description", str(self.description or ""))
@@ -80,6 +86,7 @@ class HistoricalWorkspaceSnapshot:
         object.__setattr__(self, "updated_at_ms", int(self.updated_at_ms))
         object.__setattr__(self, "workspace", workspace)
         object.__setattr__(self, "charts", charts)
+        object.__setattr__(self, "notebook_ref", notebook_ref)
         object.__setattr__(
             self,
             "content_hash",
@@ -98,6 +105,7 @@ class HistoricalWorkspaceSnapshot:
             "updated_at_ms": int(self.updated_at_ms),
             "workspace": dict(self.workspace),
             "charts": [dict(chart) for chart in self.charts],
+            "notebook_ref": dict(self.notebook_ref) if self.notebook_ref is not None else None,
         }
 
     @classmethod
@@ -118,6 +126,11 @@ class HistoricalWorkspaceSnapshot:
             charts=tuple(
                 dict(chart) for chart in data.get("charts", ()) or ()
             ),  # type: ignore[arg-type]
+            notebook_ref=(
+                dict(data["notebook_ref"])
+                if isinstance(data.get("notebook_ref"), Mapping)
+                else None
+            ),
         )
 
 
@@ -134,6 +147,7 @@ class HistoricalWorkspaceSnapshotSummary:
     chart_count: int
     study_count: int
     chart_summaries: tuple[dict[str, Any], ...]
+    notebook_ref: dict[str, Any] | None
     path: Path
 
     @classmethod
@@ -171,6 +185,11 @@ class HistoricalWorkspaceSnapshotSummary:
             chart_count=len(snapshot.charts),
             study_count=study_count,
             chart_summaries=tuple(chart_summaries),
+            notebook_ref=(
+                dict(snapshot.notebook_ref)
+                if snapshot.notebook_ref is not None
+                else None
+            ),
             path=Path(path),
         )
 
@@ -227,6 +246,7 @@ class HistoricalWorkspaceSnapshotStore:
         description: str = "",
         workspace: Mapping[str, Any],
         charts: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
+        notebook_ref: Mapping[str, Any] | None = None,
         snapshot_id: str | None = None,
         created_at_ms: int | None = None,
         updated_at_ms: int | None = None,
@@ -258,6 +278,7 @@ class HistoricalWorkspaceSnapshotStore:
             updated_at_ms=updated,
             workspace=dict(workspace),
             charts=tuple(dict(chart) for chart in charts),
+            notebook_ref=dict(notebook_ref) if notebook_ref is not None else None,
         )
 
     def save_snapshot(
@@ -417,6 +438,16 @@ def validate_historical_workspace_snapshot_payload(
         except ValueError as exc:
             errors.append(str(exc))
 
+    notebook_ref = payload.get("notebook_ref")
+    if notebook_ref is not None:
+        if not isinstance(notebook_ref, Mapping):
+            errors.append("notebook_ref must be a mapping or null.")
+        else:
+            try:
+                _validate_notebook_ref_payload(notebook_ref)
+            except ValueError as exc:
+                errors.append(str(exc))
+
     try:
         _require_json_serializable(
             payload,
@@ -523,6 +554,14 @@ def _validate_study_payload(study: Mapping[str, Any], *, field_name: str) -> Non
         raise ValueError(f"{field_name}.style is required")
     if not isinstance(study.get("style"), Mapping):
         raise ValueError(f"{field_name}.style must be a mapping")
+
+
+def _validate_notebook_ref_payload(notebook_ref: Mapping[str, Any]) -> None:
+    if not str(notebook_ref.get("notebook_id", "") or "").strip():
+        raise ValueError("notebook_ref.notebook_id is required.")
+    display_name = notebook_ref.get("display_name", "")
+    if display_name is not None and not isinstance(display_name, str):
+        raise ValueError("notebook_ref.display_name must be a string when present.")
 
 
 def _dict_or_empty(value: Any) -> dict[str, Any]:

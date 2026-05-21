@@ -55,6 +55,7 @@ class ChartRenderSurface(
         self._explicit_overlay_series: List[object] = []
         self._explicit_overlay_fills: List[object] = []
         self._explicit_background_regions: List[object] = []
+        self._notebook_poi_tooltips_by_global_index: dict[int, str] = {}
 
         # Workspace owns viewport-driven contract refresh. This surface repaints
         # when it receives explicit contract/view_state updates from the pane,
@@ -138,6 +139,18 @@ class ChartRenderSurface(
         )
         self._bump_static_version()
         self.update()
+
+    def set_notebook_poi_tooltips(self, tooltips_by_global_index: Mapping[int, str]) -> None:
+        """Set runtime notebook POI tooltip labels keyed by global candle index."""
+        self._notebook_poi_tooltips_by_global_index = {
+            int(index): str(text)
+            for index, text in dict(tooltips_by_global_index or {}).items()
+            if str(text or "").strip()
+        }
+        self.setToolTip("")
+
+    def _notebook_poi_tooltip_for_index(self, global_index: int) -> str:
+        return self._notebook_poi_tooltips_by_global_index.get(int(global_index), "")
 
     def _global_to_local(self, global_index: int) -> Optional[int]:
         local = int(global_index) - self._resident_base_index

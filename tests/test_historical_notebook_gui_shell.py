@@ -49,19 +49,23 @@ def test_create_notebook_action_opens_notebook_gui_shell() -> None:
     assert "def _refresh_notebook_from_workspace" in source
     assert "refresh_requested.connect(self._refresh_notebook_from_workspace)" in source
     assert "refresh_from_chart_options(self._chart_options())" in source
-    assert "self._notebook_window.show()" in source
-    assert "self._notebook_window.raise_()" in source
-    assert "self._notebook_window.activateWindow()" in source
+    assert "notebook_window.show()" in source
+    assert "notebook_window.raise_()" in source
+    assert "notebook_window.activateWindow()" in source
 
 
-def test_notebook_menu_shell_does_not_implement_persistence_or_snapshot_schema() -> None:
-    source = _source(HDM) + "\n" + _source(NOTEBOOK)
+def test_notebook_persistence_is_coordinated_by_data_manager_not_window() -> None:
+    manager_source = _source(HDM)
+    notebook_source = _source(NOTEBOOK)
 
-    assert "NotebookStore" not in source
-    assert "notebook_ref" not in source
-    assert "save_notebook(" not in source
-    assert "load_notebook(" not in source
-    assert "workspace_snapshot_store" not in _source(NOTEBOOK)
+    assert "HistoricalNotebookStore" in manager_source
+    assert "def _notebook_store_root" in manager_source
+    assert '"chart_presets" / "notebooks"' in manager_source
+    assert "def _on_save_notebook" in manager_source
+    assert "def _on_load_notebook" in manager_source
+    assert "def _on_assign_notebook_to_workspace_snapshot" in manager_source
+    assert "HistoricalNotebookStore" not in notebook_source
+    assert "workspace_snapshot_store" not in notebook_source
 
 
 def test_notebook_window_gui_shell_structure() -> None:
@@ -69,7 +73,12 @@ def test_notebook_window_gui_shell_structure() -> None:
 
     assert "class HistoricalNotebookWindow(QMainWindow)" in source
     assert "refresh_requested = Signal()" in source
+    assert "save_requested = Signal()" in source
+    assert "load_requested = Signal()" in source
+    assert "assign_requested = Signal()" in source
+    assert "goto_requested = Signal(str, int)" in source
     assert "QTabWidget" in source
+    assert "QTableWidget" in source
     assert "QPlainTextEdit" in source
     assert "Refresh Charts" in source
     assert "Assigned snapshot: Not assigned" in source

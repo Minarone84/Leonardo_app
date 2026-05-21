@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
+import time
 from typing import Any, Optional
 
 from PySide6.QtCore import Qt
@@ -15,6 +17,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMenuBar,
     QMessageBox,
+    QInputDialog,
     QPushButton,
     QSizePolicy,
     QStatusBar,
@@ -25,6 +28,10 @@ from PySide6.QtWidgets import (
 )
 
 from leonardo.core.context import AppContext
+from leonardo.data.chart_presets.notebook_store import (
+    HistoricalNotebookStore,
+    notebook_chart_key,
+)
 from leonardo.data.chart_presets.study_setup_store import ChartStudySetupStore
 from leonardo.data.chart_presets.workspace_snapshot_store import (
     HistoricalWorkspaceSnapshotStore,
@@ -692,29 +699,27 @@ class HistoricalDataManagerWindow(QMainWindow):
         menu_notes.addAction(action_create_notebook)
 
         action_save_notebook = QAction("Save Notebook", self)
-        action_save_notebook.setToolTip("Save the active notebook. Persistence is implemented later.")
-        action_save_notebook.setStatusTip("Save the active notebook. Persistence is implemented later.")
-        action_save_notebook.triggered.connect(self._on_save_notebook_placeholder)
+        action_save_notebook.setToolTip("Save the active historical notebook.")
+        action_save_notebook.setStatusTip("Save the active historical notebook.")
+        action_save_notebook.triggered.connect(self._on_save_notebook)
         self._action_save_notebook = action_save_notebook
         menu_notes.addAction(action_save_notebook)
 
         action_load_notebook = QAction("Load Notebook", self)
-        action_load_notebook.setToolTip("Load a saved notebook. Persistence is implemented later.")
-        action_load_notebook.setStatusTip("Load a saved notebook. Persistence is implemented later.")
-        action_load_notebook.triggered.connect(self._on_load_notebook_placeholder)
+        action_load_notebook.setToolTip("Load a saved historical notebook.")
+        action_load_notebook.setStatusTip("Load a saved historical notebook.")
+        action_load_notebook.triggered.connect(self._on_load_notebook)
         self._action_load_notebook = action_load_notebook
         menu_notes.addAction(action_load_notebook)
 
         action_assign_notebook = QAction("Assign Notebook to Workspace Snapshot", self)
         action_assign_notebook.setToolTip(
-            "Assign the active notebook to a workspace snapshot. Snapshot linkage is implemented later."
+            "Assign the active notebook to a saved workspace snapshot."
         )
         action_assign_notebook.setStatusTip(
-            "Assign the active notebook to a workspace snapshot. Snapshot linkage is implemented later."
+            "Assign the active notebook to a saved workspace snapshot."
         )
-        action_assign_notebook.triggered.connect(
-            self._on_assign_notebook_to_workspace_snapshot_placeholder
-        )
+        action_assign_notebook.triggered.connect(self._on_assign_notebook_to_workspace_snapshot)
         self._action_assign_notebook_to_workspace_snapshot = action_assign_notebook
         menu_notes.addAction(action_assign_notebook)
 
@@ -979,6 +984,12 @@ class HistoricalDataManagerWindow(QMainWindow):
     def _workspace_snapshot_store(self) -> HistoricalWorkspaceSnapshotStore:
         return HistoricalWorkspaceSnapshotStore(self._workspace_snapshot_store_root())
 
+    def _notebook_store_root(self) -> Path:
+        return Path(self._ctx.config.runtime.data_dir) / "chart_presets" / "notebooks"
+
+    def _notebook_store(self) -> HistoricalNotebookStore:
+        return HistoricalNotebookStore(self._notebook_store_root())
+
     def _chart_options(self) -> list[dict[str, Any]]:
         workspace = self._workspace_widget
         if workspace is None:
@@ -1177,6 +1188,7 @@ class HistoricalDataManagerWindow(QMainWindow):
                 workspace=workspace,
                 core_bridge=self._core,
                 load_mode=load_mode,
+                notebook_store=self._notebook_store(),
             )
 
         dialog = LoadWorkspaceSnapshotDialog(
@@ -1241,15 +1253,21 @@ class HistoricalDataManagerWindow(QMainWindow):
             return
 
         self._sync_view_mode_controls()
+        notebook_notice = self._open_notebook_ref_from_snapshot(snapshot.notebook_ref)
         self._set_status(
             f"Loading workspace snapshot '{snapshot.display_name}' "
             f"({len(charts)} chart(s))"
         )
+        message = (
+            f"Workspace snapshot '{snapshot.display_name}' is loading. "
+            "Studies and viewport state restore after each chart opens."
+        )
+        if notebook_notice:
+            message += f"\n\n{notebook_notice}"
         QMessageBox.information(
             self,
             "Load Workspace Snapshot",
-            f"Workspace snapshot '{snapshot.display_name}' is loading. "
-            "Studies and viewport state restore after each chart opens.",
+            message,
         )
 
     def _on_load_study_setup(self) -> None:
@@ -1379,60 +1397,278 @@ class HistoricalDataManagerWindow(QMainWindow):
             text="Embedded historical workspace tiling is now managed automatically.",
         )
 
-    def _on_create_notebook(self) -> None:
-        """Open the GUI-only historical notebook shell.
-
-        Notebook persistence and Workspace Snapshot assignment are intentionally
-        not implemented here. This method only owns the window lifecycle and
-        refreshes the shell from the currently embedded chart descriptors.
-        """
+    def _ensure_notebook_window(self) -> HistoricalNotebookWindow:
         if self._notebook_window is None:
             notebook_window = HistoricalNotebookWindow(parent=self)
             notebook_window.refresh_requested.connect(self._refresh_notebook_from_workspace)
+            notebook_window.save_requested.connect(self._on_save_notebook)
+            notebook_window.load_requested.connect(self._on_load_notebook)
+            notebook_window.assign_requested.connect(
+                self._on_assign_notebook_to_workspace_snapshot
+            )
+            notebook_window.goto_requested.connect(self._on_notebook_goto_requested)
+            notebook_window.poi_markers_changed.connect(
+                self._on_notebook_poi_markers_changed
+            )
+            notebook_window.poi_overlay_requested.connect(
+                self._on_notebook_poi_overlay_requested
+            )
             notebook_window.destroyed.connect(self._on_notebook_window_destroyed)
             self._notebook_window = notebook_window
+        return self._notebook_window
+
+    def _on_create_notebook(self) -> None:
+        """Open the historical notebook editor and bind current workspace charts."""
+        notebook_window = self._ensure_notebook_window()
 
         self._refresh_notebook_from_workspace()
-        if self._notebook_window is None:
-            return
-        self._notebook_window.show()
-        self._notebook_window.raise_()
-        self._notebook_window.activateWindow()
+        notebook_window.show()
+        notebook_window.raise_()
+        notebook_window.activateWindow()
         self._set_status("Notebook window opened")
 
     def _refresh_notebook_from_workspace(self) -> None:
-        """Refresh the notebook shell from the current embedded chart list."""
+        """Refresh the notebook editor from the current embedded chart list."""
         if self._notebook_window is None:
             return
         self._notebook_window.refresh_from_chart_options(self._chart_options())
+        self._apply_notebook_poi_markers()
 
     def _on_notebook_window_destroyed(self, *_args: Any) -> None:
-        """Forget the notebook shell reference after Qt destroys the window."""
+        """Forget the notebook window reference after Qt destroys the window."""
+        self._clear_notebook_poi_markers()
         self._notebook_window = None
 
-    def _on_save_notebook_placeholder(self) -> None:
-        self._set_status("Save Notebook clicked")
-        self._show_placeholder_message(
-            title="Save Notebook",
-            text="Notebook saving will be implemented with the notebook persistence layer.",
+    def _on_save_notebook(self) -> None:
+        notebook_window = self._ensure_notebook_window()
+        self._refresh_notebook_from_workspace()
+        store = self._notebook_store()
+
+        try:
+            if notebook_window.notebook_id():
+                notebook = notebook_window.current_notebook()
+                saved = store.save_notebook(notebook, overwrite=True)
+            else:
+                saved = store.save_notebook(
+                    store.create_notebook(
+                        display_name=notebook_window.display_name(),
+                        description=notebook_window.description(),
+                        chart_entries=notebook_window.chart_entries_payload(),
+                    )
+                )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Save Notebook",
+                f"Could not save notebook: {exc!r}",
+            )
+            return
+
+        notebook_window.mark_saved(saved)
+        self._set_status(f"Saved notebook: {saved.display_name}")
+        QMessageBox.information(
+            self,
+            "Save Notebook",
+            f"Saved notebook '{saved.display_name}'.",
         )
 
-    def _on_load_notebook_placeholder(self) -> None:
-        self._set_status("Load Notebook clicked")
-        self._show_placeholder_message(
-            title="Load Notebook",
-            text="Notebook loading will be implemented with the notebook persistence layer.",
+    def _on_load_notebook(self) -> None:
+        store = self._notebook_store()
+        summaries = store.list_summaries()
+        if not summaries:
+            QMessageBox.information(
+                self,
+                "Load Notebook",
+                "No saved historical notebooks were found.",
+            )
+            return
+
+        labels = [
+            f"{summary.display_name} ({summary.chart_count} chart tab(s))"
+            for summary in summaries
+        ]
+        selected, accepted = QInputDialog.getItem(
+            self,
+            "Load Notebook",
+            "Notebook:",
+            labels,
+            0,
+            False,
+        )
+        if not accepted:
+            self._set_status("Notebook load cancelled")
+            return
+
+        index = labels.index(selected)
+        try:
+            notebook = store.load_notebook(summaries[index].notebook_id)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Load Notebook",
+                f"Could not load notebook: {exc!r}",
+            )
+            return
+
+        notebook_window = self._ensure_notebook_window()
+        notebook_window.set_notebook(notebook)
+        self._refresh_notebook_from_workspace()
+        notebook_window.show()
+        notebook_window.raise_()
+        notebook_window.activateWindow()
+        self._set_status(f"Loaded notebook: {notebook.display_name}")
+
+    def _on_assign_notebook_to_workspace_snapshot(self) -> None:
+        notebook_window = self._notebook_window
+        if notebook_window is None or not notebook_window.notebook_id():
+            QMessageBox.information(
+                self,
+                "Assign Notebook to Workspace Snapshot",
+                "Save the notebook before assigning it to a workspace snapshot.",
+            )
+            return
+
+        snapshot_store = self._workspace_snapshot_store()
+        summaries = snapshot_store.list_summaries()
+        if not summaries:
+            QMessageBox.information(
+                self,
+                "Assign Notebook to Workspace Snapshot",
+                "No saved workspace snapshots were found.",
+            )
+            return
+
+        labels = [
+            f"{summary.display_name} ({summary.chart_count} chart(s))"
+            for summary in summaries
+        ]
+        selected, accepted = QInputDialog.getItem(
+            self,
+            "Assign Notebook to Workspace Snapshot",
+            "Workspace snapshot:",
+            labels,
+            0,
+            False,
+        )
+        if not accepted:
+            self._set_status("Notebook assignment cancelled")
+            return
+
+        index = labels.index(selected)
+        try:
+            snapshot = snapshot_store.load_snapshot(summaries[index].snapshot_id)
+            updated = replace(
+                snapshot,
+                notebook_ref={
+                    "notebook_id": notebook_window.notebook_id(),
+                    "display_name": notebook_window.display_name(),
+                },
+                updated_at_ms=int(time.time() * 1000),
+            )
+            saved = snapshot_store.save_snapshot(updated, overwrite=True)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Assign Notebook to Workspace Snapshot",
+                f"Could not assign notebook: {exc!r}",
+            )
+            return
+
+        notebook_window.set_assigned_snapshot_label(saved.display_name)
+        self._set_status(
+            f"Assigned notebook '{notebook_window.display_name()}' "
+            f"to snapshot '{saved.display_name}'"
         )
 
-    def _on_assign_notebook_to_workspace_snapshot_placeholder(self) -> None:
-        self._set_status("Assign Notebook to Workspace Snapshot clicked")
-        self._show_placeholder_message(
-            title="Assign Notebook to Workspace Snapshot",
-            text=(
-                "Notebook assignment will be implemented when Workspace Snapshot "
-                "notebook references are added."
-            ),
+    def _on_notebook_goto_requested(self, chart_key: str, ts_ms: int) -> None:
+        panel = self._panel_for_notebook_chart_key(chart_key)
+        if panel is None:
+            QMessageBox.information(
+                self,
+                "Notebook Go To",
+                "The notebook chart is not currently active in this workspace.",
+            )
+            return
+
+        navigate = getattr(panel, "center_on_notebook_timestamp", None)
+        if not callable(navigate) or not navigate(int(ts_ms)):
+            QMessageBox.warning(
+                self,
+                "Notebook Go To",
+                "Could not center the chart on the requested notebook date.",
+            )
+
+    def _on_notebook_poi_markers_changed(self) -> None:
+        self._apply_notebook_poi_markers()
+
+    def _on_notebook_poi_overlay_requested(self, _checked: bool) -> None:
+        self._apply_notebook_poi_markers()
+
+    def _panel_for_notebook_chart_key(self, chart_key: str):
+        workspace = self._workspace_widget
+        if workspace is None:
+            return None
+        target_key = str(chart_key or "").strip().lower()
+        for _position, panel in workspace.list_embedded_chart_panels():
+            dataset = panel.dataset_descriptor()
+            if notebook_chart_key(dataset) == target_key:
+                return panel
+        return None
+
+    def _apply_notebook_poi_markers(self) -> None:
+        notebook_window = self._notebook_window
+        workspace = self._workspace_widget
+        if workspace is None or notebook_window is None:
+            return
+
+        notebook_id = notebook_window.notebook_id() or "__unsaved_notebook__"
+        markers_by_key = notebook_window.poi_markers_by_chart_key()
+        enabled = notebook_window.poi_markers_enabled()
+        for _position, panel in workspace.list_embedded_chart_panels():
+            chart_key = notebook_chart_key(panel.dataset_descriptor())
+            if not enabled:
+                panel.clear_notebook_poi_markers(notebook_id)
+                continue
+            panel.set_notebook_poi_markers(
+                notebook_id,
+                markers_by_key.get(chart_key, []),
+            )
+
+    def _clear_notebook_poi_markers(self) -> None:
+        workspace = self._workspace_widget
+        if workspace is None:
+            return
+        for _position, panel in workspace.list_embedded_chart_panels():
+            clear_markers = getattr(panel, "clear_notebook_poi_markers", None)
+            if callable(clear_markers):
+                clear_markers()
+
+    def _open_notebook_ref_from_snapshot(
+        self,
+        notebook_ref: Mapping[str, Any] | None,
+    ) -> str:
+        if not isinstance(notebook_ref, Mapping):
+            return ""
+
+        notebook_id = str(notebook_ref.get("notebook_id", "") or "").strip()
+        if not notebook_id:
+            return ""
+
+        try:
+            notebook = self._notebook_store().load_notebook(notebook_id)
+        except Exception as exc:
+            return f"Assigned notebook could not be loaded: {exc!r}"
+
+        notebook_window = self._ensure_notebook_window()
+        notebook_window.set_notebook(
+            notebook,
+            assigned_snapshot_label=str(notebook_ref.get("display_name", "") or ""),
         )
+        self._refresh_notebook_from_workspace()
+        notebook_window.show()
+        notebook_window.raise_()
+        notebook_window.activateWindow()
+        return f"Assigned notebook '{notebook.display_name}' was opened."
 
     def _set_status(self, message: str) -> None:
         if self._status_bar is not None:

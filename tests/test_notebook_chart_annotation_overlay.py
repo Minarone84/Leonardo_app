@@ -59,7 +59,7 @@ def test_marker_payload_contains_timestamp_title_and_description() -> None:
 def test_date_go_to_reuses_existing_center_on_timestamp_path() -> None:
     panel_body = _function_source(PANEL, "center_on_notebook_timestamp")
     manager_body = _function_source(HDM, "_on_notebook_goto_requested")
-    notebook_body = _function_source(NOTEBOOK, "_on_table_cell_double_clicked")
+    notebook_body = _function_source(NOTEBOOK, "_on_row_goto_clicked")
 
     assert "center_view_on_timestamp_ms" in panel_body
     assert "center_on_notebook_timestamp" in manager_body

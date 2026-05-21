@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -39,8 +40,12 @@ _SECTION_NOTES = "notes"
 _SECTION_TRADES = "trades"
 _SECTION_POI = "points_of_interest"
 
-_NOTE_COLUMNS = ("Date / Time", "Note")
+_GOTO_COLUMN = 0
+_DATE_COLUMN = 1
+
+_NOTE_COLUMNS = ("Go", "Date / Time", "Note")
 _TRADE_COLUMNS = (
+    "Go",
     "Date / Time",
     "Direction",
     "Starting price",
@@ -52,7 +57,7 @@ _TRADE_COLUMNS = (
     "Outcome",
     "Note",
 )
-_POI_COLUMNS = ("Date / Time", "Title", "Description")
+_POI_COLUMNS = ("Go", "Date / Time", "Title", "Description")
 
 
 class HistoricalNotebookWindow(QMainWindow):
@@ -67,7 +72,7 @@ class HistoricalNotebookWindow(QMainWindow):
     save_requested = Signal()
     load_requested = Signal()
     assign_requested = Signal()
-    goto_requested = Signal(str, int)
+    goto_requested = Signal(str, object)
     poi_markers_changed = Signal()
     poi_overlay_requested = Signal(bool)
 
@@ -468,14 +473,15 @@ class HistoricalNotebookWindow(QMainWindow):
         table.insertRow(row_index)
         row_id = str(payload.get("row_id", "") or uuid.uuid4().hex)
         date_item = self._table_item(str(payload.get("date_text", "") or ""), row_id=row_id)
-        table.setItem(row_index, 0, date_item)
+        self._set_goto_button_cell(table, row_index)
+        table.setItem(row_index, _DATE_COLUMN, date_item)
 
         if section == _SECTION_NOTES:
-            table.setItem(row_index, 1, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
+            table.setItem(row_index, 2, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
             return
 
         if section == _SECTION_TRADES:
-            self._set_combo_cell(table, row_index, 1, ("Long", "Short"), str(payload.get("direction", "Long") or "Long"))
+            self._set_combo_cell(table, row_index, 2, ("Long", "Short"), str(payload.get("direction", "Long") or "Long"))
             numeric_keys = (
                 "starting_price",
                 "target_pct_movement",
@@ -484,21 +490,51 @@ class HistoricalNotebookWindow(QMainWindow):
                 "leverage",
                 "asset_bought",
             )
-            for offset, key in enumerate(numeric_keys, start=2):
+            for offset, key in enumerate(numeric_keys, start=3):
                 value = payload.get(key)
                 table.setItem(row_index, offset, self._table_item("" if value is None else str(value), row_id=row_id))
-            self._set_combo_cell(table, row_index, 8, ("Good", "Bad"), str(payload.get("outcome", "Good") or "Good"))
-            table.setItem(row_index, 9, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
+            self._set_combo_cell(table, row_index, 9, ("Good", "Bad"), str(payload.get("outcome", "Good") or "Good"))
+            table.setItem(row_index, 10, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
             return
 
         if section == _SECTION_POI:
-            table.setItem(row_index, 1, self._table_item(str(payload.get("title", "") or ""), row_id=row_id))
-            table.setItem(row_index, 2, self._table_item(str(payload.get("description", "") or ""), row_id=row_id))
+            table.setItem(row_index, 2, self._table_item(str(payload.get("title", "") or ""), row_id=row_id))
+            table.setItem(row_index, 3, self._table_item(str(payload.get("description", "") or ""), row_id=row_id))
 
     def _table_item(self, text: str, *, row_id: str) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         item.setData(Qt.UserRole, row_id)
         return item
+
+    def _set_goto_button_cell(self, table: QTableWidget, row: int) -> None:
+        button = QToolButton(table)
+        button.setText("Go")
+        button.setToolTip("Center chart on this row's Date / Time")
+        button.setAutoRaise(True)
+        button.clicked.connect(
+            lambda _checked=False, table=table, button=button: self._on_row_goto_button_clicked(
+                table,
+                button,
+            )
+        )
+        table.setCellWidget(row, _GOTO_COLUMN, button)
+
+    def _on_row_goto_button_clicked(
+        self,
+        table: QTableWidget,
+        button: QToolButton,
+    ) -> None:
+        row = self._row_for_cell_widget(table, button)
+        if row < 0:
+            self._set_goto_status("Go To failed: row could not be resolved.")
+            return
+        self._on_row_goto_clicked(table, row)
+
+    def _row_for_cell_widget(self, table: QTableWidget, widget: QWidget) -> int:
+        for row in range(table.rowCount()):
+            if table.cellWidget(row, _GOTO_COLUMN) is widget:
+                return row
+        return -1
 
     def _set_combo_cell(
         self,
@@ -541,7 +577,7 @@ class HistoricalNotebookWindow(QMainWindow):
         rows: list[dict[str, Any]] = []
         for row in range(table.rowCount()):
             row_id = self._row_id_for_table_row(table, row)
-            date_text = self._item_text(table, row, 0)
+            date_text = self._item_text(table, row, _DATE_COLUMN)
             ts_ms = self._parse_date_text_to_ts_ms(date_text)
             if section == _SECTION_NOTES:
                 rows.append(
@@ -549,7 +585,7 @@ class HistoricalNotebookWindow(QMainWindow):
                         "row_id": row_id,
                         "date_text": date_text,
                         "ts_ms": ts_ms,
-                        "note": self._item_text(table, row, 1),
+                        "note": self._item_text(table, row, 2),
                     }
                 )
             elif section == _SECTION_TRADES:
@@ -558,15 +594,15 @@ class HistoricalNotebookWindow(QMainWindow):
                         "row_id": row_id,
                         "date_text": date_text,
                         "ts_ms": ts_ms,
-                        "direction": self._combo_text(table, row, 1) or "Long",
-                        "starting_price": self._float_or_none(self._item_text(table, row, 2)),
-                        "target_pct_movement": self._float_or_none(self._item_text(table, row, 3)),
-                        "closing_price": self._float_or_none(self._item_text(table, row, 4)),
-                        "equity": self._float_or_none(self._item_text(table, row, 5)),
-                        "leverage": self._float_or_none(self._item_text(table, row, 6)),
-                        "asset_bought": self._float_or_none(self._item_text(table, row, 7)),
-                        "outcome": self._combo_text(table, row, 8) or "Good",
-                        "note": self._item_text(table, row, 9),
+                        "direction": self._combo_text(table, row, 2) or "Long",
+                        "starting_price": self._float_or_none(self._item_text(table, row, 3)),
+                        "target_pct_movement": self._float_or_none(self._item_text(table, row, 4)),
+                        "closing_price": self._float_or_none(self._item_text(table, row, 5)),
+                        "equity": self._float_or_none(self._item_text(table, row, 6)),
+                        "leverage": self._float_or_none(self._item_text(table, row, 7)),
+                        "asset_bought": self._float_or_none(self._item_text(table, row, 8)),
+                        "outcome": self._combo_text(table, row, 9) or "Good",
+                        "note": self._item_text(table, row, 10),
                     }
                 )
             elif section == _SECTION_POI:
@@ -575,14 +611,14 @@ class HistoricalNotebookWindow(QMainWindow):
                         "row_id": row_id,
                         "date_text": date_text,
                         "ts_ms": ts_ms,
-                        "title": self._item_text(table, row, 1),
-                        "description": self._item_text(table, row, 2),
+                        "title": self._item_text(table, row, 2),
+                        "description": self._item_text(table, row, 3),
                     }
                 )
         return rows
 
     def _row_id_for_table_row(self, table: QTableWidget, row: int) -> str:
-        item = table.item(row, 0)
+        item = table.item(row, _DATE_COLUMN)
         if item is not None:
             row_id = str(item.data(Qt.UserRole) or "").strip()
             if row_id:
@@ -613,24 +649,26 @@ class HistoricalNotebookWindow(QMainWindow):
         except ValueError:
             return None
 
-    def _on_table_cell_double_clicked(
-        self,
-        table: QTableWidget,
-        row: int,
-        column: int,
-    ) -> None:
-        if column != 0:
-            return
+    def _set_goto_status(self, message: str) -> None:
+        self._status_label.setText(message)
+
+    def _on_row_goto_clicked(self, table: QTableWidget, row: int) -> None:
         chart_key = str(table.property("chart_key") or "").strip()
         if not chart_key:
+            self._set_goto_status("Go To failed: notebook chart key is missing.")
             return
 
-        item = table.item(row, 0)
+        item = table.item(row, _DATE_COLUMN)
         if item is not None:
             table.closePersistentEditor(item)
-        date_text = self._item_text(table, row, 0)
+        date_text = self._item_text(table, row, _DATE_COLUMN)
+        if not date_text:
+            self._set_goto_status("Go To failed: Date / Time is empty.")
+            return
+
         ts_ms = self._parse_date_text_to_ts_ms(date_text)
         if ts_ms is None:
+            self._set_goto_status("Go To failed: Date / Time could not be parsed.")
             QMessageBox.warning(
                 self,
                 "Notebook Go To",
@@ -639,7 +677,19 @@ class HistoricalNotebookWindow(QMainWindow):
             )
             return
 
+        self._set_goto_status(f"Go To requested: {date_text}")
         self.goto_requested.emit(chart_key, int(ts_ms))
+
+    def _on_table_cell_double_clicked(
+        self,
+        table: QTableWidget,
+        row: int,
+        column: int,
+    ) -> None:
+        if column != _DATE_COLUMN:
+            return
+
+        self._on_row_goto_clicked(table, row)
 
     def _on_chart_tab_close_requested(self, index: int) -> None:
         widget = self._chart_tabs.widget(index)

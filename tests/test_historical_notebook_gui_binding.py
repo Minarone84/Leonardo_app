@@ -1,15 +1,25 @@
 from __future__ import annotations
 
 import ast
+from datetime import datetime, timezone
+import os
 from pathlib import Path
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
 from leonardo.data.chart_presets.notebook_store import notebook_chart_key
+from leonardo.gui.windows._historical_data_manager.notebook_window import (
+    HistoricalNotebookWindow,
+)
+from PySide6.QtWidgets import QApplication, QToolButton
 
 
 ROOT = Path(__file__).resolve().parents[1]
 WINDOWS = ROOT / "src" / "leonardo" / "gui" / "windows"
 NOTEBOOK = WINDOWS / "_historical_data_manager" / "notebook_window.py"
 HDM = WINDOWS / "historical_data_manager_window.py"
+
+_QAPP: QApplication | None = None
 
 
 def _source(path: Path) -> str:
@@ -25,10 +35,20 @@ def _function_source(path: Path, function_name: str) -> str:
     raise AssertionError(f"Function {function_name!r} not found in {path}")
 
 
+def _qapp() -> QApplication:
+    global _QAPP
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        return app
+    _QAPP = QApplication([])
+    return _QAPP
+
+
 def test_notebook_window_has_structured_tabs_and_tables() -> None:
     source = _source(NOTEBOOK)
 
     assert "class HistoricalNotebookWindow(QMainWindow)" in source
+    assert "QToolButton" in source
     assert "QTableWidget" in source
     assert '"Notes"' in source
     assert '"Trades"' in source
@@ -46,19 +66,120 @@ def test_notebook_window_has_structured_tabs_and_tables() -> None:
 def test_all_notebook_tables_share_date_time_go_to_path() -> None:
     source = _source(NOTEBOOK)
     table_body = _function_source(NOTEBOOK, "_new_section_table")
+    goto_button_body = _function_source(NOTEBOOK, "_set_goto_button_cell")
+    row_goto_body = _function_source(NOTEBOOK, "_on_row_goto_clicked")
     goto_body = _function_source(NOTEBOOK, "_on_table_cell_double_clicked")
 
-    assert '_POI_COLUMNS = ("Date / Time", "Title", "Description")' in source
+    assert '_NOTE_COLUMNS = ("Go", "Date / Time", "Note")' in source
+    assert '"Go",\n    "Date / Time",\n    "Direction",' in source
+    assert '_POI_COLUMNS = ("Go", "Date / Time", "Title", "Description")' in source
     assert "notes_table = self._new_section_table" in source
     assert "trades_table = self._new_section_table" in source
     assert "poi_table = self._new_section_table" in source
+    assert "self._set_goto_button_cell(table, row_index)" in source
+    assert "button.setText(\"Go\")" in goto_button_body
+    assert "Center chart on this row's Date / Time" in goto_button_body
+    assert "self._on_row_goto_button_clicked(" in goto_button_body
+    assert "button=button" in goto_button_body
+    assert "row=row" not in goto_button_body
     assert "cellDoubleClicked.connect" in table_body
     assert "_on_table_cell_double_clicked(table, row, column)" in table_body
-    assert "if column != 0:" in goto_body
-    assert "table.closePersistentEditor(item)" in goto_body
-    assert "self.goto_requested.emit(chart_key, int(ts_ms))" in goto_body
-    assert "chart_key not in self._active_chart_keys" not in goto_body
+    assert "if column != _DATE_COLUMN:" in goto_body
+    assert "self._on_row_goto_clicked(table, row)" in goto_body
+    assert "table.closePersistentEditor(item)" in row_goto_body
+    assert "date_text = self._item_text(table, row, _DATE_COLUMN)" in row_goto_body
+    assert "self.goto_requested.emit(chart_key, int(ts_ms))" in row_goto_body
+    assert "chart_key not in self._active_chart_keys" not in row_goto_body
     assert "_SECTION_POI" not in goto_body
+
+
+def test_row_goto_button_resolves_current_row_dynamically() -> None:
+    source = _source(NOTEBOOK)
+    button_body = _function_source(NOTEBOOK, "_set_goto_button_cell")
+    clicked_body = _function_source(NOTEBOOK, "_on_row_goto_button_clicked")
+    resolver_body = _function_source(NOTEBOOK, "_row_for_cell_widget")
+
+    assert "def _on_row_goto_button_clicked" in source
+    assert "def _row_for_cell_widget" in source
+    assert "row=row" not in button_body
+    assert "button=button" in button_body
+    assert "self._row_for_cell_widget(table, button)" in clicked_body
+    assert "self._on_row_goto_clicked(table, row)" in clicked_body
+    assert "table.cellWidget(row, _GOTO_COLUMN) is widget" in resolver_body
+    assert "return -1" in resolver_body
+
+
+def test_poi_row_goto_button_click_emits_dataset_key_and_timestamp() -> None:
+    _qapp()
+    dataset = {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m",
+    }
+    chart_key = notebook_chart_key(dataset)
+    window = HistoricalNotebookWindow()
+    try:
+        window.refresh_from_chart_options(
+            [
+                {
+                    "position": 1,
+                    "label": "Position 1: bybit / linear / BTCUSDT / 30m",
+                    "dataset": dataset,
+                }
+            ]
+        )
+        table = window._tables_by_chart_key[chart_key]["points_of_interest"]
+        window._append_empty_row(table)
+        row = table.rowCount() - 1
+        date_item = table.item(row, 1)
+        assert date_item is not None
+        date_item.setText("2026-05-21 14:30")
+
+        captured: list[tuple[str, int]] = []
+        window.goto_requested.connect(
+            lambda emitted_key, emitted_ts: captured.append(
+                (str(emitted_key), int(emitted_ts))
+            )
+        )
+
+        button = table.cellWidget(row, 0)
+        assert isinstance(button, QToolButton)
+        button.click()
+
+        expected_ts = int(
+            datetime(2026, 5, 21, 14, 30, tzinfo=timezone.utc).timestamp()
+            * 1000
+        )
+        assert captured == [(chart_key, expected_ts)]
+        assert window._status_label.text() == "Go To requested: 2026-05-21 14:30"
+    finally:
+        window.close()
+
+
+def test_notebook_table_columns_shift_row_sync_indexes_for_go_button() -> None:
+    source = _source(NOTEBOOK)
+    append_body = _function_source(NOTEBOOK, "_append_row_payload")
+    rows_body = _function_source(NOTEBOOK, "_rows_from_table")
+
+    assert "_GOTO_COLUMN = 0" in source
+    assert "_DATE_COLUMN = 1" in source
+    assert "table.setItem(row_index, _DATE_COLUMN, date_item)" in append_body
+    assert "table.setItem(row_index, 2, self._table_item(str(payload.get(\"note\"" in append_body
+    assert "self._set_combo_cell(table, row_index, 2" in append_body
+    assert "enumerate(numeric_keys, start=3)" in append_body
+    assert "self._set_combo_cell(table, row_index, 9" in append_body
+    assert "table.setItem(row_index, 10" in append_body
+    assert "table.setItem(row_index, 2, self._table_item(str(payload.get(\"title\"" in append_body
+    assert "table.setItem(row_index, 3, self._table_item(str(payload.get(\"description\"" in append_body
+    assert "date_text = self._item_text(table, row, _DATE_COLUMN)" in rows_body
+    assert '"direction": self._combo_text(table, row, 2) or "Long"' in rows_body
+    assert '"starting_price": self._float_or_none(self._item_text(table, row, 3))' in rows_body
+    assert '"asset_bought": self._float_or_none(self._item_text(table, row, 8))' in rows_body
+    assert '"outcome": self._combo_text(table, row, 9) or "Good"' in rows_body
+    assert '"note": self._item_text(table, row, 10)' in rows_body
+    assert '"title": self._item_text(table, row, 2)' in rows_body
+    assert '"description": self._item_text(table, row, 3)' in rows_body
 
 
 def test_notebook_chart_key_uses_dataset_identity_not_position() -> None:
@@ -103,10 +224,14 @@ def test_chart_tab_deletion_is_confirmed_and_refresh_can_recreate() -> None:
 
 def test_date_go_to_emits_request_without_direct_chart_mutation() -> None:
     source = _source(NOTEBOOK)
-    body = _function_source(NOTEBOOK, "_on_table_cell_double_clicked")
+    body = _function_source(NOTEBOOK, "_on_row_goto_clicked")
 
-    assert "goto_requested = Signal(str, int)" in source
+    assert "goto_requested = Signal(str, object)" in source
     assert "self.goto_requested.emit(chart_key, int(ts_ms))" in body
+    assert "date_text = self._item_text(table, row, _DATE_COLUMN)" in body
+    assert "Go To requested:" in body
+    assert "Go To failed: Date / Time is empty." in body
+    assert "Go To failed: Date / Time could not be parsed." in body
     assert "chart_key not in self._active_chart_keys" not in body
     assert "center_view_on_timestamp_ms" not in source
     assert "center_on_index" not in source

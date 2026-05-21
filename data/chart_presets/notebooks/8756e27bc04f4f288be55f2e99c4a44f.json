@@ -17,6 +17,13 @@
           "row_id": "ac381b11ba034ea894fcb6258bf0c0b9",
           "title": "TST_A",
           "ts_ms": 1778500800000
+        },
+        {
+          "date_text": "2026-05-10 12:00",
+          "description": "",
+          "row_id": "5b52b9eb12f14669b7efb83565a242f3",
+          "title": "",
+          "ts_ms": 1778414400000
         }
       ],
       "trades": [
@@ -84,12 +91,12 @@
       "trades": []
     }
   ],
-  "content_hash": "48d6124c422417234168eba25633c882444dad5020d0cc5eea99418d31202c48",
+  "content_hash": "6a0c5151eb7fdb6b349118e843231297a8359b62c34085a88c579c996f6138d4",
   "created_at_ms": 1779372983436,
   "description": "",
   "display_name": "Test_A",
   "notebook_id": "8756e27bc04f4f288be55f2e99c4a44f",
   "object_type": "historical_workspace_notebook",
   "schema_version": 1,
-  "updated_at_ms": 1779372983436
+  "updated_at_ms": 1779380574761
 }

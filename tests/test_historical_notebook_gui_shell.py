@@ -79,7 +79,7 @@ def test_notebook_window_gui_shell_structure() -> None:
     assert "save_requested = Signal()" in source
     assert "load_requested = Signal()" in source
     assert "assign_requested = Signal()" in source
-    assert "goto_requested = Signal(str, int)" in source
+    assert "goto_requested = Signal(str, object)" in source
     assert "QTabWidget" in source
     assert "QTableWidget" in source
     assert "QPlainTextEdit" in source

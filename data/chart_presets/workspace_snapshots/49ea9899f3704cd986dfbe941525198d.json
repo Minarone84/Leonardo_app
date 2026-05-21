@@ -358,14 +358,18 @@
       }
     }
   ],
-  "content_hash": "9b4d70d0e31b789fba914e9eb6f23e387ed839a546aacef4b6535fd27357e17c",
+  "content_hash": "91c7d17e344fc02d44c6ef24c9f7f0957eaaf7ec04974f0d27636e2a8853c745",
   "created_at_ms": 1779354337553,
   "description": "Figata!",
   "display_name": "Test_workspace_A",
+  "notebook_ref": {
+    "display_name": "Test_A",
+    "notebook_id": "8756e27bc04f4f288be55f2e99c4a44f"
+  },
   "object_type": "historical_workspace_snapshot",
   "schema_version": 1,
   "snapshot_id": "49ea9899f3704cd986dfbe941525198d",
-  "updated_at_ms": 1779354337553,
+  "updated_at_ms": 1779373001043,
   "workspace": {
     "visualization_mode": "scroll_4"
   }

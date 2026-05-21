@@ -48,7 +48,7 @@ def test_notebook_poi_overlay_uses_dedicated_chart_api_not_hidden_studies() -> N
 
 def test_marker_payload_contains_timestamp_title_and_description() -> None:
     panel_body = _function_source(PANEL, "set_notebook_poi_markers")
-    notebook_body = _function_source(NOTEBOOK, "poi_markers_by_chart_key")
+    notebook_body = _function_source(NOTEBOOK, "_build_poi_markers_by_chart_key_from_entries")
 
     for key in ('"ts_ms"', '"title"', '"description"'):
         assert key in panel_body

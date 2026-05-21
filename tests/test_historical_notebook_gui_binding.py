@@ -102,6 +102,52 @@ def test_poi_marker_checkbox_and_signal_exist() -> None:
     assert "poi_markers_by_chart_key" in source
 
 
+def test_poi_marker_signal_emission_is_guarded_against_table_sync_reentry() -> None:
+    source = _source(NOTEBOOK)
+    helper_body = _function_source(NOTEBOOK, "_emit_poi_markers_changed")
+
+    assert "_syncing_from_tables" in source
+    assert "_suppress_notebook_change_signals" in source
+    assert "def _emit_poi_markers_changed" in source
+    assert "self._syncing_from_tables or self._suppress_notebook_change_signals" in helper_body
+    assert source.count("self.poi_markers_changed.emit()") == 1
+    assert "self.poi_markers_changed.emit()" in helper_body
+
+
+def test_poi_marker_collection_syncs_tables_without_emitting_markers() -> None:
+    body = _function_source(NOTEBOOK, "poi_markers_by_chart_key")
+
+    assert "self._syncing_from_tables = True" in body
+    assert "self._suppress_notebook_change_signals = True" in body
+    assert "self._sync_all_entries_from_tables()" in body
+    assert "finally:" in body
+    assert "self._build_poi_markers_by_chart_key_from_entries()" in body
+    assert "poi_markers_changed.emit" not in body
+
+
+def test_poi_table_sync_uses_guarded_marker_emit() -> None:
+    body = _function_source(NOTEBOOK, "_sync_entry_from_table")
+
+    assert "section == _SECTION_POI" in body
+    assert "self._emit_poi_markers_changed()" in body
+    assert "self.poi_markers_changed.emit()" not in body
+
+
+def test_data_manager_has_poi_marker_reentry_guard() -> None:
+    source = _source(HDM)
+    changed_body = _function_source(HDM, "_on_notebook_poi_markers_changed")
+    overlay_body = _function_source(HDM, "_on_notebook_poi_overlay_requested")
+    apply_body = _function_source(HDM, "_apply_notebook_poi_markers")
+
+    assert "_applying_notebook_poi_markers" in source
+    assert "if self._applying_notebook_poi_markers:" in changed_body
+    assert "if self._applying_notebook_poi_markers:" in overlay_body
+    assert "self._applying_notebook_poi_markers = True" in apply_body
+    assert "finally:" in apply_body
+    assert "self._applying_notebook_poi_markers = False" in apply_body
+    assert "notebook_window.poi_markers_by_chart_key()" in apply_body
+
+
 def test_historical_data_manager_coordinates_notebook_persistence() -> None:
     source = _source(HDM)
 

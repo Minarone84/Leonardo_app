@@ -86,6 +86,8 @@ class HistoricalNotebookWindow(QMainWindow):
         self._chart_tab_labels: dict[str, str] = {}
         self._tables_by_chart_key: dict[str, dict[str, QTableWidget]] = {}
         self._updating_tables = False
+        self._syncing_from_tables = False
+        self._suppress_notebook_change_signals = False
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -283,7 +285,19 @@ class HistoricalNotebookWindow(QMainWindow):
         return bool(self._show_poi_markers_check.isChecked())
 
     def poi_markers_by_chart_key(self) -> dict[str, list[dict[str, Any]]]:
-        self._sync_all_entries_from_tables()
+        if not self._syncing_from_tables:
+            old_syncing = self._syncing_from_tables
+            old_suppress = self._suppress_notebook_change_signals
+            self._syncing_from_tables = True
+            self._suppress_notebook_change_signals = True
+            try:
+                self._sync_all_entries_from_tables()
+            finally:
+                self._suppress_notebook_change_signals = old_suppress
+                self._syncing_from_tables = old_syncing
+        return self._build_poi_markers_by_chart_key_from_entries()
+
+    def _build_poi_markers_by_chart_key_from_entries(self) -> dict[str, list[dict[str, Any]]]:
         markers: dict[str, list[dict[str, Any]]] = {}
         for chart_key, entry in self._chart_entries_by_key.items():
             points = entry.get("points_of_interest", []) or []
@@ -516,7 +530,7 @@ class HistoricalNotebookWindow(QMainWindow):
             return
         entry[section] = self._rows_from_table(table, section)
         if section == _SECTION_POI:
-            self.poi_markers_changed.emit()
+            self._emit_poi_markers_changed()
 
     def _sync_all_entries_from_tables(self) -> None:
         for table_map in self._tables_by_chart_key.values():
@@ -651,11 +665,16 @@ class HistoricalNotebookWindow(QMainWindow):
         self._tables_by_chart_key.pop(chart_key, None)
         self._chart_tabs.removeTab(index)
         self._refresh_tab_indexes()
-        self.poi_markers_changed.emit()
+        self._emit_poi_markers_changed()
         self._update_status()
 
     def _on_poi_overlay_toggled(self, checked: bool) -> None:
         self.poi_overlay_requested.emit(bool(checked))
+        self._emit_poi_markers_changed()
+
+    def _emit_poi_markers_changed(self) -> None:
+        if self._syncing_from_tables or self._suppress_notebook_change_signals:
+            return
         self.poi_markers_changed.emit()
 
     def _mark_chart_tab_active(self, chart_key: str, active: bool) -> None:

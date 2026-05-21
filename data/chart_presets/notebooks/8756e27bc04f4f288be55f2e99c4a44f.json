@@ -1,0 +1,95 @@
+{
+  "chart_entries": [
+    {
+      "chart_key": "bybit|linear|adausdt|1h",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "ADAUSDT",
+        "timeframe": "1h"
+      },
+      "last_seen_position": 1,
+      "notes": [],
+      "points_of_interest": [
+        {
+          "date_text": "2026-05-11 12:00",
+          "description": "TEST A",
+          "row_id": "ac381b11ba034ea894fcb6258bf0c0b9",
+          "title": "TST_A",
+          "ts_ms": 1778500800000
+        }
+      ],
+      "trades": [
+        {
+          "asset_bought": null,
+          "closing_price": 110.0,
+          "date_text": "2026/05/22",
+          "direction": "Long",
+          "equity": 500.0,
+          "leverage": null,
+          "note": "",
+          "outcome": "Good",
+          "row_id": "f522d5b5b99c4086b9df48bb7b555066",
+          "starting_price": 100.0,
+          "target_pct_movement": 1.0,
+          "ts_ms": null
+        }
+      ]
+    },
+    {
+      "chart_key": "bybit|linear|btcusdt|30m",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m"
+      },
+      "last_seen_position": 2,
+      "notes": [],
+      "points_of_interest": [
+        {
+          "date_text": "2026-05-11",
+          "description": "",
+          "row_id": "eae94a41611945e09c7f9994daa5ff95",
+          "title": "",
+          "ts_ms": 1778457600000
+        }
+      ],
+      "trades": []
+    },
+    {
+      "chart_key": "bybit|linear|solusdt|15m",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "SOLUSDT",
+        "timeframe": "15m"
+      },
+      "last_seen_position": 3,
+      "notes": [],
+      "points_of_interest": [],
+      "trades": []
+    },
+    {
+      "chart_key": "bybit|linear|btcusdt|1w",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "1w"
+      },
+      "last_seen_position": 4,
+      "notes": [],
+      "points_of_interest": [],
+      "trades": []
+    }
+  ],
+  "content_hash": "48d6124c422417234168eba25633c882444dad5020d0cc5eea99418d31202c48",
+  "created_at_ms": 1779372983436,
+  "description": "",
+  "display_name": "Test_A",
+  "notebook_id": "8756e27bc04f4f288be55f2e99c4a44f",
+  "object_type": "historical_workspace_notebook",
+  "schema_version": 1,
+  "updated_at_ms": 1779372983436
+}

@@ -545,6 +545,7 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         self._workspace_widget: Optional[HistoricalWorkspaceWidget] = None
         self._notebook_window: Optional[HistoricalNotebookWindow] = None
+        self._applying_notebook_poi_markers: bool = False
         self._is_closing: bool = False
 
         self._build_ui()
@@ -1599,9 +1600,13 @@ class HistoricalDataManagerWindow(QMainWindow):
             )
 
     def _on_notebook_poi_markers_changed(self) -> None:
+        if self._applying_notebook_poi_markers:
+            return
         self._apply_notebook_poi_markers()
 
     def _on_notebook_poi_overlay_requested(self, _checked: bool) -> None:
+        if self._applying_notebook_poi_markers:
+            return
         self._apply_notebook_poi_markers()
 
     def _panel_for_notebook_chart_key(self, chart_key: str):
@@ -1616,23 +1621,30 @@ class HistoricalDataManagerWindow(QMainWindow):
         return None
 
     def _apply_notebook_poi_markers(self) -> None:
+        if self._applying_notebook_poi_markers:
+            return
+
         notebook_window = self._notebook_window
         workspace = self._workspace_widget
         if workspace is None or notebook_window is None:
             return
 
-        notebook_id = notebook_window.notebook_id() or "__unsaved_notebook__"
-        markers_by_key = notebook_window.poi_markers_by_chart_key()
-        enabled = notebook_window.poi_markers_enabled()
-        for _position, panel in workspace.list_embedded_chart_panels():
-            chart_key = notebook_chart_key(panel.dataset_descriptor())
-            if not enabled:
-                panel.clear_notebook_poi_markers(notebook_id)
-                continue
-            panel.set_notebook_poi_markers(
-                notebook_id,
-                markers_by_key.get(chart_key, []),
-            )
+        self._applying_notebook_poi_markers = True
+        try:
+            notebook_id = notebook_window.notebook_id() or "__unsaved_notebook__"
+            markers_by_key = notebook_window.poi_markers_by_chart_key()
+            enabled = notebook_window.poi_markers_enabled()
+            for _position, panel in workspace.list_embedded_chart_panels():
+                chart_key = notebook_chart_key(panel.dataset_descriptor())
+                if not enabled:
+                    panel.clear_notebook_poi_markers(notebook_id)
+                    continue
+                panel.set_notebook_poi_markers(
+                    notebook_id,
+                    markers_by_key.get(chart_key, []),
+                )
+        finally:
+            self._applying_notebook_poi_markers = False
 
     def _clear_notebook_poi_markers(self) -> None:
         workspace = self._workspace_widget

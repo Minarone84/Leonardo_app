@@ -45,9 +45,6 @@ from leonardo.gui.windows._historical_data_manager.workspace_snapshot_dialogs im
     LoadWorkspaceSnapshotDialog,
     SaveWorkspaceSnapshotDialog,
 )
-from leonardo.gui.windows._historical_data_manager.notebook_window import (
-    HistoricalNotebookWindow,
-)
 from leonardo.gui.windows.historical_workspace_widget import HistoricalWorkspaceWidget
 
 
@@ -509,10 +506,10 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         self._menu_file: Optional[QMenu] = None
         self._menu_window: Optional[QMenu] = None
-        self._menu_notes: Optional[QMenu] = None
+        self._menu_historical: Optional[QMenu] = None
 
         # Single menu-bar corner widget used to keep quick actions and the
-        # view-mode label on the same row as File / Window / Notes.
+        # view-mode label on the same row as File / Window / Historical.
         #
         # This replaces the old separate toolbar row, which consumed vertical
         # chart space. The quick buttons still reuse the same QAction objects
@@ -526,18 +523,15 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_load_workspace_snapshot: Optional[QAction] = None
         self._action_close: Optional[QAction] = None
         self._action_placeholder_tile: Optional[QAction] = None
+        self._action_placeholder_open_chart: Optional[QAction] = None
         self._action_placeholder_open_dataset: Optional[QAction] = None
-        self._action_create_notebook: Optional[QAction] = None
-        self._action_save_notebook: Optional[QAction] = None
-        self._action_load_notebook: Optional[QAction] = None
-        self._action_assign_notebook_to_workspace_snapshot: Optional[QAction] = None
+        self._action_placeholder_refresh: Optional[QAction] = None
         self._action_view_mode_scroll_4: Optional[QAction] = None
         self._action_view_mode_fit_8: Optional[QAction] = None
         self._view_mode_action_group: Optional[QActionGroup] = None
         self._view_mode_label: Optional[QLabel] = None
 
         self._workspace_widget: Optional[HistoricalWorkspaceWidget] = None
-        self._notebook_window: Optional[HistoricalNotebookWindow] = None
         self._is_closing: bool = False
 
         self._build_ui()
@@ -586,11 +580,11 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         menu_file = menu_bar.addMenu("File")
         menu_window = menu_bar.addMenu("Window")
-        menu_notes = menu_bar.addMenu("Notes")
+        menu_historical = menu_bar.addMenu("Historical")
 
         self._menu_file = menu_file
         self._menu_window = menu_window
-        self._menu_notes = menu_notes
+        self._menu_historical = menu_historical
 
         action_new_chart = QAction("New Chart", self)
         action_new_chart.triggered.connect(self._on_new_chart)
@@ -684,39 +678,15 @@ class HistoricalDataManagerWindow(QMainWindow):
         view_mode_group.addAction(action_view_fit_8)
         menu_window.addAction(action_view_fit_8)
 
-        action_create_notebook = QAction("Create New Notebook", self)
-        action_create_notebook.setToolTip("Create a chart-analysis notebook for the current workspace.")
-        action_create_notebook.setStatusTip("Create a chart-analysis notebook for the current workspace.")
-        action_create_notebook.triggered.connect(self._on_create_notebook)
-        self._action_create_notebook = action_create_notebook
-        menu_notes.addAction(action_create_notebook)
+        action_open_chart = QAction("Open Historical Chart", self)
+        action_open_chart.triggered.connect(self._on_open_chart_placeholder)
+        self._action_placeholder_open_chart = action_open_chart
+        menu_historical.addAction(action_open_chart)
 
-        action_save_notebook = QAction("Save Notebook", self)
-        action_save_notebook.setToolTip("Save the active notebook. Persistence is implemented later.")
-        action_save_notebook.setStatusTip("Save the active notebook. Persistence is implemented later.")
-        action_save_notebook.triggered.connect(self._on_save_notebook_placeholder)
-        self._action_save_notebook = action_save_notebook
-        menu_notes.addAction(action_save_notebook)
-
-        action_load_notebook = QAction("Load Notebook", self)
-        action_load_notebook.setToolTip("Load a saved notebook. Persistence is implemented later.")
-        action_load_notebook.setStatusTip("Load a saved notebook. Persistence is implemented later.")
-        action_load_notebook.triggered.connect(self._on_load_notebook_placeholder)
-        self._action_load_notebook = action_load_notebook
-        menu_notes.addAction(action_load_notebook)
-
-        action_assign_notebook = QAction("Assign Notebook to Workspace Snapshot", self)
-        action_assign_notebook.setToolTip(
-            "Assign the active notebook to a workspace snapshot. Snapshot linkage is implemented later."
-        )
-        action_assign_notebook.setStatusTip(
-            "Assign the active notebook to a workspace snapshot. Snapshot linkage is implemented later."
-        )
-        action_assign_notebook.triggered.connect(
-            self._on_assign_notebook_to_workspace_snapshot_placeholder
-        )
-        self._action_assign_notebook_to_workspace_snapshot = action_assign_notebook
-        menu_notes.addAction(action_assign_notebook)
+        action_refresh = QAction("Refresh", self)
+        action_refresh.triggered.connect(self._on_refresh_placeholder)
+        self._action_placeholder_refresh = action_refresh
+        menu_historical.addAction(action_refresh)
 
         # Keep quick preset/snapshot actions on the same row as the menu bar.
         #
@@ -1379,59 +1349,18 @@ class HistoricalDataManagerWindow(QMainWindow):
             text="Embedded historical workspace tiling is now managed automatically.",
         )
 
-    def _on_create_notebook(self) -> None:
-        """Open the GUI-only historical notebook shell.
-
-        Notebook persistence and Workspace Snapshot assignment are intentionally
-        not implemented here. This method only owns the window lifecycle and
-        refreshes the shell from the currently embedded chart descriptors.
-        """
-        if self._notebook_window is None:
-            notebook_window = HistoricalNotebookWindow(parent=self)
-            notebook_window.refresh_requested.connect(self._refresh_notebook_from_workspace)
-            notebook_window.destroyed.connect(self._on_notebook_window_destroyed)
-            self._notebook_window = notebook_window
-
-        self._refresh_notebook_from_workspace()
-        if self._notebook_window is None:
-            return
-        self._notebook_window.show()
-        self._notebook_window.raise_()
-        self._notebook_window.activateWindow()
-        self._set_status("Notebook window opened")
-
-    def _refresh_notebook_from_workspace(self) -> None:
-        """Refresh the notebook shell from the current embedded chart list."""
-        if self._notebook_window is None:
-            return
-        self._notebook_window.refresh_from_chart_options(self._chart_options())
-
-    def _on_notebook_window_destroyed(self, *_args: Any) -> None:
-        """Forget the notebook shell reference after Qt destroys the window."""
-        self._notebook_window = None
-
-    def _on_save_notebook_placeholder(self) -> None:
-        self._set_status("Save Notebook clicked")
+    def _on_open_chart_placeholder(self) -> None:
+        self._set_status("Open Historical Chart clicked")
         self._show_placeholder_message(
-            title="Save Notebook",
-            text="Notebook saving will be implemented with the notebook persistence layer.",
+            title="Open Historical Chart",
+            text="Use File → New Chart to create a new embedded historical chart.",
         )
 
-    def _on_load_notebook_placeholder(self) -> None:
-        self._set_status("Load Notebook clicked")
+    def _on_refresh_placeholder(self) -> None:
+        self._set_status("Refresh clicked")
         self._show_placeholder_message(
-            title="Load Notebook",
-            text="Notebook loading will be implemented with the notebook persistence layer.",
-        )
-
-    def _on_assign_notebook_to_workspace_snapshot_placeholder(self) -> None:
-        self._set_status("Assign Notebook to Workspace Snapshot clicked")
-        self._show_placeholder_message(
-            title="Assign Notebook to Workspace Snapshot",
-            text=(
-                "Notebook assignment will be implemented when Workspace Snapshot "
-                "notebook references are added."
-            ),
+            title="Refresh",
+            text="Refresh behavior will be implemented later.",
         )
 
     def _set_status(self, message: str) -> None:

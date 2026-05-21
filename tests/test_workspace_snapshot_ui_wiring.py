@@ -40,13 +40,18 @@ def test_historical_data_manager_defines_workspace_snapshot_actions() -> None:
     assert "self._on_load_workspace_snapshot" in source
 
 
-def test_file_menu_and_toolbar_reuse_workspace_snapshot_qactions() -> None:
+def test_file_menu_and_menu_bar_corner_reuse_workspace_snapshot_qactions() -> None:
     source = _source(HDM)
 
     assert "menu_file.addAction(action_save_workspace_snapshot)" in source
     assert "menu_file.addAction(action_load_workspace_snapshot)" in source
-    assert "study_setup_toolbar.addAction(self._action_save_workspace_snapshot)" in source
-    assert "study_setup_toolbar.addAction(self._action_load_workspace_snapshot)" in source
+    assert "def _build_menu_bar_corner_widget" in source
+    assert "def _make_menu_bar_action_button" in source
+    assert "setDefaultAction(action)" in source
+    assert "action=self._action_save_workspace_snapshot" in source
+    assert "action=self._action_load_workspace_snapshot" in source
+    assert "historicalDataManagerMenuBarCornerWidget" in source
+    assert "study_setup_toolbar" not in source
 
 
 def test_workspace_snapshot_store_root_uses_runtime_chart_presets_path() -> None:

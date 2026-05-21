@@ -57,6 +57,7 @@ def test_all_notebook_tables_share_date_time_go_to_path() -> None:
     assert "if column != 0:" in goto_body
     assert "table.closePersistentEditor(item)" in goto_body
     assert "self.goto_requested.emit(chart_key, int(ts_ms))" in goto_body
+    assert "chart_key not in self._active_chart_keys" not in goto_body
     assert "_SECTION_POI" not in goto_body
 
 
@@ -106,6 +107,7 @@ def test_date_go_to_emits_request_without_direct_chart_mutation() -> None:
 
     assert "goto_requested = Signal(str, int)" in source
     assert "self.goto_requested.emit(chart_key, int(ts_ms))" in body
+    assert "chart_key not in self._active_chart_keys" not in body
     assert "center_view_on_timestamp_ms" not in source
     assert "center_on_index" not in source
 
@@ -119,8 +121,19 @@ def test_data_manager_routes_notebook_go_to_through_panel_controller_path() -> N
     assert "self._panel_for_notebook_chart_key(chart_key)" in body
     assert "center_on_notebook_timestamp" in body
     assert "Notebook Go To requested" in body
+    assert "Notebook Go To failed: chart not active" in body
+    assert "Notebook Go To failed: chart timeline is not ready" in body
     assert "Notebook Go To centered" in body
     assert "notebook_chart_key(dataset) == target_key" in panel_lookup_body
+
+
+def test_notebook_window_is_non_modal_top_level_window() -> None:
+    source = _source(NOTEBOOK)
+
+    assert "class HistoricalNotebookWindow(QMainWindow)" in source
+    assert "setWindowModality" not in source
+    assert "ApplicationModal" not in source
+    assert "WindowModal" not in source
 
 
 def test_poi_marker_checkbox_and_signal_exist() -> None:

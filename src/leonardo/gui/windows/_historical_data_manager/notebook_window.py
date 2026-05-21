@@ -621,20 +621,14 @@ class HistoricalNotebookWindow(QMainWindow):
     ) -> None:
         if column != 0:
             return
-        chart_key = str(table.property("chart_key") or "")
-        if chart_key not in self._active_chart_keys:
-            QMessageBox.information(
-                self,
-                "Notebook Go To",
-                "Chart is not currently active; notes are preserved.",
-            )
+        chart_key = str(table.property("chart_key") or "").strip()
+        if not chart_key:
             return
 
-        date_text = self._item_text(table, row, 0)
         item = table.item(row, 0)
         if item is not None:
             table.closePersistentEditor(item)
-            date_text = str(item.text() or "").strip()
+        date_text = self._item_text(table, row, 0)
         ts_ms = self._parse_date_text_to_ts_ms(date_text)
         if ts_ms is None:
             QMessageBox.warning(

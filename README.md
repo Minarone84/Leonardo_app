@@ -109,6 +109,23 @@ Current compact-layout behavior also includes:
 - unchanged historical chart-space domain padding.
 
 
+## Current Historical Notebook / Workspace Snapshot workflow — 2026-05-21
+
+Historical Data Manager now includes a workspace-linked Historical Notebook workflow for chart analysis notes.
+
+Accepted notebook behavior includes:
+
+- `Notes` menu actions for `Create New Notebook`, `Open Notebook`, `Save Notebook`, `Load Notebook`, and `Assign Notebook to Workspace Snapshot`;
+- notebook persistence through `NotebookStore` under `chart_presets/notebooks`, outside the notebook window itself;
+- Workspace Snapshots storing only an optional `notebook_ref`, never embedded notebook content;
+- chart tabs keyed by dataset identity (`exchange`, `market_type`, `symbol`, `timeframe`), while chart position remains display metadata only;
+- structured notebook sections for Notes, Trades, and Points of Interest;
+- row-level `Go` buttons that emit `chart_key + ts_ms` and let `HistoricalDataManagerWindow` route chart centering through the existing chart panel/controller path;
+- runtime POI chart markers rendered as notebook-driven annotations, not hidden studies and not financial-tool outputs;
+- a compact menu-bar `Notebook` quick action before the Study Setup quick actions when an assigned notebook is available.
+
+Study Setups remain notebook-free. Notebook data belongs to the notebook store and Workspace Snapshot association belongs to `notebook_ref` only.
+
 ## Current Oscillator / ARSI workflow — 2026-05-20
 
 Oscillator outputs now include the accepted Volume and upgraded ARSI behavior:

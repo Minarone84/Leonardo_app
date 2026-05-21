@@ -1,7 +1,7 @@
 # Leonardo — Historical Chart Architecture (Current State)
 
-Version: v4.4
-Date: 2026-05-20
+Version: v4.5
+Date: 2026-05-21
 
 Scope: historical chart sessions, chart-space ownership, viewport/camera behavior, autoscale/manual-y behavior, resident slicing, study projection, pane contracts, and renderer execution.
 
@@ -25,6 +25,7 @@ The historical chart system must support:
 - pane-managed oscillator behavior
 - detachable chart sessions
 - renderer execution without semantic ownership
+- runtime notebook annotations without study ownership
 
 This document is intentionally chart-specific.
 
@@ -481,6 +482,27 @@ For historical conditional studies such as HCK, that visual payload may be a seg
 
 ---
 
+## 11.5 Notebook Runtime Annotation Boundary
+
+Historical Notebook POI markers are chart annotations, not studies.
+
+Durable notebook truth lives in `HistoricalNotebookStore`. A Workspace Snapshot may reference that notebook through `notebook_ref`, but it must not embed notebook content in the snapshot payload.
+
+When a notebook POI overlay is enabled, `HistoricalDataManagerWindow` derives runtime marker payloads from notebook POI rows and sends them to matching active `HistoricalChartPanel` instances through narrow notebook-marker APIs. The chart layer receives already-derived annotation payloads.
+
+Notebook POI markers must not:
+
+- enter `ChartStudyRegistry`;
+- create `ChartStudyInstance` objects;
+- become financial-tool outputs;
+- alter controller full-study truth;
+- be saved as Study Setup content;
+- redefine pane/layout ownership.
+
+Renderer participation remains execution-only: it draws the explicit marker payload it is given and must not infer notebook semantics or own notebook persistence.
+
+---
+
 ## 12. ChartWorkspaceWidget Contract
 
 `ChartWorkspaceWidget` owns pane/layout behavior and chart-space policy.
@@ -839,7 +861,7 @@ This file should not drift back into a Financial Tools document.
 
 ## 21. Validation Basis
 
-This version also records the compact historical workspace layout update: chart-area margins, embedded grid gaps, splitter handle width, and renderer plot padding may be reduced to maximize data area, while fixed historical chart-space domain padding remains unchanged. View-mode controls are shell-level UI exposed through the historical workspace/window menu, not chart-session semantic ownership.
+This version also records the compact historical workspace layout update: chart-area margins, embedded grid gaps, splitter handle width, and renderer plot padding may be reduced to maximize data area, while fixed historical chart-space domain padding remains unchanged. View-mode controls are shell-level UI exposed through the historical workspace/window menu, not chart-session semantic ownership. Historical Notebook POI markers are documented as runtime annotations outside the study system and outside financial-tool output truth.
 M1–M6 hardening validated the current implementation with static checks, targeted regression tests, GUI release checks, and full uploaded test validation.
 
 
@@ -867,7 +889,7 @@ That limitation does not change the ownership contract defined in this document.
 
 ## 22. Summary
 
-The Leonardo historical chart is now defined as a stable chart environment with a moving horizontal camera, a workspace-owned price-pane autoscale/manual-y contract, controller-owned resident truth, panel-owned chart-local study lifecycle and identity, workspace-owned pane contracts, and execution-only renderers. The current price-pane study set includes ordinary line overlays, segmented conditional overlays such as HCK, and marker-style event overlays such as `peaks_troughs`.
+The Leonardo historical chart is now defined as a stable chart environment with a moving horizontal camera, a workspace-owned price-pane autoscale/manual-y contract, controller-owned resident truth, panel-owned chart-local study lifecycle and identity, workspace-owned pane contracts, runtime notebook annotations, and execution-only renderers. The current price-pane study set includes ordinary line overlays, segmented conditional overlays such as HCK, and marker-style event overlays such as `peaks_troughs`; notebook POI markers remain outside the study system.
 
 In plain terms:
 

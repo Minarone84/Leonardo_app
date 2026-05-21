@@ -1,8 +1,8 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.15
+Version: v0.16
 Status: Living document (expected to change)
-Updated: 2026-05-20
+Updated: 2026-05-21
 
 Purpose
 
@@ -396,6 +396,15 @@ Implemented baseline:
   - Historical workspace compact layout reduces chart-area margins, pane gaps, splitter width, and renderer plot padding without changing domain-padding/refill behavior.
   - Historical workspace visualization mode controls moved to the `Window` menu and the menu bar shows the current mode.
 
+- M10 Historical Notebook / Workspace Snapshot integration is accepted:
+  - Historical Data Manager exposes `Notes` menu actions for creating, opening, saving, loading, and assigning notebooks.
+  - `HistoricalNotebookStore` persists notebook JSON under `chart_presets/notebooks` while `HistoricalNotebookWindow` remains an in-memory editor.
+  - Workspace Snapshots store only optional `notebook_ref` metadata and never embed notebook content.
+  - Notebook chart tabs are keyed by dataset identity, not by chart position.
+  - Notes, Trades, and Points of Interest use structured rows with row-level `Go` buttons that route chart centering through the existing Data Manager / panel / controller path.
+  - POI rows can produce runtime chart markers; those markers are notebook annotations, not hidden studies or financial-tool outputs.
+  - The menu-bar quick actions include an `Open Notebook` / `Notebook` button before Study Setup actions when an assigned notebook is available.
+
 Next direction:
 
 - Treat the current Historical Download Manager M7 behavior as the accepted OHLCV ingestion baseline.
@@ -467,6 +476,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.16: Historical Notebook and Workspace Snapshot integration. Documents NotebookStore persistence, Notes menu actions, Save/Load/Assign Notebook workflows, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level Go To buttons, runtime POI chart markers, and the Open Notebook quick action. Study Setup remains notebook-free and POI markers remain runtime chart annotations rather than hidden studies.
+
 v0.15: Oscillator styling, ARSI upgrade, and historical workspace compact layout. Documents Volume histogram/mean behavior, threshold-aware oscillator segment splitting, dynamic oscillator default-style resolution, Ultimate RSI-style ARSI with orange signal/mean line and 80/50/20 guides, compact chart workspace spacing, Window-menu view mode controls, and current-mode menu-bar label.
 
 v0.14: Historical chart/study hardening. Documents Core-backed dataset catalog selection, GUI-thread/stale-result guards for dataset open and slicing, renderability/analysis-source separation, explicit save metadata, construct saved-identity hashes, public render-cache invalidation, Sequence-safe series values, dataset-service cache invalidation, and full uploaded test validation.

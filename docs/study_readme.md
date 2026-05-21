@@ -1,7 +1,7 @@
 # Leonardo Study System (Current State)
 
-Version: v1.7
-Date: 2026-05-20
+Version: v1.8
+Date: 2026-05-21
 
 ## Purpose
 
@@ -712,6 +712,8 @@ In particular:
 - broader financial-tool architecture belongs in `DESIGN_financial_tools.md`
 - historical chart-space and resident-slice behavior belong in `DESIGN_historical_chart_v2.md`
 
+Notebook POI markers are also outside the study system. They are runtime chart annotations derived from Historical Notebook rows. They do not enter `ChartStudyRegistry`, do not create `ChartStudyInstance` objects, do not become financial-tool outputs, and are not saved as Study Setup content.
+
 ---
 
 ## Non-Negotiable Rules
@@ -734,6 +736,7 @@ The study system enforces:
 - panel owns study lifecycle and projected-refresh mapping back onto chart-local studies
 - controller owns full-study truth and resident-local projection
 - renderers are execution-only surfaces
+- notebook POI markers are runtime annotations, not studies
 
 ---
 
@@ -775,7 +778,7 @@ It reflects the current study-system contract:
 
 `full-dataset compute truth → controller resident projection → panel chart-local identity/style resolution → workspace pane application → renderer execution`
 
-No construct-only naming policy, deprecated study ownership model, or renderer-owned style truth should remain in this file.
+No construct-only naming policy, deprecated study ownership model, or renderer-owned style truth should remain in this file. Notebook-owned POI annotation truth should likewise remain outside the study system.
 ---
 
 ## Refactored Study/Panel Implementation — 2026-04-20

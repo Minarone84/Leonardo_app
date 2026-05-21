@@ -1,7 +1,7 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.18
-Date: 2026-05-20
+Version: v3.19
+Date: 2026-05-21
 
 ## Overview
 
@@ -17,6 +17,7 @@ It is built around a modular chart engine that supports:
 - pane-managed rendering
 - chart-local study styling
 - chart-local oscillator visual policy
+- Historical Notebook workflow for chart notes, trades, POIs, row-level Go To, and workspace snapshot notebook references
 - centralized runtime diagnostics
 
 The GUI supports two deployment models:
@@ -294,7 +295,7 @@ Historical chart sessions are hosted by `HistoricalDataManagerWindow`.
 
 The New Historical Chart selection dialog consumes CoreBridge/HistoricalDatasetService catalog surfaces for exchange, market type, symbol, and timeframe discovery. It must not walk `data/historical` directly or validate datasets by guessing filesystem contents. The accepted dataset value artifact remains strict `ohlcv/candles.csv`.
 
-The Historical menu Refresh action requests Core-owned historical dataset cache invalidation through CoreBridge. It is a cache-refresh intent, not a chart-session reload and not a filesystem mutation path.
+Any historical dataset refresh/cache-invalidation action exposed by the GUI must request Core-owned historical dataset cache invalidation through CoreBridge. It is a cache-refresh intent, not a chart-session reload and not a filesystem mutation path.
 
 The embedded historical workspace manages:
 
@@ -369,6 +370,31 @@ Odd chart counts always include one full-width chart. For 3 charts the full-widt
 Panels can detach into `HistoricalChartWindow` and dock back without losing chart-session state.
 
 The same `HistoricalChartPanel` instance is preserved across embed/detach/dock flows. Floating mode is a shell change, not a second chart-session owner. Dock-back restores the panel to its preserved logical slot when that slot is available.
+
+### Historical Notebook
+
+`HistoricalDataManagerWindow` also owns the Historical Notebook user workflow for chart analysis notes.
+
+Notebook responsibilities are split deliberately:
+
+- `HistoricalNotebookWindow` is a GUI-owned in-memory editor. It displays and edits notebook content, emits user intents, and does not own durable persistence.
+- `HistoricalDataManagerWindow` owns the `Notes` menu actions, coordinates `HistoricalNotebookStore`, resolves notebook `Go` requests to active chart panels, and applies runtime POI markers to matching charts.
+- `HistoricalNotebookStore` owns durable notebook JSON files under `chart_presets/notebooks` and must remain free of GUI / PySide imports.
+- `HistoricalWorkspaceSnapshotStore` stores only an optional `notebook_ref` with notebook identity/display metadata. It does not embed notebook content.
+
+Notebook chart entries are keyed by dataset identity (`exchange`, `market_type`, `symbol`, `timeframe`). Chart position may be shown as `last_seen_position`, but it must not participate in notebook identity.
+
+Notebook tabs contain structured `Notes`, `Trades`, and `Point of Interest` sections. Each row has a compact `Go` button before `Date / Time`; clicking it emits `goto_requested(chart_key, ts_ms)`. The notebook window does not move charts directly. `HistoricalDataManagerWindow` performs active-chart lookup and delegates chart centering through `HistoricalChartPanel` and `HistoricalChartController`.
+
+POI rows may be projected onto matching active charts as runtime annotation markers. These markers are notebook-driven chart annotations:
+
+- they are not financial tools;
+- they are not hidden studies;
+- they do not enter `ChartStudyRegistry`;
+- they are not saved as Study Setup content;
+- they are derived from notebook POI rows at runtime.
+
+The menu-bar corner quick actions include an optional `Notebook` button before the Study Setup buttons. It opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
 
 ---
 
@@ -1241,7 +1267,7 @@ This README is aligned with the current validated GUI chart-stack direction acro
 
 Validation in this environment was static/structural rather than live Qt runtime because `PySide6` was unavailable in the container.
 
-This version also includes a focused structural validation pass for viewport-refresh ownership and single-shot pane/surface contract application.
+This version also includes a focused structural validation pass for viewport-refresh ownership, single-shot pane/surface contract application, and Historical Notebook ownership boundaries.
 
 This README therefore documents the current ownership contract and validated code direction, not a final live-runtime sign-off.
 
@@ -1252,6 +1278,7 @@ This README therefore documents the current ownership contract and validated cod
 The GUI currently provides:
 
 - 8-slot adaptive historical workspace with Scroll 4 / Fit 8 modes, dock-back slot preservation, and chart Position controls
+- Historical Notebook support for workspace-linked notes, trades, POIs, row-level Go To, assigned snapshot notebooks, and runtime POI chart annotations
 - detachable chart sessions
 - shared chart engine for embedded and floating shells
 - pane-managed layout
@@ -1401,6 +1428,8 @@ Recommended tooling (in the GUI package):
 ---
 
 ## Change log
+
+- **v3.19 (2026-05-21)** — Historical Notebook workflow: added `Notes` menu notebook actions, `HistoricalNotebookStore` persistence, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level `Go` buttons, runtime POI chart annotations, and the menu-bar `Notebook` quick action. Study Setups remain notebook-free and POI markers remain runtime annotations rather than hidden studies.
 
 - **v3.18 (2026-05-20)** — Historical workspace compact-layout polish: chart-area margins, embedded grid gaps, splitter handle width, and renderer plot padding were reduced; pane separation is handled by subtle borders/separators; `Scroll 4` / `Fit 8` moved into the `Window` menu; a top-right menu-bar label displays the current visualization mode. Historical domain padding and controller/refill behavior are unchanged.
 

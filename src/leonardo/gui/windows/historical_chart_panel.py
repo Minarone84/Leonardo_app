@@ -101,6 +101,7 @@ class HistoricalChartPanel(
 
         self._editing_study_instance_id: Optional[str] = None
         self._wired_oscillator_pane_ids: set[int] = set()
+        self._pending_workspace_snapshot_chart: Optional[dict[str, Any]] = None
         self._is_disposed: bool = False
         self._updating_position_combo: bool = False
 
@@ -276,6 +277,58 @@ class HistoricalChartPanel(
                 )
             payloads.append(payload)
         return payloads
+
+    def export_workspace_chart_snapshot(self, position: int) -> dict[str, Any]:
+        """
+        Export this chart panel's durable workspace-snapshot chart payload.
+
+        The payload contains dataset identity, viewport intent, price-view state,
+        and serialized study intent/style data. It intentionally excludes live
+        resident arrays, computed study arrays, renderer payloads, and Qt object
+        identities.
+        """
+        return {
+            "position": int(position),
+            "dataset": self.dataset_descriptor(),
+            "viewport": self._controller.export_viewport_state(),
+            "price_view_state": {},
+            "studies": self.export_serialized_studies(),
+        }
+
+    def open_workspace_snapshot_chart(self, chart_payload: Mapping[str, Any]) -> None:
+        """
+        Open a snapshot chart and defer study/viewport restore until data arrives.
+
+        Dataset opening is asynchronous. Study reapplication and viewport
+        restoration therefore remain panel-owned and run from the normal
+        slice-ready path after the controller has primed chart-session truth.
+        """
+        payload = dict(chart_payload)
+        dataset = payload.get("dataset", {})
+        if not isinstance(dataset, Mapping):
+            raise ValueError("Workspace snapshot chart dataset must be a mapping.")
+
+        self._pending_workspace_snapshot_chart = payload
+        self.open_dataset(
+            exchange=str(dataset.get("exchange", "") or ""),
+            market_type=str(dataset.get("market_type", "") or ""),
+            symbol=str(dataset.get("symbol", "") or ""),
+            timeframe=str(dataset.get("timeframe", "") or ""),
+        )
+
+    def restore_workspace_chart_viewport(self, viewport_state: Mapping[str, Any]) -> bool:
+        """Restore a workspace-snapshot viewport through controller/viewport APIs."""
+        center_ts_ms = viewport_state.get("center_ts_ms")
+        if isinstance(center_ts_ms, int):
+            return self._controller.center_view_on_timestamp_ms(center_ts_ms)
+
+        fallback_index = viewport_state.get("fallback_global_index")
+        if isinstance(fallback_index, int):
+            viewport = self._workspace.viewport
+            if hasattr(viewport, "center_on_index"):
+                viewport.center_on_index(fallback_index)  # type: ignore[attr-defined]
+                return True
+        return False
 
     def apply_serialized_study_setup(
         self,
@@ -461,6 +514,7 @@ class HistoricalChartPanel(
             return
 
         self._is_disposed = True
+        self._pending_workspace_snapshot_chart = None
 
         if self._financial_tools_manager_window is not None:
             try:
@@ -905,6 +959,30 @@ class HistoricalChartPanel(
         without recomputation.
         """
         self._refresh_rendered_studies_from_controller_projection()
+        self._apply_pending_workspace_snapshot_chart()
+
+    def _apply_pending_workspace_snapshot_chart(self) -> None:
+        pending = self._pending_workspace_snapshot_chart
+        if pending is None:
+            return
+
+        self._pending_workspace_snapshot_chart = None
+
+        studies = pending.get("studies", []) or []
+        if isinstance(studies, Sequence) and not isinstance(studies, (str, bytes)):
+            report = self.apply_serialized_study_setup(studies, mode="append")
+            errors = list(report.get("errors", []) or [])
+            if errors:
+                self._on_error(
+                    "Workspace snapshot study restore reported errors: "
+                    + "; ".join(str(error) for error in errors[:8])
+                )
+
+        viewport_state = pending.get("viewport", {}) or {}
+        if isinstance(viewport_state, Mapping):
+            restored = self.restore_workspace_chart_viewport(viewport_state)
+            if not restored and viewport_state:
+                self._on_error("Workspace snapshot viewport restore could not be applied.")
 
 
 

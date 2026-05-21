@@ -25,11 +25,24 @@ from PySide6.QtWidgets import (
 
 from leonardo.core.context import AppContext
 from leonardo.data.chart_presets.study_setup_store import ChartStudySetupStore
+from leonardo.data.chart_presets.workspace_snapshot_store import (
+    HistoricalWorkspaceSnapshotStore,
+)
 from leonardo.gui.core_bridge import CoreBridge
-from leonardo.gui.chart.study_serialization import validate_serialized_chart_study
+from leonardo.gui.windows._historical_data_manager.preset_compatibility import (
+    PRESET_STATUS_WARNING,
+    PresetCompatibilityReport,
+    evaluate_study_setup_compatibility,
+    evaluate_workspace_snapshot_compatibility,
+    format_compatibility_report,
+)
 from leonardo.gui.windows._historical_data_manager.study_setup_dialogs import (
     LoadStudySetupDialog,
     SaveStudySetupDialog,
+)
+from leonardo.gui.windows._historical_data_manager.workspace_snapshot_dialogs import (
+    LoadWorkspaceSnapshotDialog,
+    SaveWorkspaceSnapshotDialog,
 )
 from leonardo.gui.windows.historical_workspace_widget import HistoricalWorkspaceWidget
 
@@ -498,6 +511,8 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_new_chart: Optional[QAction] = None
         self._action_save_study_setup: Optional[QAction] = None
         self._action_load_study_setup: Optional[QAction] = None
+        self._action_save_workspace_snapshot: Optional[QAction] = None
+        self._action_load_workspace_snapshot: Optional[QAction] = None
         self._action_close: Optional[QAction] = None
         self._action_placeholder_tile: Optional[QAction] = None
         self._action_placeholder_open_chart: Optional[QAction] = None
@@ -590,6 +605,30 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         menu_file.addSeparator()
 
+        action_save_workspace_snapshot = QAction("Save Workspace Snapshot...", self)
+        action_save_workspace_snapshot.setToolTip(
+            "Save all embedded charts, positions, view mode, studies, parameters, and styles."
+        )
+        action_save_workspace_snapshot.setStatusTip(
+            "Save all embedded charts, positions, view mode, studies, parameters, and styles."
+        )
+        action_save_workspace_snapshot.triggered.connect(self._on_save_workspace_snapshot)
+        self._action_save_workspace_snapshot = action_save_workspace_snapshot
+        menu_file.addAction(action_save_workspace_snapshot)
+
+        action_load_workspace_snapshot = QAction("Load Workspace Snapshot...", self)
+        action_load_workspace_snapshot.setToolTip(
+            "Load a saved historical workspace snapshot."
+        )
+        action_load_workspace_snapshot.setStatusTip(
+            "Load a saved historical workspace snapshot."
+        )
+        action_load_workspace_snapshot.triggered.connect(self._on_load_workspace_snapshot)
+        self._action_load_workspace_snapshot = action_load_workspace_snapshot
+        menu_file.addAction(action_load_workspace_snapshot)
+
+        menu_file.addSeparator()
+
         action_close = QAction("Close", self)
         action_close.triggered.connect(self.close)
         self._action_close = action_close
@@ -654,6 +693,8 @@ class HistoricalDataManagerWindow(QMainWindow):
         study_setup_toolbar.setMovable(False)
         study_setup_toolbar.addAction(self._action_save_study_setup)
         study_setup_toolbar.addAction(self._action_load_study_setup)
+        study_setup_toolbar.addAction(self._action_save_workspace_snapshot)
+        study_setup_toolbar.addAction(self._action_load_workspace_snapshot)
         self.addToolBar(Qt.TopToolBarArea, study_setup_toolbar)
         self._study_setup_toolbar = study_setup_toolbar
 
@@ -764,6 +805,12 @@ class HistoricalDataManagerWindow(QMainWindow):
     def _chart_study_setup_store(self) -> ChartStudySetupStore:
         return ChartStudySetupStore(self._chart_study_setup_store_root())
 
+    def _workspace_snapshot_store_root(self) -> Path:
+        return Path(self._ctx.config.runtime.data_dir) / "chart_presets" / "workspace_snapshots"
+
+    def _workspace_snapshot_store(self) -> HistoricalWorkspaceSnapshotStore:
+        return HistoricalWorkspaceSnapshotStore(self._workspace_snapshot_store_root())
+
     def _chart_options(self) -> list[dict[str, Any]]:
         workspace = self._workspace_widget
         if workspace is None:
@@ -873,12 +920,169 @@ class HistoricalDataManagerWindow(QMainWindow):
                 continue
         return setups
 
-    def _validate_setup_studies_for_load(self, studies: list[dict[str, Any]]) -> list[str]:
-        errors: list[str] = []
-        for index, study in enumerate(studies, start=1):
-            for error in validate_serialized_chart_study(study):
-                errors.append(f"Study {index}: {error}")
-        return errors
+    def _load_workspace_snapshot_objects(self):
+        store = self._workspace_snapshot_store()
+        snapshots = []
+        for summary in store.list_summaries():
+            try:
+                snapshots.append(store.load_snapshot(summary.snapshot_id))
+            except Exception:
+                continue
+        return snapshots
+
+    def _on_save_workspace_snapshot(self) -> None:
+        workspace = self._workspace_widget
+        if workspace is None:
+            self._set_status("Historical workspace not ready")
+            return
+
+        try:
+            snapshot_payload = workspace.export_workspace_snapshot_payload()
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Save Workspace Snapshot",
+                f"Could not collect workspace snapshot data: {exc!r}",
+            )
+            return
+
+        charts = list(snapshot_payload.get("charts", []) or [])
+        if not charts:
+            QMessageBox.information(
+                self,
+                "Save Workspace Snapshot",
+                "Open at least one embedded historical chart before saving a workspace snapshot.",
+            )
+            return
+
+        dialog = SaveWorkspaceSnapshotDialog(
+            snapshot_payload=snapshot_payload,
+            detached_reserved_slot_count=workspace.detached_reserved_slot_count(),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            self._set_status("Workspace snapshot save cancelled")
+            return
+
+        store = self._workspace_snapshot_store()
+        try:
+            snapshot = store.create_snapshot(
+                display_name=dialog.display_name(),
+                description=dialog.description(),
+                workspace=dict(snapshot_payload.get("workspace", {}) or {}),
+                charts=charts,
+            )
+            saved = store.save_snapshot(snapshot)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Save Workspace Snapshot",
+                f"Could not save workspace snapshot: {exc!r}",
+            )
+            return
+
+        self._set_status(f"Saved workspace snapshot: {saved.display_name}")
+        QMessageBox.information(
+            self,
+            "Save Workspace Snapshot",
+            f"Saved workspace snapshot '{saved.display_name}'.",
+        )
+
+    def _on_load_workspace_snapshot(self) -> None:
+        workspace = self._workspace_widget
+        if workspace is None:
+            self._set_status("Historical workspace not ready")
+            return
+
+        snapshots = self._load_workspace_snapshot_objects()
+        if not snapshots:
+            QMessageBox.information(
+                self,
+                "Load Workspace Snapshot",
+                "No saved workspace snapshots were found.",
+            )
+            return
+
+        def compatibility_provider(snapshot, load_mode: str) -> PresetCompatibilityReport:
+            return evaluate_workspace_snapshot_compatibility(
+                snapshot,
+                workspace=workspace,
+                core_bridge=self._core,
+                load_mode=load_mode,
+            )
+
+        dialog = LoadWorkspaceSnapshotDialog(
+            snapshots=snapshots,
+            current_chart_count=workspace.chart_count(),
+            available_slot_count=workspace.available_embedded_slot_count(),
+            detached_reserved_slot_count=workspace.detached_reserved_slot_count(),
+            compatibility_provider=compatibility_provider,
+            parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            self._set_status("Workspace snapshot load cancelled")
+            return
+
+        store = self._workspace_snapshot_store()
+        try:
+            snapshot = store.load_snapshot(dialog.selected_snapshot_id())
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Load Workspace Snapshot",
+                f"Could not load workspace snapshot: {exc!r}",
+            )
+            return
+
+        charts = [dict(chart) for chart in snapshot.charts]
+        load_mode = dialog.load_mode()
+        compatibility_report = compatibility_provider(snapshot, load_mode)
+        if not compatibility_report.can_load:
+            QMessageBox.warning(
+                self,
+                "Load Workspace Snapshot",
+                "Selected workspace snapshot cannot be loaded:\n\n"
+                + format_compatibility_report(compatibility_report),
+            )
+            return
+        if compatibility_report.status == PRESET_STATUS_WARNING:
+            QMessageBox.warning(
+                self,
+                "Load Workspace Snapshot",
+                "Selected workspace snapshot will load with warnings:\n\n"
+                + format_compatibility_report(compatibility_report),
+            )
+
+        try:
+            workspace.load_workspace_snapshot_charts(charts, mode=load_mode)
+            workspace.set_visualization_mode(
+                str(
+                    snapshot.workspace.get(
+                        "visualization_mode",
+                        HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4,
+                    )
+                    or HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4
+                )
+            )
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Load Workspace Snapshot",
+                f"Could not start workspace snapshot load: {exc!r}",
+            )
+            return
+
+        self._sync_view_mode_controls()
+        self._set_status(
+            f"Loading workspace snapshot '{snapshot.display_name}' "
+            f"({len(charts)} chart(s))"
+        )
+        QMessageBox.information(
+            self,
+            "Load Workspace Snapshot",
+            f"Workspace snapshot '{snapshot.display_name}' is loading. "
+            "Studies and viewport state restore after each chart opens.",
+        )
 
     def _on_load_study_setup(self) -> None:
         chart_options = self._chart_options()
@@ -899,9 +1103,17 @@ class HistoricalDataManagerWindow(QMainWindow):
             )
             return
 
+        def compatibility_provider(setup, position: int, load_mode: str) -> PresetCompatibilityReport:
+            return evaluate_study_setup_compatibility(
+                setup,
+                target_panel=self._panel_for_chart_position(position),
+                load_mode=load_mode,
+            )
+
         dialog = LoadStudySetupDialog(
             setups=setups,
             chart_options=chart_options,
+            compatibility_provider=compatibility_provider,
             parent=self,
         )
         if dialog.exec() != QDialog.Accepted:
@@ -920,16 +1132,6 @@ class HistoricalDataManagerWindow(QMainWindow):
             return
 
         studies = [dict(study) for study in setup.studies]
-        validation_errors = self._validate_setup_studies_for_load(studies)
-        if validation_errors:
-            QMessageBox.warning(
-                self,
-                "Load Study Setup",
-                "Selected setup is structurally invalid:\n"
-                + "\n".join(validation_errors[:8]),
-            )
-            return
-
         panel = self._panel_for_chart_position(dialog.selected_target_chart_position())
         if panel is None:
             QMessageBox.warning(
@@ -938,6 +1140,27 @@ class HistoricalDataManagerWindow(QMainWindow):
                 "Selected target chart is no longer available.",
             )
             return
+
+        compatibility_report = compatibility_provider(
+            setup,
+            dialog.selected_target_chart_position(),
+            dialog.load_mode(),
+        )
+        if not compatibility_report.can_load:
+            QMessageBox.warning(
+                self,
+                "Load Study Setup",
+                "Selected setup cannot be loaded:\n\n"
+                + format_compatibility_report(compatibility_report),
+            )
+            return
+        if compatibility_report.status == PRESET_STATUS_WARNING:
+            QMessageBox.warning(
+                self,
+                "Load Study Setup",
+                "Selected setup will load with warnings:\n\n"
+                + format_compatibility_report(compatibility_report),
+            )
 
         try:
             report = panel.apply_serialized_study_setup(

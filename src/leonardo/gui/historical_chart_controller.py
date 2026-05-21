@@ -285,6 +285,36 @@ class HistoricalChartController(
         viewport.set_window(start, start + visible)
         return True
 
+    def export_viewport_state(self) -> dict[str, object]:
+        """
+        Return durable horizontal camera state for workspace snapshot payloads.
+
+        The controller owns the canonical timeline and viewport bridge, so it is
+        the boundary that can translate the current chart-space center into a
+        durable timestamp. Padding-space centers are clamped to the nearest real
+        candle timestamp while preserving a global-index fallback.
+        """
+        viewport = self._workspace.viewport
+        visible = max(1, int(getattr(viewport, "visible", self.DEFAULT_VISIBLE_BARS)))
+        start = int(getattr(viewport, "start", 0))
+        center_index = start + (visible // 2)
+        fallback_global_index = center_index
+        center_ts_ms = self._session.global_index_to_ts_ms(center_index)
+
+        if center_ts_ms is None and self._session.timeline_ts_ms:
+            clamped_index = max(
+                0,
+                min(center_index, len(self._session.timeline_ts_ms) - 1),
+            )
+            fallback_global_index = clamped_index
+            center_ts_ms = self._session.global_index_to_ts_ms(clamped_index)
+
+        return {
+            "center_ts_ms": center_ts_ms,
+            "visible_bars": visible,
+            "fallback_global_index": fallback_global_index,
+        }
+
     def _on_dataset_opened(
         self,
         fut,

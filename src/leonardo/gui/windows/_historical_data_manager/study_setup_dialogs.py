@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any, Mapping, Sequence
 
 from PySide6.QtCore import Qt
@@ -22,6 +23,11 @@ from PySide6.QtWidgets import (
 )
 
 from leonardo.data.chart_presets.study_setup_store import ChartStudySetup
+from leonardo.gui.windows._historical_data_manager.preset_compatibility import (
+    PresetCompatibilityReport,
+    format_compatibility_report,
+    ready_report,
+)
 
 
 def _params_summary(params: Mapping[str, Any]) -> str:
@@ -173,11 +179,14 @@ class LoadStudySetupDialog(QDialog):
         *,
         setups: Sequence[ChartStudySetup],
         chart_options: Sequence[Mapping[str, Any]],
+        compatibility_provider: Callable[[ChartStudySetup, int, str], PresetCompatibilityReport] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._setups_by_id = {setup.setup_id: setup for setup in setups}
         self._chart_options = [dict(option) for option in chart_options]
+        self._compatibility_provider = compatibility_provider
+        self._current_compatibility_report = ready_report()
 
         self.setWindowTitle("Load Study Setup")
         self.resize(900, 620)
@@ -219,6 +228,7 @@ class LoadStudySetupDialog(QDialog):
             label = str(option.get("label", "") or "").strip()
             position = int(option.get("position", 0) or 0)
             self._target_chart_combo.addItem(label or f"Chart {position}", position)
+        self._target_chart_combo.currentIndexChanged.connect(lambda *_: self._refresh_details())
         target_form.addRow("Target chart", self._target_chart_combo)
 
         mode_row = QWidget(detail_group)
@@ -229,12 +239,20 @@ class LoadStudySetupDialog(QDialog):
         self._append_radio = QRadioButton("Append to existing studies", mode_row)
         self._replace_radio = QRadioButton("Replace existing studies", mode_row)
         self._append_radio.setChecked(True)
+        self._append_radio.toggled.connect(lambda *_: self._refresh_details())
+        self._replace_radio.toggled.connect(lambda *_: self._refresh_details())
         mode_layout.addWidget(self._append_radio)
         mode_layout.addWidget(self._replace_radio)
         mode_layout.addStretch(1)
         target_form.addRow("Load mode", mode_row)
 
         detail_layout.addLayout(target_form)
+
+        self._compatibility_text = QPlainTextEdit(detail_group)
+        self._compatibility_text.setReadOnly(True)
+        self._compatibility_text.setMaximumHeight(140)
+        detail_layout.addWidget(self._compatibility_text)
+
         body.addWidget(detail_group, 5)
 
         self._buttons = QDialogButtonBox(
@@ -270,6 +288,10 @@ class LoadStudySetupDialog(QDialog):
             return "replace"
         return "append"
 
+    def compatibility_report(self) -> PresetCompatibilityReport:
+        """Return the latest compatibility report displayed by the dialog."""
+        return self._current_compatibility_report
+
     def _populate_setups(self, setups: Sequence[ChartStudySetup]) -> None:
         self._setup_list.clear()
         for setup in setups:
@@ -291,11 +313,13 @@ class LoadStudySetupDialog(QDialog):
     def _refresh_details(self) -> None:
         setup = self._selected_setup()
         load_button = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
-        if load_button is not None:
-            load_button.setEnabled(setup is not None and self._target_chart_combo.count() > 0)
 
         if setup is None:
             self._detail_text.setPlainText("Select a saved study setup.")
+            self._current_compatibility_report = ready_report()
+            self._compatibility_text.setPlainText("")
+            if load_button is not None:
+                load_button.setEnabled(False)
             return
 
         lines = [
@@ -310,3 +334,25 @@ class LoadStudySetupDialog(QDialog):
         ]
         lines.extend(_study_recap_lines(setup.studies) or ["No studies."])
         self._detail_text.setPlainText("\n".join(lines))
+
+        self._current_compatibility_report = self._compatibility_report_for_setup(setup)
+        self._compatibility_text.setPlainText(
+            format_compatibility_report(self._current_compatibility_report)
+        )
+        if load_button is not None:
+            load_button.setEnabled(
+                self._target_chart_combo.count() > 0
+                and self._current_compatibility_report.can_load
+            )
+
+    def _compatibility_report_for_setup(
+        self,
+        setup: ChartStudySetup,
+    ) -> PresetCompatibilityReport:
+        if self._compatibility_provider is None:
+            return ready_report()
+        return self._compatibility_provider(
+            setup,
+            self.selected_target_chart_position(),
+            self.load_mode(),
+        )

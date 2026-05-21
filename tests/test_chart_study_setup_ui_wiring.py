@@ -35,8 +35,6 @@ def test_historical_data_manager_defines_case_a_study_setup_actions() -> None:
     assert 'QAction("Load Study Setup..."' in source
     assert "self._on_save_study_setup" in source
     assert "self._on_load_study_setup" in source
-    assert "_action_save_workspace_snapshot" not in source
-    assert "_action_load_workspace_snapshot" not in source
 
 
 def test_file_menu_and_toolbar_reuse_same_qactions() -> None:
@@ -109,7 +107,9 @@ def test_data_manager_save_and_load_paths_use_store_and_panel_helpers() -> None:
     assert "store.create_setup" in save_body
     assert "store.save_setup" in save_body
     assert "store.load_setup" in load_body
-    assert "validate_serialized_chart_study" in _source(HDM)
+    assert "evaluate_study_setup_compatibility" in load_body
+    assert "compatibility_report.can_load" in load_body
+    assert "format_compatibility_report" in load_body
     assert "panel.apply_serialized_study_setup" in load_body
     assert "dialog.load_mode()" in load_body
 

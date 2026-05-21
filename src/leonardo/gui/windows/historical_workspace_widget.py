@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
@@ -91,6 +91,14 @@ class HistoricalWorkspaceWidget(QWidget):
     def chart_count(self) -> int:
         return sum(1 for panel in self._chart_slots if panel is not None)
 
+    def detached_reserved_slot_count(self) -> int:
+        """Return the number of protected slots reserved for detached charts."""
+        return len(self._detached_slots)
+
+    def available_embedded_slot_count(self) -> int:
+        """Return non-reserved slots available to embedded chart occupancy."""
+        return len(self._available_embedded_slot_indexes())
+
     def list_embedded_chart_panels(self) -> list[tuple[int, HistoricalChartPanel]]:
         """Return embedded chart panels with one-based workspace positions."""
         return [
@@ -142,8 +150,7 @@ class HistoricalWorkspaceWidget(QWidget):
         if slot_index is None:
             return False
 
-        panel = HistoricalChartPanel(core_bridge=self._core, parent=self._grid_host)
-        self._connect_panel_workspace_signals(panel)
+        panel = self._create_chart_panel()
         panel.open_dataset(
             exchange=exchange,
             market_type=market_type,
@@ -153,6 +160,85 @@ class HistoricalWorkspaceWidget(QWidget):
         self._chart_slots[slot_index] = panel
         self._compact_embedded_chart_slots()
         return True
+
+    def export_workspace_snapshot_payload(self) -> dict[str, Any]:
+        """Return durable workspace metadata and embedded chart payloads."""
+        charts: list[dict[str, Any]] = []
+        for position, panel in self.list_embedded_chart_panels():
+            charts.append(panel.export_workspace_chart_snapshot(position))
+        return {
+            "workspace": {
+                "visualization_mode": self._visualization_mode,
+            },
+            "charts": charts,
+        }
+
+    def load_workspace_snapshot_charts(
+        self,
+        charts: Sequence[Mapping[str, Any]],
+        *,
+        mode: str,
+    ) -> list[tuple[HistoricalChartPanel, dict[str, Any]]]:
+        """
+        Create embedded chart panels from a workspace snapshot payload.
+
+        The workspace owns shell-level chart placement. Snapshot charts are
+        loaded in saved-position order and assigned into the lowest available
+        non-reserved slots. Existing embedded charts are preserved after loaded
+        charts for load-into-current mode.
+        """
+        normalized_mode = str(mode or "").strip().lower()
+        if normalized_mode not in {"replace", "load_into_current"}:
+            raise ValueError(f"Unsupported workspace snapshot load mode: {mode!r}")
+
+        ordered_charts = sorted(
+            [dict(chart) for chart in charts],
+            key=lambda chart: int(chart.get("position", 0) or 0),
+        )
+        if not ordered_charts:
+            raise ValueError("Workspace snapshot does not contain charts to load.")
+
+        if normalized_mode == "replace":
+            if self._detached_slots:
+                raise ValueError(
+                    "Cannot replace the embedded workspace while detached charts "
+                    "reserve dock-back slots."
+                )
+            self.clear_all_charts()
+            existing_panels: list[HistoricalChartPanel] = []
+        else:
+            existing_panels = self._embedded_panels()
+            required_slots = len(existing_panels) + len(ordered_charts)
+            if required_slots > self.available_embedded_slot_count():
+                raise ValueError(
+                    "Not enough non-reserved chart slots are available for this snapshot."
+                )
+
+        available_slots = self._available_embedded_slot_indexes()
+        required_slots = len(existing_panels) + len(ordered_charts)
+        if required_slots > len(available_slots):
+            raise ValueError("Not enough non-reserved chart slots are available.")
+
+        loaded_pairs: list[tuple[HistoricalChartPanel, dict[str, Any]]] = []
+        loaded_panels: list[HistoricalChartPanel] = []
+        for chart in ordered_charts:
+            panel = self._create_chart_panel()
+            loaded_panels.append(panel)
+            loaded_pairs.append((panel, chart))
+
+        normalized_slots: List[Optional[HistoricalChartPanel]] = [None] * self.MAX_CHARTS
+        for panel, slot_index in zip(
+            [*loaded_panels, *existing_panels],
+            available_slots,
+        ):
+            normalized_slots[slot_index] = panel
+
+        self._chart_slots = normalized_slots
+        for panel, chart in loaded_pairs:
+            panel.open_workspace_snapshot_chart(chart)
+
+        self._compact_embedded_chart_slots()
+        return loaded_pairs
 
     def add_existing_panel(self, panel: HistoricalChartPanel) -> bool:
         slot_index = self._detached_slots.pop(panel, None)
@@ -236,6 +322,11 @@ class HistoricalWorkspaceWidget(QWidget):
                 position_signal.connect(self._on_panel_position_change_requested)
             except Exception:
                 pass
+
+    def _create_chart_panel(self) -> HistoricalChartPanel:
+        panel = HistoricalChartPanel(core_bridge=self._core, parent=self._grid_host)
+        self._connect_panel_workspace_signals(panel)
+        return panel
 
     def _disconnect_panel_workspace_signals(self, panel: HistoricalChartPanel) -> None:
         try:

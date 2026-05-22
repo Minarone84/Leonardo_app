@@ -285,6 +285,28 @@ class HistoricalChartController(
         viewport.set_window(start, start + visible)
         return True
 
+    def current_center_timestamp_ms(self) -> Optional[int]:
+        """Return the nearest dataset timestamp at the current viewport center."""
+        if self._is_disposed:
+            return None
+
+        if self._dataset is None or not self._session.timeline_ts_ms:
+            return None
+
+        viewport = self._workspace.viewport
+        visible = max(1, int(getattr(viewport, "visible", self.DEFAULT_VISIBLE_BARS)))
+        start = int(getattr(viewport, "start", 0))
+        center_index = start + (visible // 2)
+        center_ts_ms = self._session.global_index_to_ts_ms(center_index)
+        if center_ts_ms is not None:
+            return int(center_ts_ms)
+
+        clamped_index = max(
+            0,
+            min(center_index, len(self._session.timeline_ts_ms) - 1),
+        )
+        return self._session.global_index_to_ts_ms(clamped_index)
+
     def export_viewport_state(self) -> dict[str, object]:
         """
         Return durable horizontal camera state for workspace snapshot payloads.

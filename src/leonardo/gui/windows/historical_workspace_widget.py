@@ -35,6 +35,7 @@ class HistoricalWorkspaceWidget(QWidget):
     VIEW_MODE_FIT_8 = "fit_8"
 
     visualization_mode_changed = Signal(str)
+    chart_horizontal_pan_requested = Signal(object)
 
     def __init__(
         self,
@@ -106,6 +107,18 @@ class HistoricalWorkspaceWidget(QWidget):
             for index, panel in enumerate(self._chart_slots)
             if panel is not None
         ]
+
+    def list_active_chart_panels(self) -> list[HistoricalChartPanel]:
+        """Return embedded and detached panels still managed by this workspace."""
+        panels: list[HistoricalChartPanel] = []
+        seen: set[int] = set()
+        for _position, panel in self.list_embedded_chart_panels():
+            panels.append(panel)
+            seen.add(id(panel))
+        for panel in self._detached_slots:
+            if id(panel) not in seen:
+                panels.append(panel)
+        return panels
 
     def get_panel_by_position(self, position: int) -> Optional[HistoricalChartPanel]:
         """Return the embedded chart panel at a one-based workspace position."""
@@ -316,6 +329,12 @@ class HistoricalWorkspaceWidget(QWidget):
     def _connect_panel_workspace_signals(self, panel: HistoricalChartPanel) -> None:
         panel.detach_requested.connect(self._on_panel_detach_requested)
         panel.close_requested.connect(self._on_panel_close_requested)
+        pan_signal = getattr(panel, "horizontal_pan_requested", None)
+        if pan_signal is not None:
+            try:
+                pan_signal.connect(self._on_panel_horizontal_pan_requested)
+            except Exception:
+                pass
         position_signal = getattr(panel, "position_change_requested", None)
         if position_signal is not None:
             try:
@@ -338,6 +357,13 @@ class HistoricalWorkspaceWidget(QWidget):
             panel.close_requested.disconnect(self._on_panel_close_requested)
         except Exception:
             pass
+
+        pan_signal = getattr(panel, "horizontal_pan_requested", None)
+        if pan_signal is not None:
+            try:
+                pan_signal.disconnect(self._on_panel_horizontal_pan_requested)
+            except Exception:
+                pass
 
         position_signal = getattr(panel, "position_change_requested", None)
         if position_signal is not None:
@@ -384,6 +410,14 @@ class HistoricalWorkspaceWidget(QWidget):
         if panel is None:
             return
         self.move_panel_to_slot(panel, slot_number)
+
+    def _on_panel_horizontal_pan_requested(self, panel_obj: object) -> None:
+        panel = panel_obj if isinstance(panel_obj, HistoricalChartPanel) else None
+        if panel is None:
+            return
+        if not any(active_panel is panel for active_panel in self.list_active_chart_panels()):
+            return
+        self.chart_horizontal_pan_requested.emit(panel)
 
     def _embedded_panels(self) -> List[HistoricalChartPanel]:
         return [panel for panel in self._chart_slots if panel is not None]

@@ -1,4 +1,9 @@
 {
+  "annotation_settings": {
+    "poi_marker_offset": 28,
+    "pt_long_marker_offset": 59,
+    "pt_short_marker_offset": 56
+  },
   "chart_entries": [
     {
       "chart_key": "bybit|linear|adausdt|1h",
@@ -29,14 +34,25 @@
       "trades": [
         {
           "closing_price": 110.0,
-          "date_text": "2026/05/22",
+          "date_text": "2026-05-9 14:01:35",
           "direction": "Long",
           "note": "",
           "outcome": "Good",
           "row_id": "f522d5b5b99c4086b9df48bb7b555066",
           "starting_price": 100.0,
           "target_pct_movement": 1.0,
-          "ts_ms": null
+          "ts_ms": 1778335295000
+        },
+        {
+          "closing_price": null,
+          "date_text": "2026-05-09 15:05:22",
+          "direction": "Short",
+          "note": "",
+          "outcome": "Good",
+          "row_id": "a9dde0ace33f43c79383ad1630962d2a",
+          "starting_price": null,
+          "target_pct_movement": null,
+          "ts_ms": 1778339122000
         }
       ]
     },
@@ -88,12 +104,12 @@
       "trades": []
     }
   ],
-  "content_hash": "d769bb6df71e3491fae749c4d3b89a7ec9913ef8134d1091999582bdf4e1680e",
+  "content_hash": "c036823123898650058415d778559ae0c0e6aa6eff0ca7fba3c151d6dbc4f55d",
   "created_at_ms": 1779372983436,
   "description": "",
   "display_name": "Test_A",
   "notebook_id": "8756e27bc04f4f288be55f2e99c4a44f",
   "object_type": "historical_workspace_notebook",
   "schema_version": 1,
-  "updated_at_ms": 1779436408957
+  "updated_at_ms": 1779442988738
 }

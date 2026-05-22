@@ -74,6 +74,10 @@ def test_save_and_load_dialogs_have_required_concepts() -> None:
     assert "Replace existing studies" in source
     assert "Study Recap" in source
     assert "Created from" in source
+    assert '"Delete"' in source
+    assert "delete_setup" in source
+    assert "_confirm_delete_setup" in source
+    assert "This action cannot be undone." in source
 
 
 def test_workspace_exposes_narrow_embedded_chart_accessors() -> None:
@@ -111,6 +115,8 @@ def test_data_manager_save_and_load_paths_use_store_and_panel_helpers() -> None:
     assert "store.create_setup" in save_body
     assert "store.save_setup" in save_body
     assert "store.load_setup" in load_body
+    assert "delete_setup=self._chart_study_setup_store().delete_setup" in load_body
+    assert "setups_loader=self._load_study_setup_objects" in load_body
     assert "evaluate_study_setup_compatibility" in load_body
     assert "compatibility_report.can_load" in load_body
     assert "format_compatibility_report" in load_body

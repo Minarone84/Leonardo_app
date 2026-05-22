@@ -19,6 +19,9 @@ _NOTEBOOK_ID_RE = re.compile(r"^[A-Za-z0-9_.-]+$")
 _DATASET_IDENTITY_KEYS = ("exchange", "market_type", "symbol", "timeframe")
 _VALID_TRADE_DIRECTIONS = {"", "Long", "Short"}
 _VALID_TRADE_OUTCOMES = {"", "Good", "Bad"}
+DEFAULT_POI_MARKER_OFFSET = 28
+DEFAULT_PT_LONG_MARKER_OFFSET = 56
+DEFAULT_PT_SHORT_MARKER_OFFSET = 56
 
 
 @dataclass(frozen=True)
@@ -40,6 +43,7 @@ class HistoricalNotebook:
     created_at_ms: int
     updated_at_ms: int
     chart_entries: tuple[dict[str, Any], ...]
+    annotation_settings: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         if self.schema_version != HISTORICAL_NOTEBOOK_SCHEMA_VERSION:
@@ -63,6 +67,9 @@ class HistoricalNotebook:
             for idx, entry in enumerate(self.chart_entries or ())
         )
         _validate_chart_entries_payload(chart_entries)
+        annotation_settings = normalize_notebook_annotation_settings(
+            self.annotation_settings
+        )
 
         object.__setattr__(self, "notebook_id", notebook_id)
         object.__setattr__(self, "display_name", display_name)
@@ -70,6 +77,7 @@ class HistoricalNotebook:
         object.__setattr__(self, "created_at_ms", int(self.created_at_ms))
         object.__setattr__(self, "updated_at_ms", int(self.updated_at_ms))
         object.__setattr__(self, "chart_entries", chart_entries)
+        object.__setattr__(self, "annotation_settings", annotation_settings)
         object.__setattr__(
             self,
             "content_hash",
@@ -86,6 +94,7 @@ class HistoricalNotebook:
             "description": self.description,
             "created_at_ms": int(self.created_at_ms),
             "updated_at_ms": int(self.updated_at_ms),
+            "annotation_settings": dict(self.annotation_settings or {}),
             "chart_entries": [dict(entry) for entry in self.chart_entries],
         }
 
@@ -100,6 +109,9 @@ class HistoricalNotebook:
             description=str(data.get("description", "") or ""),
             created_at_ms=int(data.get("created_at_ms", 0)),
             updated_at_ms=int(data.get("updated_at_ms", 0)),
+            annotation_settings=normalize_notebook_annotation_settings(
+                data.get("annotation_settings", {})
+            ),
             chart_entries=tuple(
                 dict(entry) for entry in data.get("chart_entries", ()) or ()
             ),  # type: ignore[arg-type]
@@ -220,6 +232,7 @@ class HistoricalNotebookStore:
         display_name: str,
         description: str = "",
         chart_entries: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
+        annotation_settings: Mapping[str, Any] | None = None,
         notebook_id: str | None = None,
         created_at_ms: int | None = None,
         updated_at_ms: int | None = None,
@@ -248,6 +261,9 @@ class HistoricalNotebookStore:
             description=description,
             created_at_ms=created,
             updated_at_ms=updated,
+            annotation_settings=normalize_notebook_annotation_settings(
+                annotation_settings
+            ),
             chart_entries=tuple(dict(entry) for entry in (chart_entries or ())),
         )
 
@@ -377,6 +393,12 @@ def validate_historical_notebook_payload(payload: Mapping[str, Any]) -> list[str
     if not isinstance(payload.get("updated_at_ms"), int):
         errors.append("updated_at_ms must be an integer.")
 
+    if "annotation_settings" in payload:
+        try:
+            normalize_notebook_annotation_settings(payload.get("annotation_settings"))
+        except (TypeError, ValueError) as exc:
+            errors.append(str(exc))
+
     chart_entries = payload.get("chart_entries", [])
     try:
         _validate_chart_entries_payload(chart_entries)
@@ -433,6 +455,27 @@ def normalize_notebook_chart_entry(entry: Mapping[str, Any]) -> dict[str, Any]:
     }
     _validate_chart_entry(normalized, field_name="chart_entry")
     return _json_clone(normalized, field_name="chart_entry")
+
+
+def normalize_notebook_annotation_settings(
+    settings: Mapping[str, Any] | None,
+) -> dict[str, int]:
+    """Return validated notebook-level runtime annotation settings."""
+    raw = {} if settings is None else _dict_or_empty(settings)
+    return {
+        "poi_marker_offset": _annotation_offset_value(
+            raw.get("poi_marker_offset"),
+            DEFAULT_POI_MARKER_OFFSET,
+        ),
+        "pt_long_marker_offset": _annotation_offset_value(
+            raw.get("pt_long_marker_offset", raw.get("pt_marker_offset")),
+            DEFAULT_PT_LONG_MARKER_OFFSET,
+        ),
+        "pt_short_marker_offset": _annotation_offset_value(
+            raw.get("pt_short_marker_offset", raw.get("pt_marker_offset")),
+            DEFAULT_PT_SHORT_MARKER_OFFSET,
+        ),
+    }
 
 
 def _validate_notebook_id(notebook_id: str) -> None:
@@ -526,6 +569,10 @@ def _int_value(value: Any, default: int) -> int:
         return int(default)
 
 
+def _annotation_offset_value(value: Any, default: int) -> int:
+    return max(0, min(240, _int_value(value, default)))
+
+
 def _json_clone(value: Any, *, field_name: str) -> Any:
     try:
         return json.loads(
@@ -566,12 +613,16 @@ def _normalize_for_hash(value: Any) -> Any:
 
 
 __all__ = [
+    "DEFAULT_POI_MARKER_OFFSET",
+    "DEFAULT_PT_LONG_MARKER_OFFSET",
+    "DEFAULT_PT_SHORT_MARKER_OFFSET",
     "HISTORICAL_NOTEBOOK_OBJECT_TYPE",
     "HISTORICAL_NOTEBOOK_SCHEMA_VERSION",
     "HistoricalNotebook",
     "HistoricalNotebookStore",
     "HistoricalNotebookSummary",
     "build_historical_notebook_content_hash",
+    "normalize_notebook_annotation_settings",
     "normalize_notebook_chart_entry",
     "notebook_chart_key",
     "notebook_from_payload",

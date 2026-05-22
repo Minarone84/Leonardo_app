@@ -7,6 +7,9 @@ from pathlib import Path
 import pytest
 
 from leonardo.data.chart_presets.notebook_store import (
+    DEFAULT_POI_MARKER_OFFSET,
+    DEFAULT_PT_LONG_MARKER_OFFSET,
+    DEFAULT_PT_SHORT_MARKER_OFFSET,
     HISTORICAL_NOTEBOOK_OBJECT_TYPE,
     HISTORICAL_NOTEBOOK_SCHEMA_VERSION,
     HistoricalNotebookStore,
@@ -101,6 +104,75 @@ def test_save_load_roundtrip_preserves_notebook_rows(tmp_path: Path) -> None:
     assert loaded.chart_entries[0]["notes"][0]["note"] == "Retest note"
     assert loaded.chart_entries[0]["trades"][0]["direction"] == "Long"
     assert loaded.chart_entries[0]["points_of_interest"][0]["title"] == "Breakout retest"
+    assert loaded.annotation_settings == {
+        "poi_marker_offset": DEFAULT_POI_MARKER_OFFSET,
+        "pt_long_marker_offset": DEFAULT_PT_LONG_MARKER_OFFSET,
+        "pt_short_marker_offset": DEFAULT_PT_SHORT_MARKER_OFFSET,
+    }
+
+
+def test_annotation_settings_roundtrip_and_missing_defaults(tmp_path: Path) -> None:
+    store, root = _store(tmp_path)
+    notebook = store.create_notebook(
+        display_name="Offset Notes",
+        description="",
+        chart_entries=[_chart_entry()],
+        annotation_settings={
+            "poi_marker_offset": 36,
+            "pt_long_marker_offset": 72,
+            "pt_short_marker_offset": 24,
+        },
+        notebook_id="offset_notebook",
+        created_at_ms=1000,
+        updated_at_ms=1000,
+    )
+    saved = store.save_notebook(notebook)
+
+    loaded = store.load_notebook(saved.notebook_id)
+
+    assert loaded.annotation_settings == {
+        "poi_marker_offset": 36,
+        "pt_long_marker_offset": 72,
+        "pt_short_marker_offset": 24,
+    }
+    assert loaded.to_dict()["annotation_settings"] == loaded.annotation_settings
+
+    payload = loaded.to_dict()
+    payload.pop("annotation_settings")
+    payload["notebook_id"] = "legacy_without_offsets"
+    payload["display_name"] = "Legacy Without Offsets"
+    (root / "legacy_without_offsets.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    legacy = store.load_notebook("legacy_without_offsets")
+
+    assert legacy.annotation_settings == {
+        "poi_marker_offset": DEFAULT_POI_MARKER_OFFSET,
+        "pt_long_marker_offset": DEFAULT_PT_LONG_MARKER_OFFSET,
+        "pt_short_marker_offset": DEFAULT_PT_SHORT_MARKER_OFFSET,
+    }
+
+    payload = loaded.to_dict()
+    payload["annotation_settings"] = {
+        "poi_marker_offset": 40,
+        "pt_marker_offset": 77,
+    }
+    payload["notebook_id"] = "legacy_shared_pt_offset"
+    payload["display_name"] = "Legacy Shared PT Offset"
+    (root / "legacy_shared_pt_offset.json").write_text(
+        json.dumps(payload),
+        encoding="utf-8",
+    )
+
+    legacy_shared = store.load_notebook("legacy_shared_pt_offset")
+
+    assert legacy_shared.annotation_settings == {
+        "poi_marker_offset": 40,
+        "pt_long_marker_offset": 77,
+        "pt_short_marker_offset": 77,
+    }
 
 
 def test_summary_listing_contains_counts(tmp_path: Path) -> None:
@@ -269,6 +341,7 @@ def test_content_hash_is_deterministic(tmp_path: Path) -> None:
         "notebook_id": payload_a["notebook_id"],
         "object_type": payload_a["object_type"],
         "schema_version": payload_a["schema_version"],
+        "annotation_settings": payload_a["annotation_settings"],
     }
 
     assert build_historical_notebook_content_hash(payload_a) == (

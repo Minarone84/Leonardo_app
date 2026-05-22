@@ -69,12 +69,36 @@ def test_notebook_persistence_is_coordinated_by_data_manager_not_window() -> Non
     assert "def _notebook_store_root" in manager_source
     assert '"chart_presets" / "notebooks"' in manager_source
     assert "def _on_save_notebook" in manager_source
+    assert "def _on_notebook_close_save_requested" in manager_source
+    assert "close_save_requested.connect" in manager_source
+    assert "self._on_notebook_close_save_requested" in manager_source
     assert "def _on_load_notebook" in manager_source
     assert "def _on_open_notebook_manager" in manager_source
     assert "def _on_assign_clicked" in dialog_source
     assert "HistoricalWorkspaceSnapshotStore" in dialog_source
+    assert "Delete Notebook" in dialog_source
+    assert "def _on_delete_clicked" in dialog_source
+    assert "delete_notebook" in dialog_source
+    assert "notebook_ref=None" in dialog_source
     assert "HistoricalNotebookStore" not in notebook_source
     assert "workspace_snapshot_store" not in notebook_source
+
+
+def test_notebook_window_close_requests_data_manager_save_without_store_ownership() -> None:
+    manager_source = _source(HDM)
+    notebook_source = _source(NOTEBOOK)
+    close_body = notebook_source[
+        notebook_source.index("    def closeEvent") : notebook_source.index(
+            "    def notebook_id"
+        )
+    ]
+
+    assert "close_save_requested = Signal(object)" in notebook_source
+    assert "self.close_save_requested.emit(event)" in close_body
+    assert "event.isAccepted()" in close_body
+    assert "_on_notebook_close_save_requested" in manager_source
+    assert "_on_save_notebook(show_success_message=False)" in manager_source
+    assert "HistoricalNotebookStore" not in notebook_source
 
 
 def test_notebook_window_gui_shell_structure() -> None:
@@ -86,6 +110,7 @@ def test_notebook_window_gui_shell_structure() -> None:
     assert "load_requested = Signal()" in source
     assert "assign_requested = Signal()" in source
     assert "goto_requested = Signal(str, object)" in source
+    assert "def reset_notebook" in source
     assert "QTabWidget" in source
     assert "QTableWidget" in source
     assert "QPlainTextEdit" in source

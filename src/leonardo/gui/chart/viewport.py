@@ -5,6 +5,7 @@ from PySide6.QtCore import QObject, QRectF, Signal
 
 class ChartViewport(QObject):
     viewport_changed = Signal()
+    horizontal_pan_changed = Signal()
     crosshair_changed = Signal()
 
     # Horizontal viewport policy (same for all timeframes)
@@ -264,6 +265,7 @@ class ChartViewport(QObject):
         # causes avoidable repaint/contract churn without changing visible state.
         if self._start != old_start:
             self.viewport_changed.emit()
+            self.horizontal_pan_changed.emit()
 
     def pan_right(self, step: int = 10) -> None:
         step = int(step)
@@ -278,6 +280,7 @@ class ChartViewport(QObject):
         # causes avoidable repaint/contract churn without changing visible state.
         if self._start != old_start:
             self.viewport_changed.emit()
+            self.horizontal_pan_changed.emit()
 
     def set_crosshair(self, index: int | None) -> None:
         """Set the current crosshair index.

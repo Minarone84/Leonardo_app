@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QRadioButton,
     QTextEdit,
@@ -180,12 +181,16 @@ class LoadStudySetupDialog(QDialog):
         setups: Sequence[ChartStudySetup],
         chart_options: Sequence[Mapping[str, Any]],
         compatibility_provider: Callable[[ChartStudySetup, int, str], PresetCompatibilityReport] | None = None,
+        delete_setup: Callable[[str], bool] | None = None,
+        setups_loader: Callable[[], Sequence[ChartStudySetup]] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._setups_by_id = {setup.setup_id: setup for setup in setups}
         self._chart_options = [dict(option) for option in chart_options]
         self._compatibility_provider = compatibility_provider
+        self._delete_setup = delete_setup
+        self._setups_loader = setups_loader
         self._current_compatibility_report = ready_report()
 
         self.setWindowTitle("Load Study Setup")
@@ -263,6 +268,11 @@ class LoadStudySetupDialog(QDialog):
         load_button = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
         if load_button is not None:
             load_button.setText("Load")
+        self._delete_button = self._buttons.addButton(
+            "Delete",
+            QDialogButtonBox.ButtonRole.DestructiveRole,
+        )
+        self._delete_button.clicked.connect(self._on_delete_clicked)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
         root.addWidget(self._buttons)
@@ -292,7 +302,13 @@ class LoadStudySetupDialog(QDialog):
         """Return the latest compatibility report displayed by the dialog."""
         return self._current_compatibility_report
 
-    def _populate_setups(self, setups: Sequence[ChartStudySetup]) -> None:
+    def _populate_setups(
+        self,
+        setups: Sequence[ChartStudySetup],
+        *,
+        select_first: bool = True,
+    ) -> None:
+        self._setups_by_id = {setup.setup_id: setup for setup in setups}
         self._setup_list.clear()
         for setup in setups:
             item = QListWidgetItem(
@@ -301,7 +317,7 @@ class LoadStudySetupDialog(QDialog):
                 self._setup_list,
             )
             item.setData(Qt.ItemDataRole.UserRole, setup.setup_id)
-        if self._setup_list.count() > 0:
+        if select_first and self._setup_list.count() > 0:
             self._setup_list.setCurrentRow(0)
 
     def _selected_setup(self) -> ChartStudySetup | None:
@@ -313,6 +329,7 @@ class LoadStudySetupDialog(QDialog):
     def _refresh_details(self) -> None:
         setup = self._selected_setup()
         load_button = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+        delete_button = self._delete_button
 
         if setup is None:
             self._detail_text.setPlainText("Select a saved study setup.")
@@ -320,6 +337,7 @@ class LoadStudySetupDialog(QDialog):
             self._compatibility_text.setPlainText("")
             if load_button is not None:
                 load_button.setEnabled(False)
+            delete_button.setEnabled(False)
             return
 
         lines = [
@@ -344,6 +362,73 @@ class LoadStudySetupDialog(QDialog):
                 self._target_chart_combo.count() > 0
                 and self._current_compatibility_report.can_load
             )
+        delete_button.setEnabled(self._delete_setup is not None)
+
+    def _on_delete_clicked(self) -> None:
+        setup = self._selected_setup()
+        if setup is None:
+            QMessageBox.information(
+                self,
+                "Delete Study Setup",
+                "Select a saved study setup to delete.",
+            )
+            self._refresh_details()
+            return
+        if self._delete_setup is None:
+            QMessageBox.warning(
+                self,
+                "Delete Study Setup",
+                "Study setup deletion is not available in this context.",
+            )
+            self._refresh_details()
+            return
+        if not self._confirm_delete_setup(setup):
+            return
+
+        try:
+            deleted = self._delete_setup(setup.setup_id)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Delete Study Setup",
+                f"Could not delete study setup.\n{exc!r}",
+            )
+            return
+        if not deleted:
+            QMessageBox.warning(
+                self,
+                "Delete Study Setup",
+                "Could not delete study setup.\nThe selected saved study setup was not found.",
+            )
+            self._reload_setups_after_delete(setup.setup_id)
+            return
+
+        self._reload_setups_after_delete(setup.setup_id)
+
+    def _confirm_delete_setup(self, setup: ChartStudySetup) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Delete Study Setup")
+        dialog.setText(f'Delete study setup "{setup.display_name}"?')
+        dialog.setInformativeText("This action cannot be undone.")
+        delete_button = dialog.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        dialog.exec()
+        return dialog.clickedButton() is delete_button
+
+    def _reload_setups_after_delete(self, deleted_setup_id: str) -> None:
+        if self._setups_loader is not None:
+            setups = list(self._setups_loader())
+        else:
+            setups = [
+                setup
+                for setup_id, setup in self._setups_by_id.items()
+                if setup_id != deleted_setup_id
+            ]
+        self._populate_setups(setups, select_first=False)
+        self._setup_list.clearSelection()
+        self._setup_list.setCurrentRow(-1)
+        self._refresh_details()
 
     def _compatibility_report_for_setup(
         self,

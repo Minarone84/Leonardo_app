@@ -84,6 +84,16 @@ def test_open_assigned_notebook_action_tracks_current_notebook_ref() -> None:
     assert "self._set_current_workspace_notebook_ref(snapshot.notebook_ref)" in load_body
 
 
+def test_historical_data_manager_opens_maximized_on_first_show() -> None:
+    source = _source(HDM)
+    manager_source = source[source.index("class HistoricalDataManagerWindow") :]
+
+    assert "_shown_maximized_once" in source
+    assert "def showEvent" in manager_source
+    assert "self.showMaximized()" in manager_source
+    assert "showFullScreen" not in source
+
+
 def test_workspace_snapshot_store_root_uses_runtime_chart_presets_path() -> None:
     body = _function_source(HDM, "_workspace_snapshot_store_root")
 
@@ -106,6 +116,10 @@ def test_workspace_snapshot_dialogs_have_required_concepts() -> None:
     assert "_study_recap_lines" in source
     assert "Replace current workspace" in source
     assert "Load into current workspace" in source
+    assert '"Delete"' in source
+    assert "delete_snapshot" in source
+    assert "_confirm_delete_snapshot" in source
+    assert "The notebook will not be deleted." in source
 
 
 def test_save_path_uses_snapshot_store_and_embedded_chart_export() -> None:
@@ -123,6 +137,8 @@ def test_load_path_preflights_and_uses_workspace_restore_helper() -> None:
     load_body = _function_source(HDM, "_on_load_workspace_snapshot")
 
     assert "store.load_snapshot" in load_body
+    assert "delete_snapshot=self._workspace_snapshot_store().delete_snapshot" in load_body
+    assert "snapshots_loader=self._load_workspace_snapshot_objects" in load_body
     assert "evaluate_workspace_snapshot_compatibility" in load_body
     assert "compatibility_report.can_load" in load_body
     assert "format_compatibility_report" in load_body

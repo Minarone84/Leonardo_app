@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QActionGroup, QCloseEvent
+from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QShowEvent
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from leonardo.core.context import AppContext
 from leonardo.data.chart_presets.notebook_store import (
+    DEFAULT_POI_MARKER_OFFSET,
     HistoricalNotebookStore,
     notebook_chart_key,
 )
@@ -532,6 +533,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_load_study_setup: Optional[QAction] = None
         self._action_save_workspace_snapshot: Optional[QAction] = None
         self._action_load_workspace_snapshot: Optional[QAction] = None
+        self._action_pan_anchor: Optional[QAction] = None
         self._action_close: Optional[QAction] = None
         self._action_placeholder_tile: Optional[QAction] = None
         self._action_placeholder_open_dataset: Optional[QAction] = None
@@ -549,9 +551,18 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._notebook_window: Optional[HistoricalNotebookWindow] = None
         self._current_workspace_notebook_ref: Optional[dict[str, Any]] = None
         self._applying_notebook_poi_markers: bool = False
+        self._syncing_pan_anchor: bool = False
+        self._shown_maximized_once: bool = False
         self._is_closing: bool = False
 
         self._build_ui()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        super().showEvent(event)
+        if self._shown_maximized_once:
+            return
+        self._shown_maximized_once = True
+        self.showMaximized()
 
     def workspace_widget(self) -> Optional[HistoricalWorkspaceWidget]:
         return self._workspace_widget
@@ -654,6 +665,18 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         menu_file.addSeparator()
 
+        action_pan_anchor = QAction("Pan Anchor", self, checkable=True)
+        action_pan_anchor.setToolTip(
+            "Synchronize horizontal panning across all active historical charts."
+        )
+        action_pan_anchor.setStatusTip(
+            "Synchronize horizontal panning across all active historical charts."
+        )
+        action_pan_anchor.setChecked(False)
+        action_pan_anchor.toggled.connect(self._on_pan_anchor_toggled)
+        self._action_pan_anchor = action_pan_anchor
+        menu_window.addAction(action_pan_anchor)
+
         action_close = QAction("Close", self)
         action_close.triggered.connect(self.close)
         self._action_close = action_close
@@ -741,10 +764,10 @@ class HistoricalDataManagerWindow(QMainWindow):
         # already lived there. So instead of creating a second toolbar row, we
         # build one compact corner widget that contains:
         #
-        #   Open Notebook | Save Study | Load Study | Save Workspace | Load Workspace | View label
+        #   Open Notebook | Save Study | Load Study | Save Workspace | Load Workspace | Pan Anchor | View label
         #
-        # Each button still uses the same QAction object that is already in the
-        # File menu. This preserves one command source and avoids duplicated
+        # Each button still uses the same QAction object that is already in a
+        # standard menu. This preserves one command source and avoids duplicated
         # business logic.
         self._build_menu_bar_corner_widget(menu_bar)
 
@@ -754,7 +777,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         This widget replaces the old separate Study Setups toolbar.
 
         Ownership rules:
-        - The File menu still owns the full user-facing command names.
+        - The standard menus still own the full user-facing command names.
         - The compact buttons reuse the exact same QAction objects.
         - The view-mode label remains owned by this window and is still updated
           by _sync_view_mode_controls().
@@ -810,6 +833,14 @@ class HistoricalDataManagerWindow(QMainWindow):
             )
         )
 
+        corner_layout.addWidget(
+            self._make_menu_bar_action_button(
+                action=self._action_pan_anchor,
+                text="Pan Anchor",
+                icon=self.style().standardIcon(QStyle.StandardPixmap.SP_ArrowRight),
+            )
+        )
+
         # The view-mode label used to be the only menu-bar corner widget.
         # Now it lives inside the combined corner widget, after the quick
         # action buttons, so the UI keeps one top row instead of two.
@@ -835,7 +866,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         """Create one compact menu-bar button backed by an existing QAction.
 
         The important part is setDefaultAction(action):
-        the button and the File menu item trigger the same QAction, which means
+        the button and the menu item trigger the same QAction, which means
         the same slot, same enabled state, same tooltip/status tip, and no
         duplicate save/load logic.
         """
@@ -910,6 +941,9 @@ class HistoricalDataManagerWindow(QMainWindow):
         )
         self._workspace_widget = workspace_widget
         workspace_widget.visualization_mode_changed.connect(self._on_workspace_view_mode_changed)
+        workspace_widget.chart_horizontal_pan_requested.connect(
+            self._on_pan_anchor_panel_panned
+        )
 
         layout.addWidget(workspace_widget, 1)
 
@@ -925,6 +959,55 @@ class HistoricalDataManagerWindow(QMainWindow):
 
     def _on_workspace_view_mode_changed(self, _mode: str) -> None:
         self._sync_view_mode_controls()
+
+    def _on_pan_anchor_toggled(self, checked: bool) -> None:
+        if checked:
+            self._set_status("Pan Anchor enabled.")
+        else:
+            self._set_status("Pan Anchor disabled.")
+
+    def _on_pan_anchor_panel_panned(self, panel_obj: object) -> None:
+        action = self._action_pan_anchor
+        if action is None or not action.isChecked():
+            return
+
+        if self._syncing_pan_anchor:
+            return
+
+        source_panel = panel_obj
+        panels = self._active_historical_chart_panels()
+        if not any(panel is source_panel for panel in panels):
+            return
+
+        center_timestamp = getattr(source_panel, "current_center_timestamp_ms", None)
+        if not callable(center_timestamp):
+            return
+
+        ts_ms = center_timestamp()
+        if not isinstance(ts_ms, int):
+            return
+
+        self._syncing_pan_anchor = True
+        try:
+            for panel in panels:
+                if panel is source_panel:
+                    continue
+                recenter = getattr(panel, "center_on_timestamp_ms", None)
+                if callable(recenter):
+                    recenter(int(ts_ms))
+        finally:
+            self._syncing_pan_anchor = False
+
+    def _active_historical_chart_panels(self) -> list[object]:
+        workspace = self._workspace_widget
+        if workspace is None:
+            return []
+
+        panels = getattr(workspace, "list_active_chart_panels", None)
+        if callable(panels):
+            return list(panels())
+
+        return [panel for _position, panel in workspace.list_embedded_chart_panels()]
 
     def _sync_view_mode_controls(self) -> None:
         workspace = self._workspace_widget
@@ -1217,6 +1300,8 @@ class HistoricalDataManagerWindow(QMainWindow):
             available_slot_count=workspace.available_embedded_slot_count(),
             detached_reserved_slot_count=workspace.detached_reserved_slot_count(),
             compatibility_provider=compatibility_provider,
+            delete_snapshot=self._workspace_snapshot_store().delete_snapshot,
+            snapshots_loader=self._load_workspace_snapshot_objects,
             parent=self,
         )
         if dialog.exec() != QDialog.Accepted:
@@ -1321,6 +1406,8 @@ class HistoricalDataManagerWindow(QMainWindow):
             setups=setups,
             chart_options=chart_options,
             compatibility_provider=compatibility_provider,
+            delete_setup=self._chart_study_setup_store().delete_setup,
+            setups_loader=self._load_study_setup_objects,
             parent=self,
         )
         if dialog.exec() != QDialog.Accepted:
@@ -1426,6 +1513,9 @@ class HistoricalDataManagerWindow(QMainWindow):
             notebook_window.load_requested.connect(self._on_load_notebook)
             notebook_window.assign_requested.connect(self._on_open_notebook_manager)
             notebook_window.goto_requested.connect(self._on_notebook_goto_requested)
+            notebook_window.close_save_requested.connect(
+                self._on_notebook_close_save_requested
+            )
             notebook_window.poi_markers_changed.connect(
                 self._on_notebook_poi_markers_changed
             )
@@ -1452,6 +1542,7 @@ class HistoricalDataManagerWindow(QMainWindow):
             workspace_snapshot_store=self._workspace_snapshot_store(),
             parent=self,
         )
+        dialog.notebook_deleted.connect(self._on_notebook_deleted)
         if dialog.exec() != QDialog.Accepted:
             self._set_status("Notebook manager closed")
             return
@@ -1459,6 +1550,29 @@ class HistoricalDataManagerWindow(QMainWindow):
         notebook_id = dialog.selected_open_notebook_id()
         if notebook_id:
             self._open_notebook_by_id(notebook_id, title="Notebook Manager")
+
+    def _on_notebook_deleted(self, notebook_id: str) -> None:
+        deleted_id = str(notebook_id or "").strip()
+        if not deleted_id:
+            return
+
+        notebook_ref = self._current_workspace_notebook_ref
+        if isinstance(notebook_ref, Mapping):
+            current_ref_id = str(notebook_ref.get("notebook_id", "") or "").strip()
+            if current_ref_id == deleted_id:
+                self._set_current_workspace_notebook_ref(None)
+
+        notebook_window = self._notebook_window
+        if notebook_window is None or notebook_window.notebook_id() != deleted_id:
+            return
+
+        self._clear_notebook_poi_markers()
+        notebook_window.reset_notebook(
+            status="Deleted notebook was removed from the editor.",
+            suppress_next_close_autosave=True,
+        )
+        notebook_window.close()
+        self._set_status("Deleted open notebook; notebook editor was reset")
 
     def _refresh_notebook_from_workspace(self) -> None:
         """Refresh the notebook editor from the current embedded chart list."""
@@ -1530,8 +1644,14 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._clear_notebook_poi_markers()
         self._notebook_window = None
 
-    def _on_save_notebook(self) -> None:
+    def _on_save_notebook(
+        self,
+        _checked: bool = False,
+        *,
+        show_success_message: bool = True,
+    ) -> bool:
         notebook_window = self._ensure_notebook_window()
+        previous_marker_id = notebook_window.notebook_id() or "__unsaved_notebook__"
         self._refresh_notebook_from_workspace()
         store = self._notebook_store()
 
@@ -1544,6 +1664,7 @@ class HistoricalDataManagerWindow(QMainWindow):
                     store.create_notebook(
                         display_name=notebook_window.display_name(),
                         description=notebook_window.description(),
+                        annotation_settings=notebook_window.annotation_settings_payload(),
                         chart_entries=notebook_window.chart_entries_payload(),
                     )
                 )
@@ -1553,15 +1674,31 @@ class HistoricalDataManagerWindow(QMainWindow):
                 "Save Notebook",
                 f"Could not save notebook: {exc!r}",
             )
-            return
+            return False
 
         notebook_window.mark_saved(saved)
+        if previous_marker_id != saved.notebook_id:
+            self._clear_notebook_poi_markers(previous_marker_id)
+        self._apply_notebook_poi_markers()
         self._set_status(f"Saved notebook: {saved.display_name}")
-        QMessageBox.information(
-            self,
-            "Save Notebook",
-            f"Saved notebook '{saved.display_name}'.",
-        )
+        if show_success_message:
+            QMessageBox.information(
+                self,
+                "Save Notebook",
+                f"Saved notebook '{saved.display_name}'.",
+            )
+        return True
+
+    def _on_notebook_close_save_requested(self, event: object) -> None:
+        if self._on_save_notebook(show_success_message=False):
+            accept = getattr(event, "accept", None)
+            if callable(accept):
+                accept()
+            return
+
+        ignore = getattr(event, "ignore", None)
+        if callable(ignore):
+            ignore()
 
     def _on_load_notebook(self) -> None:
         store = self._notebook_store()
@@ -1681,28 +1818,49 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._applying_notebook_poi_markers = True
         try:
             notebook_id = notebook_window.notebook_id() or "__unsaved_notebook__"
-            markers_by_key = notebook_window.poi_markers_by_chart_key()
+            poi_markers_by_key = notebook_window.poi_markers_by_chart_key()
+            pt_markers_by_key = notebook_window.pt_markers_by_chart_key()
+            marker_offsets = notebook_window.annotation_marker_offsets()
+            poi_marker_offset = int(
+                marker_offsets.get(
+                    "poi_marker_offset",
+                    DEFAULT_POI_MARKER_OFFSET,
+                )
+            )
             enabled = notebook_window.poi_markers_enabled()
             for _position, panel in workspace.list_embedded_chart_panels():
                 chart_key = notebook_chart_key(panel.dataset_descriptor())
                 if not enabled:
                     panel.clear_notebook_poi_markers(notebook_id)
+                    clear_pt_markers = getattr(panel, "clear_notebook_pt_markers", None)
+                    if callable(clear_pt_markers):
+                        clear_pt_markers(notebook_id)
                     continue
                 panel.set_notebook_poi_markers(
                     notebook_id,
-                    markers_by_key.get(chart_key, []),
+                    poi_markers_by_key.get(chart_key, []),
+                    marker_offset_px=poi_marker_offset,
                 )
+                set_pt_markers = getattr(panel, "set_notebook_pt_markers", None)
+                if callable(set_pt_markers):
+                    set_pt_markers(
+                        notebook_id,
+                        pt_markers_by_key.get(chart_key, []),
+                    )
         finally:
             self._applying_notebook_poi_markers = False
 
-    def _clear_notebook_poi_markers(self) -> None:
+    def _clear_notebook_poi_markers(self, notebook_id: str | None = None) -> None:
         workspace = self._workspace_widget
         if workspace is None:
             return
         for _position, panel in workspace.list_embedded_chart_panels():
             clear_markers = getattr(panel, "clear_notebook_poi_markers", None)
             if callable(clear_markers):
-                clear_markers()
+                clear_markers(notebook_id)
+            clear_pt_markers = getattr(panel, "clear_notebook_pt_markers", None)
+            if callable(clear_pt_markers):
+                clear_pt_markers(notebook_id)
 
     def _open_notebook_ref_from_snapshot(
         self,

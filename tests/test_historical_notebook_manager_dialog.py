@@ -331,3 +331,116 @@ def test_manager_can_link_same_notebook_to_multiple_snapshots_after_warning(
     assert notebook_store.load_notebook(target_ref["notebook_id"]).description == (
         "Shared edit"
     )
+
+
+def test_manager_delete_unassigned_notebook_confirms_deletes_and_refreshes(
+    tmp_path: Path,
+) -> None:
+    notebook_store, snapshot_store = _stores(tmp_path)
+    _save_notebook(notebook_store, notebook_id="nb_1", display_name="Notebook 1")
+    _save_notebook(notebook_store, notebook_id="nb_2", display_name="Notebook 2")
+
+    dialog = _dialog(notebook_store, snapshot_store)
+    try:
+        _select_notebook(dialog, "nb_1")
+        confirmations: list[tuple[str, int]] = []
+        deleted: list[str] = []
+        dialog._confirm_delete_notebook = (
+            lambda summary, assignments: confirmations.append(
+                (summary.notebook_id, len(assignments))
+            )
+            or True
+        )
+        dialog.notebook_deleted.connect(lambda notebook_id: deleted.append(notebook_id))
+
+        dialog._on_delete_clicked()
+
+        table = dialog._table
+        assert table is not None
+        remaining_ids = {
+            str(table.item(row, 0).data(dialog._NOTEBOOK_ID_ROLE))
+            for row in range(table.rowCount())
+        }
+        assert confirmations == [("nb_1", 0)]
+        assert deleted == ["nb_1"]
+        assert remaining_ids == {"nb_2"}
+        assert not notebook_store.notebook_path("nb_1").exists()
+        assert notebook_store.notebook_path("nb_2").exists()
+    finally:
+        dialog.close()
+
+
+def test_manager_delete_assigned_notebook_clears_snapshot_refs_and_notebook_file(
+    tmp_path: Path,
+) -> None:
+    notebook_store, snapshot_store = _stores(tmp_path)
+    _save_notebook(notebook_store, notebook_id="nb_1", display_name="Notebook 1")
+    _save_snapshot(
+        snapshot_store,
+        snapshot_id="snap_1",
+        display_name="Snapshot 1",
+        notebook_ref={"notebook_id": "nb_1", "display_name": "Notebook 1"},
+    )
+    _save_snapshot(
+        snapshot_store,
+        snapshot_id="snap_2",
+        display_name="Snapshot 2",
+        notebook_ref={"notebook_id": "nb_1", "display_name": "Notebook 1"},
+    )
+
+    dialog = _dialog(notebook_store, snapshot_store)
+    try:
+        _select_notebook(dialog, "nb_1")
+        confirmations: list[tuple[str, tuple[str, ...]]] = []
+        dialog._confirm_delete_notebook = (
+            lambda summary, assignments: confirmations.append(
+                (
+                    summary.notebook_id,
+                    tuple(item.display_name for item in assignments),
+                )
+            )
+            or True
+        )
+
+        dialog._on_delete_clicked()
+
+        assert confirmations == [("nb_1", ("Snapshot 1", "Snapshot 2"))]
+        assert not notebook_store.notebook_path("nb_1").exists()
+        assert snapshot_store.load_snapshot("snap_1").notebook_ref is None
+        assert snapshot_store.load_snapshot("snap_2").notebook_ref is None
+        table = dialog._table
+        assert table is not None
+        assert table.rowCount() == 0
+    finally:
+        dialog.close()
+
+
+def test_manager_delete_confirmation_cancel_leaves_notebook_and_refs(
+    tmp_path: Path,
+) -> None:
+    notebook_store, snapshot_store = _stores(tmp_path)
+    _save_notebook(notebook_store, notebook_id="nb_1", display_name="Notebook 1")
+    _save_snapshot(
+        snapshot_store,
+        snapshot_id="snap_1",
+        display_name="Snapshot 1",
+        notebook_ref={"notebook_id": "nb_1", "display_name": "Notebook 1"},
+    )
+
+    dialog = _dialog(notebook_store, snapshot_store)
+    try:
+        _select_notebook(dialog, "nb_1")
+        dialog._confirm_delete_notebook = lambda _summary, _assignments: False
+
+        dialog._on_delete_clicked()
+
+        assert notebook_store.notebook_path("nb_1").exists()
+        assert snapshot_store.load_snapshot("snap_1").notebook_ref == {
+            "notebook_id": "nb_1",
+            "display_name": "Notebook 1",
+        }
+        table = dialog._table
+        assert table is not None
+        assert table.rowCount() == 1
+    finally:
+        dialog.close()

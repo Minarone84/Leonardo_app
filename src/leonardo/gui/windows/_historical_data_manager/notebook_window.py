@@ -7,7 +7,7 @@ import uuid
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QFontMetrics
+from PySide6.QtGui import QColor, QCloseEvent, QFontMetrics
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QPushButton,
+    QSpinBox,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
@@ -28,9 +29,13 @@ from PySide6.QtWidgets import (
 )
 
 from leonardo.data.chart_presets.notebook_store import (
+    DEFAULT_POI_MARKER_OFFSET,
+    DEFAULT_PT_LONG_MARKER_OFFSET,
+    DEFAULT_PT_SHORT_MARKER_OFFSET,
     HISTORICAL_NOTEBOOK_OBJECT_TYPE,
     HISTORICAL_NOTEBOOK_SCHEMA_VERSION,
     HistoricalNotebook,
+    normalize_notebook_annotation_settings,
     normalize_notebook_chart_entry,
     notebook_chart_key,
 )
@@ -42,11 +47,14 @@ _SECTION_TRADES = "trades"
 _SECTION_POI = "points_of_interest"
 
 _GOTO_COLUMN = 0
+_ACTION_BUTTON_WIDTH = 58
 _SUPPORTED_DATE_TIME_TEXT = "9999-12-31 23:59:59"
 _POI_TITLE_COLUMN_WIDTH = 300
 
-_NOTE_COLUMNS = ("Date / Time", "Note")
+_NOTE_COLUMNS = ("Delete", "Date / Time", "Note")
 _TRADE_COLUMNS = (
+    "Go",
+    "Delete",
     "Date / Time",
     "Direction",
     "Starting Price",
@@ -55,7 +63,7 @@ _TRADE_COLUMNS = (
     "Outcome",
     "Note",
 )
-_POI_COLUMNS = ("Go", "Date / Time", "Title", "Description")
+_POI_COLUMNS = ("Go", "Delete", "Date / Time", "Title", "Description")
 
 
 class HistoricalNotebookWindow(QMainWindow):
@@ -73,6 +81,7 @@ class HistoricalNotebookWindow(QMainWindow):
     goto_requested = Signal(str, object)
     poi_markers_changed = Signal()
     poi_overlay_requested = Signal(bool)
+    close_save_requested = Signal(object)
 
     def __init__(self, *, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -92,6 +101,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self._updating_tables = False
         self._syncing_from_tables = False
         self._suppress_notebook_change_signals = False
+        self._suppress_next_close_autosave = False
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -155,10 +165,37 @@ class HistoricalNotebookWindow(QMainWindow):
         tools_row.setContentsMargins(0, 0, 0, 0)
         tools_row.setSpacing(8)
 
-        self._show_poi_markers_check = QCheckBox("Show POI markers on charts", root)
+        self._show_poi_markers_check = QCheckBox("Show notebook markers on charts", root)
         self._show_poi_markers_check.setObjectName("historicalNotebookShowPoiMarkersCheck")
         self._show_poi_markers_check.toggled.connect(self._on_poi_overlay_toggled)
         tools_row.addWidget(self._show_poi_markers_check)
+
+        tools_row.addWidget(QLabel("POI marker offset", root))
+        self._poi_marker_offset_spin = QSpinBox(root)
+        self._poi_marker_offset_spin.setObjectName("historicalNotebookPoiMarkerOffsetSpin")
+        self._poi_marker_offset_spin.setRange(0, 240)
+        self._poi_marker_offset_spin.setSuffix(" px")
+        self._poi_marker_offset_spin.setValue(DEFAULT_POI_MARKER_OFFSET)
+        self._poi_marker_offset_spin.valueChanged.connect(self._on_annotation_offset_changed)
+        tools_row.addWidget(self._poi_marker_offset_spin)
+
+        tools_row.addWidget(QLabel("PT Long marker offset", root))
+        self._pt_long_marker_offset_spin = QSpinBox(root)
+        self._pt_long_marker_offset_spin.setObjectName("historicalNotebookPtLongMarkerOffsetSpin")
+        self._pt_long_marker_offset_spin.setRange(0, 240)
+        self._pt_long_marker_offset_spin.setSuffix(" px")
+        self._pt_long_marker_offset_spin.setValue(DEFAULT_PT_LONG_MARKER_OFFSET)
+        self._pt_long_marker_offset_spin.valueChanged.connect(self._on_annotation_offset_changed)
+        tools_row.addWidget(self._pt_long_marker_offset_spin)
+
+        tools_row.addWidget(QLabel("PT Short marker offset", root))
+        self._pt_short_marker_offset_spin = QSpinBox(root)
+        self._pt_short_marker_offset_spin.setObjectName("historicalNotebookPtShortMarkerOffsetSpin")
+        self._pt_short_marker_offset_spin.setRange(0, 240)
+        self._pt_short_marker_offset_spin.setSuffix(" px")
+        self._pt_short_marker_offset_spin.setValue(DEFAULT_PT_SHORT_MARKER_OFFSET)
+        self._pt_short_marker_offset_spin.valueChanged.connect(self._on_annotation_offset_changed)
+        tools_row.addWidget(self._pt_short_marker_offset_spin)
         tools_row.addStretch(1)
         layout.addLayout(tools_row)
 
@@ -192,6 +229,17 @@ class HistoricalNotebookWindow(QMainWindow):
         font = tabs.tabBar().font()
         font.setBold(True)
         tabs.tabBar().setFont(font)
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        if self._suppress_next_close_autosave:
+            self._suppress_next_close_autosave = False
+            super().closeEvent(event)
+            return
+
+        self.close_save_requested.emit(event)
+        if not event.isAccepted():
+            return
+        super().closeEvent(event)
 
     def notebook_id(self) -> str | None:
         return self._notebook_id
@@ -228,6 +276,7 @@ class HistoricalNotebookWindow(QMainWindow):
             description=self.description(),
             created_at_ms=created,
             updated_at_ms=now_ms,
+            annotation_settings=self.annotation_settings_payload(),
             chart_entries=tuple(self.chart_entries_payload()),
         )
 
@@ -243,6 +292,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self._updated_at_ms = notebook.updated_at_ms
         self._name_edit.setText(notebook.display_name)
         self._description_edit.setPlainText(notebook.description)
+        self._set_annotation_settings(notebook.annotation_settings)
 
         entries: dict[str, dict[str, Any]] = {}
         for raw_entry in notebook.chart_entries:
@@ -261,7 +311,30 @@ class HistoricalNotebookWindow(QMainWindow):
         self._updated_at_ms = notebook.updated_at_ms
         self._name_edit.setText(notebook.display_name)
         self._description_edit.setPlainText(notebook.description)
+        self._set_annotation_settings(notebook.annotation_settings)
         self._update_status(prefix=f"Saved notebook: {notebook.display_name}.")
+
+    def reset_notebook(
+        self,
+        *,
+        status: str = "Notebook ready.",
+        suppress_next_close_autosave: bool = False,
+    ) -> None:
+        """Clear editor state so the next save creates a new notebook identity."""
+        self._notebook_id = None
+        self._created_at_ms = None
+        self._updated_at_ms = None
+        self._suppress_next_close_autosave = bool(suppress_next_close_autosave)
+        self._chart_entries_by_key.clear()
+        self._active_chart_keys.clear()
+        self._chart_tab_labels.clear()
+        self._tables_by_chart_key.clear()
+        self._name_edit.setText("Untitled notebook")
+        self._description_edit.clear()
+        self._set_annotation_settings(None)
+        self.set_assigned_snapshot_label(None)
+        self._rebuild_chart_tabs()
+        self._status_label.setText(status)
 
     def set_assigned_snapshot_label(self, label: str | None) -> None:
         resolved = str(label or "").strip()
@@ -269,6 +342,19 @@ class HistoricalNotebookWindow(QMainWindow):
             self._assigned_snapshot_label.setText(f"Assigned snapshot: {resolved}")
         else:
             self._assigned_snapshot_label.setText("Assigned snapshot: Not assigned")
+
+    def _set_annotation_settings(self, settings: Mapping[str, Any] | None) -> None:
+        normalized = normalize_notebook_annotation_settings(settings)
+        for spin, key in (
+            (self._poi_marker_offset_spin, "poi_marker_offset"),
+            (self._pt_long_marker_offset_spin, "pt_long_marker_offset"),
+            (self._pt_short_marker_offset_spin, "pt_short_marker_offset"),
+        ):
+            spin.blockSignals(True)
+            try:
+                spin.setValue(int(normalized[key]))
+            finally:
+                spin.blockSignals(False)
 
     def refresh_from_chart_options(self, chart_options: Sequence[Mapping[str, Any]]) -> None:
         """Refresh chart tabs from current embedded chart descriptors.
@@ -306,18 +392,38 @@ class HistoricalNotebookWindow(QMainWindow):
     def poi_markers_enabled(self) -> bool:
         return bool(self._show_poi_markers_check.isChecked())
 
+    def annotation_settings_payload(self) -> dict[str, int]:
+        return normalize_notebook_annotation_settings(
+            {
+                "poi_marker_offset": self._poi_marker_offset_spin.value(),
+                "pt_long_marker_offset": self._pt_long_marker_offset_spin.value(),
+                "pt_short_marker_offset": self._pt_short_marker_offset_spin.value(),
+            }
+        )
+
+    def annotation_marker_offsets(self) -> dict[str, int]:
+        return self.annotation_settings_payload()
+
     def poi_markers_by_chart_key(self) -> dict[str, list[dict[str, Any]]]:
-        if not self._syncing_from_tables:
-            old_syncing = self._syncing_from_tables
-            old_suppress = self._suppress_notebook_change_signals
-            self._syncing_from_tables = True
-            self._suppress_notebook_change_signals = True
-            try:
-                self._sync_all_entries_from_tables()
-            finally:
-                self._suppress_notebook_change_signals = old_suppress
-                self._syncing_from_tables = old_syncing
+        self._sync_entries_for_marker_collection()
         return self._build_poi_markers_by_chart_key_from_entries()
+
+    def pt_markers_by_chart_key(self) -> dict[str, list[dict[str, Any]]]:
+        self._sync_entries_for_marker_collection()
+        return self._build_pt_markers_by_chart_key_from_entries()
+
+    def _sync_entries_for_marker_collection(self) -> None:
+        if self._syncing_from_tables:
+            return
+        old_syncing = self._syncing_from_tables
+        old_suppress = self._suppress_notebook_change_signals
+        self._syncing_from_tables = True
+        self._suppress_notebook_change_signals = True
+        try:
+            self._sync_all_entries_from_tables()
+        finally:
+            self._suppress_notebook_change_signals = old_suppress
+            self._syncing_from_tables = old_syncing
 
     def _build_poi_markers_by_chart_key_from_entries(self) -> dict[str, list[dict[str, Any]]]:
         markers: dict[str, list[dict[str, Any]]] = {}
@@ -337,6 +443,43 @@ class HistoricalNotebookWindow(QMainWindow):
                         "ts_ms": int(ts_ms),
                         "title": title,
                         "description": description,
+                    }
+                )
+            markers[chart_key] = chart_markers
+        return markers
+
+    def _build_pt_markers_by_chart_key_from_entries(self) -> dict[str, list[dict[str, Any]]]:
+        marker_offsets = self.annotation_marker_offsets()
+        markers: dict[str, list[dict[str, Any]]] = {}
+        for chart_key, entry in self._chart_entries_by_key.items():
+            trades = entry.get("trades", []) or []
+            chart_markers: list[dict[str, Any]] = []
+            for trade in trades:
+                if not isinstance(trade, Mapping):
+                    continue
+                ts_ms = trade.get("ts_ms")
+                if not isinstance(ts_ms, int):
+                    continue
+                direction = str(trade.get("direction", "") or "").strip()
+                if direction == "Long":
+                    marker_side = "below"
+                    marker_offset = int(marker_offsets["pt_long_marker_offset"])
+                elif direction == "Short":
+                    marker_side = "above"
+                    marker_offset = -int(marker_offsets["pt_short_marker_offset"])
+                else:
+                    continue
+                chart_markers.append(
+                    {
+                        "ts_ms": int(ts_ms),
+                        "direction": direction,
+                        "starting_price": trade.get("starting_price"),
+                        "target_pct_movement": trade.get("target_pct_movement"),
+                        "closing_price": trade.get("closing_price"),
+                        "outcome": str(trade.get("outcome", "") or "").strip(),
+                        "note": str(trade.get("note", "") or "").strip(),
+                        "marker_side": marker_side,
+                        "marker_offset": marker_offset,
                     }
                 )
             markers[chart_key] = chart_markers
@@ -437,9 +580,6 @@ class HistoricalNotebookWindow(QMainWindow):
         table.verticalHeader().setVisible(False)
         self._configure_table_columns(table, section)
         table.itemChanged.connect(lambda item, table=table: self._on_table_item_changed(table, item))
-        table.cellDoubleClicked.connect(
-            lambda row, column, table=table: self._on_table_cell_double_clicked(table, row, column)
-        )
         return table
 
     def _configure_table_columns(self, table: QTableWidget, section: str) -> None:
@@ -452,24 +592,31 @@ class HistoricalNotebookWindow(QMainWindow):
         if date_column >= 0:
             table.setColumnWidth(date_column, self._date_time_column_width(table))
 
+        delete_column = self._delete_column_for_section(section)
+        if delete_column >= 0:
+            header.setSectionResizeMode(delete_column, QHeaderView.Fixed)
+            table.setColumnWidth(delete_column, _ACTION_BUTTON_WIDTH)
+
         if section == _SECTION_NOTES:
-            header.setSectionResizeMode(1, QHeaderView.Stretch)
+            header.setSectionResizeMode(2, QHeaderView.Stretch)
             return
 
         if section == _SECTION_TRADES:
-            table.setColumnWidth(1, 110)
-            table.setColumnWidth(2, 120)
-            table.setColumnWidth(3, 145)
+            header.setSectionResizeMode(_GOTO_COLUMN, QHeaderView.Fixed)
+            table.setColumnWidth(_GOTO_COLUMN, _ACTION_BUTTON_WIDTH)
+            table.setColumnWidth(3, 110)
             table.setColumnWidth(4, 120)
-            table.setColumnWidth(5, 95)
-            header.setSectionResizeMode(6, QHeaderView.Stretch)
+            table.setColumnWidth(5, 145)
+            table.setColumnWidth(6, 120)
+            table.setColumnWidth(7, 95)
+            header.setSectionResizeMode(8, QHeaderView.Stretch)
             return
 
         if section == _SECTION_POI:
             header.setSectionResizeMode(_GOTO_COLUMN, QHeaderView.Fixed)
-            table.setColumnWidth(_GOTO_COLUMN, 52)
-            table.setColumnWidth(2, _POI_TITLE_COLUMN_WIDTH)
-            header.setSectionResizeMode(3, QHeaderView.Stretch)
+            table.setColumnWidth(_GOTO_COLUMN, _ACTION_BUTTON_WIDTH)
+            table.setColumnWidth(3, _POI_TITLE_COLUMN_WIDTH)
+            header.setSectionResizeMode(4, QHeaderView.Stretch)
 
     def _date_time_column_width(self, table: QTableWidget) -> int:
         return (
@@ -478,9 +625,16 @@ class HistoricalNotebookWindow(QMainWindow):
         )
 
     def _date_column_for_section(self, section: str) -> int:
-        if section in {_SECTION_NOTES, _SECTION_TRADES}:
+        if section == _SECTION_NOTES:
+            return 1
+        if section in {_SECTION_TRADES, _SECTION_POI}:
+            return 2
+        return -1
+
+    def _delete_column_for_section(self, section: str) -> int:
+        if section == _SECTION_NOTES:
             return 0
-        if section == _SECTION_POI:
+        if section in {_SECTION_TRADES, _SECTION_POI}:
             return 1
         return -1
 
@@ -508,7 +662,7 @@ class HistoricalNotebookWindow(QMainWindow):
         elif section == _SECTION_TRADES:
             payload.update(
                 {
-                    "direction": "Long",
+                    "direction": "",
                     "starting_price": None,
                     "target_pct_movement": None,
                     "closing_price": None,
@@ -533,29 +687,31 @@ class HistoricalNotebookWindow(QMainWindow):
         date_item = self._table_item(str(payload.get("date_text", "") or ""), row_id=row_id)
         date_column = self._date_column_for_section(section)
         table.setItem(row_index, date_column, date_item)
+        self._set_delete_button_cell(table, row_index)
 
         if section == _SECTION_NOTES:
-            table.setItem(row_index, 1, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
+            table.setItem(row_index, 2, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
             return
 
         if section == _SECTION_TRADES:
-            self._set_combo_cell(table, row_index, 1, ("Long", "Short"), str(payload.get("direction", "Long") or "Long"))
+            self._set_goto_button_cell(table, row_index)
+            self._set_combo_cell(table, row_index, 3, ("", "Long", "Short"), str(payload.get("direction", "") or ""))
             numeric_keys = (
                 "starting_price",
                 "target_pct_movement",
                 "closing_price",
             )
-            for offset, key in enumerate(numeric_keys, start=2):
+            for offset, key in enumerate(numeric_keys, start=4):
                 value = payload.get(key)
                 table.setItem(row_index, offset, self._table_item("" if value is None else str(value), row_id=row_id))
-            self._set_combo_cell(table, row_index, 5, ("Good", "Bad"), str(payload.get("outcome", "Good") or "Good"))
-            table.setItem(row_index, 6, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
+            self._set_combo_cell(table, row_index, 7, ("Good", "Bad"), str(payload.get("outcome", "Good") or "Good"))
+            table.setItem(row_index, 8, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
             return
 
         if section == _SECTION_POI:
             self._set_goto_button_cell(table, row_index)
-            table.setItem(row_index, 2, self._table_item(str(payload.get("title", "") or ""), row_id=row_id))
-            table.setItem(row_index, 3, self._table_item(str(payload.get("description", "") or ""), row_id=row_id))
+            table.setItem(row_index, 3, self._table_item(str(payload.get("title", "") or ""), row_id=row_id))
+            table.setItem(row_index, 4, self._table_item(str(payload.get("description", "") or ""), row_id=row_id))
 
     def _table_item(self, text: str, *, row_id: str) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
@@ -575,6 +731,23 @@ class HistoricalNotebookWindow(QMainWindow):
         )
         table.setCellWidget(row, _GOTO_COLUMN, button)
 
+    def _set_delete_button_cell(self, table: QTableWidget, row: int) -> None:
+        delete_column = self._delete_column_for_section(str(table.property("section") or ""))
+        if delete_column < 0:
+            return
+
+        button = QToolButton(table)
+        button.setText("Delete")
+        button.setToolTip("Delete this notebook row")
+        button.setAutoRaise(True)
+        button.clicked.connect(
+            lambda _checked=False, table=table, button=button: self._on_row_delete_button_clicked(
+                table,
+                button,
+            )
+        )
+        table.setCellWidget(row, delete_column, button)
+
     def _on_row_goto_button_clicked(
         self,
         table: QTableWidget,
@@ -586,10 +759,22 @@ class HistoricalNotebookWindow(QMainWindow):
             return
         self._on_row_goto_clicked(table, row)
 
+    def _on_row_delete_button_clicked(
+        self,
+        table: QTableWidget,
+        button: QToolButton,
+    ) -> None:
+        row = self._row_for_cell_widget(table, button)
+        if row < 0:
+            self._status_label.setText("Delete failed: row could not be resolved.")
+            return
+        self._delete_table_row(table, row)
+
     def _row_for_cell_widget(self, table: QTableWidget, widget: QWidget) -> int:
         for row in range(table.rowCount()):
-            if table.cellWidget(row, _GOTO_COLUMN) is widget:
-                return row
+            for column in range(table.columnCount()):
+                if table.cellWidget(row, column) is widget:
+                    return row
         return -1
 
     def _set_combo_cell(
@@ -621,7 +806,7 @@ class HistoricalNotebookWindow(QMainWindow):
         if entry is None or section not in {_SECTION_NOTES, _SECTION_TRADES, _SECTION_POI}:
             return
         entry[section] = self._rows_from_table(table, section)
-        if section == _SECTION_POI:
+        if section in {_SECTION_TRADES, _SECTION_POI}:
             self._emit_poi_markers_changed()
 
     def _sync_all_entries_from_tables(self) -> None:
@@ -642,7 +827,7 @@ class HistoricalNotebookWindow(QMainWindow):
                         "row_id": row_id,
                         "date_text": date_text,
                         "ts_ms": ts_ms,
-                        "note": self._item_text(table, row, 1),
+                        "note": self._item_text(table, row, 2),
                     }
                 )
             elif section == _SECTION_TRADES:
@@ -651,12 +836,12 @@ class HistoricalNotebookWindow(QMainWindow):
                         "row_id": row_id,
                         "date_text": date_text,
                         "ts_ms": ts_ms,
-                        "direction": self._combo_text(table, row, 1) or "Long",
-                        "starting_price": self._float_or_none(self._item_text(table, row, 2)),
-                        "target_pct_movement": self._float_or_none(self._item_text(table, row, 3)),
-                        "closing_price": self._float_or_none(self._item_text(table, row, 4)),
-                        "outcome": self._combo_text(table, row, 5) or "Good",
-                        "note": self._item_text(table, row, 6),
+                        "direction": self._combo_text(table, row, 3),
+                        "starting_price": self._float_or_none(self._item_text(table, row, 4)),
+                        "target_pct_movement": self._float_or_none(self._item_text(table, row, 5)),
+                        "closing_price": self._float_or_none(self._item_text(table, row, 6)),
+                        "outcome": self._combo_text(table, row, 7) or "Good",
+                        "note": self._item_text(table, row, 8),
                     }
                 )
             elif section == _SECTION_POI:
@@ -665,8 +850,8 @@ class HistoricalNotebookWindow(QMainWindow):
                         "row_id": row_id,
                         "date_text": date_text,
                         "ts_ms": ts_ms,
-                        "title": self._item_text(table, row, 2),
-                        "description": self._item_text(table, row, 3),
+                        "title": self._item_text(table, row, 3),
+                        "description": self._item_text(table, row, 4),
                     }
                 )
         return rows
@@ -709,7 +894,7 @@ class HistoricalNotebookWindow(QMainWindow):
 
     def _on_row_goto_clicked(self, table: QTableWidget, row: int) -> None:
         section = str(table.property("section") or "")
-        if section != _SECTION_POI:
+        if section not in {_SECTION_TRADES, _SECTION_POI}:
             return
 
         chart_key = str(table.property("chart_key") or "").strip()
@@ -740,19 +925,60 @@ class HistoricalNotebookWindow(QMainWindow):
         self._set_goto_status(f"Go To requested: {date_text}")
         self.goto_requested.emit(chart_key, int(ts_ms))
 
+    def _delete_table_row(self, table: QTableWidget, row: int) -> None:
+        section = str(table.property("section") or "")
+        if section not in {_SECTION_NOTES, _SECTION_TRADES, _SECTION_POI}:
+            return
+        if row < 0 or row >= table.rowCount():
+            return
+        if not self._confirm_row_delete(section):
+            return
+
+        table.removeRow(row)
+        self._sync_entry_from_table(table)
+        self._status_label.setText(f"Deleted {self._row_label_for_section(section)}.")
+
+    def _confirm_row_delete(self, section: str) -> bool:
+        message = self._delete_confirmation_message(section)
+        if not message:
+            return False
+
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle("Delete Notebook Row")
+        dialog.setText(message[0])
+        dialog.setInformativeText(message[1])
+        delete_button = dialog.addButton("Delete", QMessageBox.DestructiveRole)
+        dialog.addButton("Cancel", QMessageBox.RejectRole)
+        dialog.setDefaultButton(delete_button)
+        dialog.exec()
+        return dialog.clickedButton() is delete_button
+
+    def _delete_confirmation_message(self, section: str) -> tuple[str, str] | None:
+        if section == _SECTION_NOTES:
+            return ("Delete this note?", "This action cannot be undone.")
+        if section == _SECTION_TRADES:
+            return ("Delete this potential trade?", "This action cannot be undone.")
+        if section == _SECTION_POI:
+            return ("Delete this point of interest?", "This action cannot be undone.")
+        return None
+
+    def _row_label_for_section(self, section: str) -> str:
+        if section == _SECTION_NOTES:
+            return "note"
+        if section == _SECTION_TRADES:
+            return "potential trade"
+        if section == _SECTION_POI:
+            return "point of interest"
+        return "row"
+
     def _on_table_cell_double_clicked(
         self,
         table: QTableWidget,
         row: int,
         column: int,
     ) -> None:
-        section = str(table.property("section") or "")
-        if section != _SECTION_POI:
-            return
-        if column != self._date_column_for_section(section):
-            return
-
-        self._on_row_goto_clicked(table, row)
+        return
 
     def _on_chart_tab_close_requested(self, index: int) -> None:
         widget = self._chart_tabs.widget(index)
@@ -781,6 +1007,9 @@ class HistoricalNotebookWindow(QMainWindow):
 
     def _on_poi_overlay_toggled(self, checked: bool) -> None:
         self.poi_overlay_requested.emit(bool(checked))
+        self._emit_poi_markers_changed()
+
+    def _on_annotation_offset_changed(self, _value: int) -> None:
         self._emit_poi_markers_changed()
 
     def _emit_poi_markers_changed(self) -> None:

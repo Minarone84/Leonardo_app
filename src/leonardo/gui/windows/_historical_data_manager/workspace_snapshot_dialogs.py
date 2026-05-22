@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMessageBox,
     QPlainTextEdit,
     QRadioButton,
     QTextEdit,
@@ -209,6 +210,8 @@ class LoadWorkspaceSnapshotDialog(QDialog):
         available_slot_count: int,
         detached_reserved_slot_count: int = 0,
         compatibility_provider: Callable[[HistoricalWorkspaceSnapshot, str], PresetCompatibilityReport] | None = None,
+        delete_snapshot: Callable[[str], bool] | None = None,
+        snapshots_loader: Callable[[], Sequence[HistoricalWorkspaceSnapshot]] | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -217,6 +220,8 @@ class LoadWorkspaceSnapshotDialog(QDialog):
         self._available_slot_count = int(available_slot_count)
         self._detached_reserved_slot_count = int(detached_reserved_slot_count)
         self._compatibility_provider = compatibility_provider
+        self._delete_snapshot = delete_snapshot
+        self._snapshots_loader = snapshots_loader
         self._current_compatibility_report = ready_report()
 
         self.setWindowTitle("Load Workspace Snapshot")
@@ -284,6 +289,11 @@ class LoadWorkspaceSnapshotDialog(QDialog):
         load_button = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
         if load_button is not None:
             load_button.setText("Load")
+        self._delete_button = self._buttons.addButton(
+            "Delete",
+            QDialogButtonBox.ButtonRole.DestructiveRole,
+        )
+        self._delete_button.clicked.connect(self._on_delete_clicked)
         self._buttons.accepted.connect(self.accept)
         self._buttons.rejected.connect(self.reject)
         root.addWidget(self._buttons)
@@ -311,7 +321,10 @@ class LoadWorkspaceSnapshotDialog(QDialog):
     def _populate_snapshots(
         self,
         snapshots: Sequence[HistoricalWorkspaceSnapshot],
+        *,
+        select_first: bool = True,
     ) -> None:
+        self._snapshots_by_id = {snapshot.snapshot_id: snapshot for snapshot in snapshots}
         self._snapshot_list.clear()
         for snapshot in snapshots:
             item = QListWidgetItem(
@@ -320,7 +333,7 @@ class LoadWorkspaceSnapshotDialog(QDialog):
                 self._snapshot_list,
             )
             item.setData(Qt.ItemDataRole.UserRole, snapshot.snapshot_id)
-        if self._snapshot_list.count() > 0:
+        if select_first and self._snapshot_list.count() > 0:
             self._snapshot_list.setCurrentRow(0)
 
     def _selected_snapshot(self) -> HistoricalWorkspaceSnapshot | None:
@@ -332,6 +345,7 @@ class LoadWorkspaceSnapshotDialog(QDialog):
     def _refresh_details(self) -> None:
         snapshot = self._selected_snapshot()
         load_button = self._buttons.button(QDialogButtonBox.StandardButton.Ok)
+        delete_button = self._delete_button
 
         if snapshot is None:
             self._detail_text.setPlainText("Select a saved workspace snapshot.")
@@ -340,6 +354,7 @@ class LoadWorkspaceSnapshotDialog(QDialog):
             self._compatibility_text.setPlainText("")
             if load_button is not None:
                 load_button.setEnabled(False)
+            delete_button.setEnabled(False)
             return
 
         lines = [
@@ -378,6 +393,92 @@ class LoadWorkspaceSnapshotDialog(QDialog):
         )
         if load_button is not None:
             load_button.setEnabled(self._current_compatibility_report.can_load)
+        delete_button.setEnabled(self._delete_snapshot is not None)
+
+    def _on_delete_clicked(self) -> None:
+        snapshot = self._selected_snapshot()
+        if snapshot is None:
+            QMessageBox.information(
+                self,
+                "Delete Workspace Snapshot",
+                "Select a saved workspace snapshot to delete.",
+            )
+            self._refresh_details()
+            return
+        if self._delete_snapshot is None:
+            QMessageBox.warning(
+                self,
+                "Delete Workspace Snapshot",
+                "Workspace snapshot deletion is not available in this context.",
+            )
+            self._refresh_details()
+            return
+        if not self._confirm_delete_snapshot(snapshot):
+            return
+
+        try:
+            deleted = self._delete_snapshot(snapshot.snapshot_id)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Delete Workspace Snapshot",
+                f"Could not delete workspace snapshot.\n{exc!r}",
+            )
+            return
+        if not deleted:
+            QMessageBox.warning(
+                self,
+                "Delete Workspace Snapshot",
+                "Could not delete workspace snapshot.\n"
+                "The selected workspace snapshot was not found.",
+            )
+            self._reload_snapshots_after_delete(snapshot.snapshot_id)
+            return
+
+        self._reload_snapshots_after_delete(snapshot.snapshot_id)
+
+    def _confirm_delete_snapshot(self, snapshot: HistoricalWorkspaceSnapshot) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Icon.Warning)
+        dialog.setWindowTitle("Delete Workspace Snapshot")
+        dialog.setText(f'Delete workspace snapshot "{snapshot.display_name}"?')
+        notebook_ref = snapshot.notebook_ref
+        if isinstance(notebook_ref, Mapping):
+            notebook_name = str(notebook_ref.get("display_name", "") or "").strip()
+            if not notebook_name:
+                notebook_name = str(notebook_ref.get("notebook_id", "") or "").strip()
+            if notebook_name:
+                dialog.setInformativeText(
+                    f'This snapshot references notebook "{notebook_name}".\n'
+                    "The notebook will not be deleted.\n\n"
+                    "This action cannot be undone."
+                )
+            else:
+                dialog.setInformativeText(
+                    "This snapshot references a notebook.\n"
+                    "The notebook will not be deleted.\n\n"
+                    "This action cannot be undone."
+                )
+        else:
+            dialog.setInformativeText("This action cannot be undone.")
+        delete_button = dialog.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
+        dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
+        dialog.exec()
+        return dialog.clickedButton() is delete_button
+
+    def _reload_snapshots_after_delete(self, deleted_snapshot_id: str) -> None:
+        if self._snapshots_loader is not None:
+            snapshots = list(self._snapshots_loader())
+        else:
+            snapshots = [
+                snapshot
+                for snapshot_id, snapshot in self._snapshots_by_id.items()
+                if snapshot_id != deleted_snapshot_id
+            ]
+        self._populate_snapshots(snapshots, select_first=False)
+        self._snapshot_list.clearSelection()
+        self._snapshot_list.setCurrentRow(-1)
+        self._refresh_details()
 
     def _compatibility_report_for_snapshot(
         self,

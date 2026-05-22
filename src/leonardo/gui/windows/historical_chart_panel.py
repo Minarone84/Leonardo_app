@@ -71,6 +71,7 @@ class HistoricalChartPanel(
     dock_requested = Signal(object)
     close_requested = Signal(object)
     position_change_requested = Signal(object, int)
+    horizontal_pan_requested = Signal(object)
 
     _RENDERABLE_OUTPUT_STRUCTURES = {
         "line-series",
@@ -105,6 +106,7 @@ class HistoricalChartPanel(
         self._wired_oscillator_pane_ids: set[int] = set()
         self._pending_workspace_snapshot_chart: Optional[dict[str, Any]] = None
         self._notebook_poi_markers_by_notebook: dict[str, list[dict[str, Any]]] = {}
+        self._notebook_pt_markers_by_notebook: dict[str, list[dict[str, Any]]] = {}
         self._is_disposed: bool = False
         self._updating_position_combo: bool = False
 
@@ -217,6 +219,7 @@ class HistoricalChartPanel(
         self._controller.save_succeeded.connect(self._on_financial_tools_save_succeeded)
         self._controller.save_failed.connect(self._on_financial_tools_save_failed)
         self._controller.slice_ready.connect(self._on_controller_slice_ready)
+        self._workspace.viewport.horizontal_pan_changed.connect(self._on_horizontal_pan_changed)
 
         self._workspace.set_anchor_zoom_enabled(True)
         self.set_floating(False)
@@ -333,14 +336,24 @@ class HistoricalChartPanel(
                 return True
         return False
 
+    def center_on_timestamp_ms(self, ts_ms: int) -> bool:
+        """Center this chart on a timestamp through the controller-owned path."""
+        return self._controller.center_view_on_timestamp_ms(int(ts_ms))
+
     def center_on_notebook_timestamp(self, ts_ms: int) -> bool:
         """Center this chart on a notebook date through the existing chart path."""
-        return self._controller.center_view_on_timestamp_ms(int(ts_ms))
+        return self.center_on_timestamp_ms(int(ts_ms))
+
+    def current_center_timestamp_ms(self) -> int | None:
+        """Return the nearest dataset timestamp at the current horizontal center."""
+        return self._controller.current_center_timestamp_ms()
 
     def set_notebook_poi_markers(
         self,
         notebook_id: str,
         markers: Sequence[Mapping[str, Any]],
+        *,
+        marker_offset_px: int = 28,
     ) -> None:
         """Apply runtime notebook POI markers as chart annotations.
 
@@ -352,6 +365,7 @@ class HistoricalChartPanel(
         if not normalized_notebook_id:
             return
 
+        offset_px = self._notebook_annotation_offset(marker_offset_px, default=28)
         normalized_markers: list[dict[str, Any]] = []
         for raw_marker in markers:
             if not isinstance(raw_marker, Mapping):
@@ -364,6 +378,7 @@ class HistoricalChartPanel(
                     "ts_ms": int(ts_ms),
                     "title": str(raw_marker.get("title", "") or "").strip(),
                     "description": str(raw_marker.get("description", "") or "").strip(),
+                    "marker_offset_px": offset_px,
                 }
             )
         self._notebook_poi_markers_by_notebook[normalized_notebook_id] = normalized_markers
@@ -376,6 +391,70 @@ class HistoricalChartPanel(
         else:
             self._notebook_poi_markers_by_notebook.pop(str(notebook_id or "").strip(), None)
         self._refresh_notebook_poi_overlay()
+
+    def set_notebook_pt_markers(
+        self,
+        notebook_id: str,
+        markers: Sequence[Mapping[str, Any]],
+    ) -> None:
+        """Apply runtime notebook PT markers as chart annotations.
+
+        Potential Trade markers are derived from notebook rows and are not
+        registered as chart studies or financial-tool outputs.
+        """
+        normalized_notebook_id = str(notebook_id or "").strip()
+        if not normalized_notebook_id:
+            return
+
+        normalized_markers: list[dict[str, Any]] = []
+        for raw_marker in markers:
+            if not isinstance(raw_marker, Mapping):
+                continue
+            ts_ms = raw_marker.get("ts_ms")
+            if not isinstance(ts_ms, int):
+                continue
+            direction = str(raw_marker.get("direction", "") or "").strip()
+            if direction == "Long":
+                marker_side = "below"
+                marker_offset_px = abs(
+                    self._signed_notebook_marker_offset(
+                        raw_marker.get("marker_offset"),
+                        default=56,
+                    )
+                )
+            elif direction == "Short":
+                marker_side = "above"
+                marker_offset_px = -abs(
+                    self._signed_notebook_marker_offset(
+                        raw_marker.get("marker_offset"),
+                        default=-56,
+                    )
+                )
+            else:
+                continue
+            normalized_markers.append(
+                {
+                    "ts_ms": int(ts_ms),
+                    "direction": direction,
+                    "starting_price": raw_marker.get("starting_price"),
+                    "target_pct_movement": raw_marker.get("target_pct_movement"),
+                    "closing_price": raw_marker.get("closing_price"),
+                    "outcome": str(raw_marker.get("outcome", "") or "").strip(),
+                    "note": str(raw_marker.get("note", "") or "").strip(),
+                    "marker_side": marker_side,
+                    "marker_offset_px": marker_offset_px,
+                }
+            )
+        self._notebook_pt_markers_by_notebook[normalized_notebook_id] = normalized_markers
+        self._refresh_notebook_pt_overlay()
+
+    def clear_notebook_pt_markers(self, notebook_id: str | None = None) -> None:
+        """Clear runtime notebook PT annotations from this chart."""
+        if notebook_id is None:
+            self._notebook_pt_markers_by_notebook.clear()
+        else:
+            self._notebook_pt_markers_by_notebook.pop(str(notebook_id or "").strip(), None)
+        self._refresh_notebook_pt_overlay()
 
     def _refresh_notebook_poi_overlay(self) -> None:
         overlay_key = "__notebook_poi_markers__"
@@ -428,6 +507,10 @@ class HistoricalChartPanel(
         if any(len(markers) > 1 for markers in grouped_by_local_index.values()):
             marker_text = "+"
 
+        marker_offset_px = self._marker_offset_for_notebook_markers(
+            all_markers,
+            default=28,
+        )
         self._workspace.apply_overlay_series(
             Series(
                 key=overlay_key,
@@ -441,11 +524,133 @@ class HistoricalChartPanel(
                     marker_size=12,
                     marker_text=marker_text,
                     marker_text_color="#0B1220",
-                    marker_offset_px=28,
+                    marker_offset_px=marker_offset_px,
                 ),
             )
         )
         self._workspace.set_notebook_poi_tooltips(tooltips_by_global_index)
+
+    def _refresh_notebook_pt_overlay(self) -> None:
+        all_markers = [
+            marker
+            for markers in self._notebook_pt_markers_by_notebook.values()
+            for marker in markers
+        ]
+        self._refresh_notebook_pt_direction_overlay(
+            overlay_key="__notebook_pt_long_markers__",
+            markers=[
+                marker
+                for marker in all_markers
+                if str(marker.get("direction", "") or "") == "Long"
+            ],
+            marker_text="↑",
+            color="#22C55E",
+            default_offset=56,
+        )
+        self._refresh_notebook_pt_direction_overlay(
+            overlay_key="__notebook_pt_short_markers__",
+            markers=[
+                marker
+                for marker in all_markers
+                if str(marker.get("direction", "") or "") == "Short"
+            ],
+            marker_text="↓",
+            color="#EF4444",
+            default_offset=-56,
+        )
+
+    def _refresh_notebook_pt_direction_overlay(
+        self,
+        *,
+        overlay_key: str,
+        markers: Sequence[Mapping[str, Any]],
+        marker_text: str,
+        color: str,
+        default_offset: int,
+    ) -> None:
+        if not markers:
+            self._workspace.remove_overlay_series(overlay_key)
+            return
+
+        candles = list(self._workspace.model.candles)
+        if not candles:
+            self._workspace.remove_overlay_series(overlay_key)
+            return
+
+        grouped_by_local_index: dict[int, list[dict[str, Any]]] = {}
+        for marker in markers:
+            local_index = self._nearest_resident_local_index_for_ts_ms(
+                int(marker["ts_ms"]),
+                candles,
+            )
+            if local_index is None:
+                continue
+            grouped_by_local_index.setdefault(local_index, []).append(marker)
+
+        if not grouped_by_local_index:
+            self._workspace.remove_overlay_series(overlay_key)
+            return
+
+        values = [math.nan] * len(candles)
+        for local_index in grouped_by_local_index:
+            candle = candles[local_index]
+            if int(default_offset) < 0:
+                values[local_index] = float(candle.high)
+            else:
+                values[local_index] = float(candle.low)
+
+        marker_offset_px = self._marker_offset_for_notebook_markers(
+            markers,
+            default=default_offset,
+        )
+        self._workspace.apply_overlay_series(
+            Series(
+                key=overlay_key,
+                title="Notebook PT",
+                values=values,
+                style=SeriesStyle(
+                    color=color,
+                    visible=True,
+                    render_mode="marker",
+                    marker_shape="circle",
+                    marker_size=14,
+                    marker_text=marker_text,
+                    marker_text_color="#0B1220",
+                    marker_offset_px=marker_offset_px,
+                ),
+            )
+        )
+
+    def _marker_offset_for_notebook_markers(
+        self,
+        markers: Sequence[Mapping[str, Any]],
+        *,
+        default: int,
+    ) -> int:
+        offsets = [
+            self._signed_notebook_marker_offset(
+                marker.get("marker_offset_px"),
+                default=default,
+            )
+            for marker in markers
+        ]
+        if not offsets:
+            return int(default)
+        if int(default) < 0:
+            return min(offsets)
+        return max(offsets)
+
+    def _notebook_annotation_offset(self, value: Any, *, default: int) -> int:
+        try:
+            return max(0, min(240, int(value)))
+        except (TypeError, ValueError):
+            return int(default)
+
+    def _signed_notebook_marker_offset(self, value: Any, *, default: int) -> int:
+        try:
+            return max(-240, min(240, int(value)))
+        except (TypeError, ValueError):
+            return int(default)
 
     def _nearest_resident_local_index_for_ts_ms(
         self,
@@ -1099,6 +1304,7 @@ class HistoricalChartPanel(
         self._refresh_rendered_studies_from_controller_projection()
         self._apply_pending_workspace_snapshot_chart()
         self._refresh_notebook_poi_overlay()
+        self._refresh_notebook_pt_overlay()
 
     def _apply_pending_workspace_snapshot_chart(self) -> None:
         pending = self._pending_workspace_snapshot_chart
@@ -1123,9 +1329,8 @@ class HistoricalChartPanel(
             if not restored and viewport_state:
                 self._on_error("Workspace snapshot viewport restore could not be applied.")
 
-
-
-
+    def _on_horizontal_pan_changed(self) -> None:
+        self.horizontal_pan_requested.emit(self)
 
     def _on_float_or_dock_clicked(self) -> None:
         if self._is_floating:

@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timezone
 import time
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -41,6 +41,7 @@ class HistoricalNotebookManagerDialog(QDialog):
     """
 
     _NOTEBOOK_ID_ROLE = Qt.UserRole
+    notebook_deleted = Signal(str)
 
     def __init__(
         self,
@@ -61,6 +62,7 @@ class HistoricalNotebookManagerDialog(QDialog):
         self._open_button: QPushButton | None = None
         self._assign_button: QPushButton | None = None
         self._unassign_button: QPushButton | None = None
+        self._delete_button: QPushButton | None = None
         self._status_label: QLabel | None = None
 
         self._build_ui()
@@ -126,6 +128,12 @@ class HistoricalNotebookManagerDialog(QDialog):
         unassign_button.clicked.connect(self._on_unassign_clicked)
         button_row.addWidget(unassign_button)
         self._unassign_button = unassign_button
+
+        delete_button = QPushButton("Delete Notebook", self)
+        delete_button.setObjectName("historicalNotebookManagerDeleteButton")
+        delete_button.clicked.connect(self._on_delete_clicked)
+        button_row.addWidget(delete_button)
+        self._delete_button = delete_button
 
         close_button = QPushButton("Close", self)
         close_button.setObjectName("historicalNotebookManagerCloseButton")
@@ -204,7 +212,12 @@ class HistoricalNotebookManagerDialog(QDialog):
 
     def _on_selection_changed(self) -> None:
         has_selection = bool(self._selected_notebook_id())
-        for button in (self._open_button, self._assign_button, self._unassign_button):
+        for button in (
+            self._open_button,
+            self._assign_button,
+            self._unassign_button,
+            self._delete_button,
+        ):
             if button is not None:
                 button.setEnabled(has_selection)
 
@@ -375,6 +388,74 @@ class HistoricalNotebookManagerDialog(QDialog):
             f"Unassigned notebook '{summary.display_name}' from "
             f"'{target_summary.display_name}'."
         )
+
+    def _on_delete_clicked(self) -> None:
+        summary = self._selected_notebook_summary()
+        if summary is None:
+            return
+
+        assignments = self._assignment_map().get(summary.notebook_id, [])
+        if not self._confirm_delete_notebook(summary, assignments):
+            self._set_status("Notebook delete cancelled.")
+            return
+
+        try:
+            for snapshot_summary in assignments:
+                snapshot = self._workspace_snapshot_store.load_snapshot(
+                    snapshot_summary.snapshot_id
+                )
+                updated = replace(
+                    snapshot,
+                    notebook_ref=None,
+                    updated_at_ms=int(time.time() * 1000),
+                )
+                self._workspace_snapshot_store.save_snapshot(updated, overwrite=True)
+            deleted = self._notebook_store.delete_notebook(summary.notebook_id)
+        except Exception as exc:
+            QMessageBox.warning(
+                self,
+                "Delete Notebook",
+                f"Could not delete notebook: {exc!r}",
+            )
+            return
+
+        if not deleted:
+            QMessageBox.warning(
+                self,
+                "Delete Notebook",
+                "The selected notebook file was not found.",
+            )
+            self._reload()
+            return
+
+        self.notebook_deleted.emit(summary.notebook_id)
+        self._reload()
+        self._set_status(f"Deleted notebook '{summary.display_name}'.")
+
+    def _confirm_delete_notebook(
+        self,
+        summary: HistoricalNotebookSummary,
+        assignments: list[HistoricalWorkspaceSnapshotSummary],
+    ) -> bool:
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle("Delete Notebook")
+        dialog.setText(f'Delete notebook "{summary.display_name}"?')
+        if assignments:
+            lines = "\n".join(f"- {item.display_name}" for item in assignments)
+            dialog.setInformativeText(
+                "This notebook is assigned to the following workspace snapshots:\n"
+                f"{lines}\n\n"
+                "Deleting it will also unassign it from those workspace snapshots.\n"
+                "This action cannot be undone.\n\n"
+                "Continue?"
+            )
+        else:
+            dialog.setInformativeText("This action cannot be undone.")
+        delete_button = dialog.addButton("Delete", QMessageBox.DestructiveRole)
+        dialog.addButton("Cancel", QMessageBox.RejectRole)
+        dialog.exec()
+        return dialog.clickedButton() is delete_button
 
     def _selected_notebook_summary(self) -> HistoricalNotebookSummary | None:
         notebook_id = self._selected_notebook_id()

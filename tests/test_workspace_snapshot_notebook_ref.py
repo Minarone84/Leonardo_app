@@ -187,19 +187,26 @@ def test_workspace_snapshot_load_and_notebook_manager_paths_use_notebook_ref() -
     dialog_source = _source(MANAGER)
     load_body = _function_source(HDM, "_on_load_workspace_snapshot")
     manager_body = _function_source(HDM, "_on_open_notebook_manager")
+    deleted_body = _function_source(HDM, "_on_notebook_deleted")
     assign_body = _function_source(MANAGER, "_on_assign_clicked")
     unassign_body = _function_source(MANAGER, "_on_unassign_clicked")
+    delete_body = _function_source(MANAGER, "_on_delete_clicked")
     open_body = _function_source(HDM, "_open_notebook_ref_from_snapshot")
 
     assert "_open_notebook_ref_from_snapshot(snapshot.notebook_ref)" in load_body
     assert "HistoricalNotebookManagerDialog" in manager_source
     assert "workspace_snapshot_store=self._workspace_snapshot_store()" in manager_body
+    assert "dialog.notebook_deleted.connect(self._on_notebook_deleted)" in manager_body
     assert "def _assignment_map" in dialog_source
     assert "notebook_ref = {" in assign_body
     assert '"notebook_id": summary.notebook_id' in assign_body
     assert "self._workspace_snapshot_store.save_snapshot(updated, overwrite=True)" in assign_body
     assert "notebook_ref=None" in unassign_body
     assert "self._workspace_snapshot_store.save_snapshot(updated, overwrite=True)" in unassign_body
+    assert "delete_notebook(summary.notebook_id)" in delete_body
+    assert "notebook_ref=None" in delete_body
+    assert "notebook_window.reset_notebook" in deleted_body
+    assert "notebook_window.close()" in deleted_body
     assert "self._set_current_workspace_notebook_ref(snapshot.notebook_ref)" in load_body
     assert "self._notebook_store().load_notebook(notebook_id)" in open_body
     assert "Assigned notebook could not be loaded" in open_body

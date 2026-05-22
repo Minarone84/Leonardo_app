@@ -493,6 +493,106 @@ VOLUME_DEFAULTS = StudyStyleDefaults(
 )
 
 # ---------------------------------------------------------------------------
+# Construct defaults
+# ---------------------------------------------------------------------------
+
+DERIVATIVE_DEFAULTS = StudyStyleDefaults(
+    study_key="derivative",
+    signal_defaults={
+        "__primary__": SignalStyleDefaults(
+            color="#FF9F1C",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+    },
+)
+
+ANGLE_DEFAULTS = StudyStyleDefaults(
+    study_key="angle",
+    signal_defaults={
+        "__primary__": SignalStyleDefaults(
+            color="#00E5FF",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+    },
+)
+
+BRAIDS_DEFAULTS = StudyStyleDefaults(
+    study_key="braids",
+    signal_defaults={
+        "__primary__": SignalStyleDefaults(
+            color="#B967FF",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+    },
+)
+
+BRAID_INSTABILITY_DEFAULTS = StudyStyleDefaults(
+    study_key="braid_instability",
+    signal_defaults={
+        "__primary__": SignalStyleDefaults(
+            color="#FF3DCE",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+    },
+)
+
+DELTA_DEFAULTS = StudyStyleDefaults(
+    study_key="delta",
+    signal_defaults={
+        "__primary__": SignalStyleDefaults(
+            color="#FFF200",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+    },
+)
+
+TRAP_AREA_DEFAULTS = StudyStyleDefaults(
+    study_key="trap_area",
+    signal_defaults={
+        "__primary__": SignalStyleDefaults(
+            color="#FF6B35",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+    },
+)
+
+PERCENT_SPAN_ANGLE_DEFAULTS = StudyStyleDefaults(
+    study_key="percent_span_angle",
+    signal_defaults={
+        "__primary__": SignalStyleDefaults(
+            color="#39FF14",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+    },
+)
+
+ANGLE_MOMENTUM_DEFAULTS = StudyStyleDefaults(
+    study_key="angle_momentum",
+    signal_defaults={
+        "__primary__": SignalStyleDefaults(
+            color="#4DA3FF",
+            line_width=1,
+            line_style="solid",
+            visible=True,
+        ),
+    },
+)
+
+# ---------------------------------------------------------------------------
 # Registries
 # ---------------------------------------------------------------------------
 
@@ -518,9 +618,21 @@ OSCILLATOR_STUDY_STYLE_DEFAULTS: Dict[str, StudyStyleDefaults] = {
     "volume": VOLUME_DEFAULTS,
 }
 
+CONSTRUCT_STUDY_STYLE_DEFAULTS: Dict[str, StudyStyleDefaults] = {
+    "derivative": DERIVATIVE_DEFAULTS,
+    "angle": ANGLE_DEFAULTS,
+    "braids": BRAIDS_DEFAULTS,
+    "braid_instability": BRAID_INSTABILITY_DEFAULTS,
+    "delta": DELTA_DEFAULTS,
+    "trap_area": TRAP_AREA_DEFAULTS,
+    "percent_span_angle": PERCENT_SPAN_ANGLE_DEFAULTS,
+    "angle_momentum": ANGLE_MOMENTUM_DEFAULTS,
+}
+
 STUDY_STYLE_DEFAULTS_REGISTRY: Dict[str, StudyStyleDefaults] = {
     **INDICATOR_STUDY_STYLE_DEFAULTS,
     **OSCILLATOR_STUDY_STYLE_DEFAULTS,
+    **CONSTRUCT_STUDY_STYLE_DEFAULTS,
 }
 
 

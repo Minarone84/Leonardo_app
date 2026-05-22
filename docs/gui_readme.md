@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.20
+Version: v3.21
 Date: 2026-05-22
 
 ## Overview
@@ -182,7 +182,7 @@ Window lifecycle events are reflected into Core runtime state so Core maintains 
 Responsibilities include:
 
 - collecting exchange, market, symbol, timeframe, optional range, and optional limit input;
-- displaying supported exchanges, markets, and timeframes supplied through CoreBridge/capability callbacks;
+- displaying supported exchanges, markets, and timeframes supplied through CoreBridge/capability callbacks backed by Core `ExchangeRegistry`;
 - requesting Core-owned preflight plans;
 - passing the configured historical root, `Path(ctx.config.runtime.data_dir) / "historical"`, into downloader preflight and execution paths;
 - showing the Confirm OHLCV Download dialog before execution;
@@ -208,12 +208,14 @@ The ownership chain for historical downloads is:
 ```text
 HistoricalDownloadWindow
 → CoreBridge capability / command boundary
+→ ExchangeRegistry capability provider for exchange display / adapter lookup
 → TaskManager
 → HistoricalDownloader
+→ ExchangeRegistry
 → BaseExchange capability contract
 → concrete exchange adapter
 → CsvOHLCVStore + HistoricalDatasetValidator
-→ audit events
+→ normalized audit events
 → OHLCV Download Task monitor
 ```
 
@@ -1478,6 +1480,8 @@ Recommended tooling (in the GUI package):
 ---
 
 ## Change log
+
+- **v3.21 (2026-05-22)** — Historical download/Core capability sync: Historical Download Manager capability display remains GUI intent/display only, while CoreBridge resolves exchange capabilities through the registered Core `ExchangeRegistry`; downloader adapter acquisition is registry-backed, normalized audit snapshots remain GUI-displayable, and GUI ownership boundaries are unchanged.
 
 - **v3.20 (2026-05-22)** — Historical Notebook and workspace final polish: Notebook Manager owns assignment and deletion, Notes rows no longer navigate, Trades became Potential Trades, Potential Trades support explicit Long/Short direction and runtime green/red arrow annotations, POI/PT marker offsets persist in notebook `annotation_settings`, notebooks auto-save on close, saved Study Setup and Workspace Snapshot load dialogs gained confirmed Delete actions, Historical Data Manager opens maximized, and Pan Anchor provides optional horizontal timestamp-based pan synchronization across active charts.
 

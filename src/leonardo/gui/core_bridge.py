@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 from concurrent.futures import Future
-from typing import Any, Awaitable, Callable, Optional, TypeVar
+from pathlib import Path
+from typing import Any, Awaitable, Callable, Optional, Sequence, TypeVar
 
 from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 
-from leonardo.connection.exchange.adapters.bybit import BybitExchange, BybitMarket, Bybit_Timeframe
+from leonardo.connection.exchange.registry import ExchangeRegistry
 from leonardo.core.context import AppContext
-from leonardo.core.registry_keys import SVC_HISTORICAL_DATASET
+from leonardo.core.registry_keys import SVC_EXCHANGE_REGISTRY, SVC_HISTORICAL_DATASET
 from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService
+from leonardo.data.historical.downloader import DownloadBatchRequest, DownloadRequest, HistoricalDownloader
 from leonardo.gui.core_runner import CoreRunner
 
 T = TypeVar("T")
@@ -134,6 +136,15 @@ class CoreBridge(QObject):
         """Return the Core-owned historical dataset service for catalog access."""
         return self.context.get_service(SVC_HISTORICAL_DATASET, HistoricalDatasetService)
 
+    def _exchange_registry(self) -> ExchangeRegistry:
+        """Return the Core-owned exchange registry capability provider."""
+        return self.context.get_service(SVC_EXCHANGE_REGISTRY, ExchangeRegistry)
+
+    @staticmethod
+    def _historical_download_root(ctx: AppContext) -> Path:
+        """Return the configured historical storage root for download commands."""
+        return Path(ctx.config.runtime.data_dir) / "historical"
+
     def list_historical_dataset_exchanges(self) -> list[str]:
         """Return exchanges that have at least one Core-loadable OHLCV dataset."""
         return self._historical_dataset_service().list_dataset_exchanges()
@@ -196,28 +207,150 @@ class CoreBridge(QObject):
 
         return self.submit(_cancel())
 
+    def preflight_historical_download(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+        start_ms: Optional[int] = None,
+        end_ms: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> Future[object]:
+        """Build a Core-owned single-timeframe historical download preflight."""
+        ctx = self.context
+
+        async def _preflight() -> object:
+            historical_root = CoreBridge._historical_download_root(ctx)
+            downloader = HistoricalDownloader(root=historical_root)
+            return await downloader.preflight(
+                ctx,
+                DownloadRequest(
+                    exchange=exchange,
+                    market_type=market_type,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    limit=limit,
+                ),
+            )
+
+        return self.submit(_preflight())
+
+    def preflight_historical_download_batch(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframes: Sequence[str],
+        start_ms: Optional[int] = None,
+        end_ms: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> Future[object]:
+        """Build a Core-owned multi-timeframe historical download preflight."""
+        ctx = self.context
+        requested_timeframes = tuple(timeframes)
+
+        async def _preflight() -> object:
+            historical_root = CoreBridge._historical_download_root(ctx)
+            downloader = HistoricalDownloader(root=historical_root)
+            return await downloader.preflight_batch(
+                ctx,
+                DownloadBatchRequest(
+                    exchange=exchange,
+                    market_type=market_type,
+                    symbol=symbol,
+                    timeframes=requested_timeframes,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    limit=limit,
+                ),
+            )
+
+        return self.submit(_preflight())
+
+    def start_historical_download(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+        start_ms: Optional[int] = None,
+        end_ms: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> Future[dict[str, object]]:
+        """Submit a Core-owned single-timeframe historical download task."""
+        ctx = self.context
+
+        async def _start() -> dict[str, object]:
+            historical_root = CoreBridge._historical_download_root(ctx)
+            downloader = HistoricalDownloader(root=historical_root)
+            job_id = downloader.start(
+                ctx,
+                DownloadRequest(
+                    exchange=exchange,
+                    market_type=market_type,
+                    symbol=symbol,
+                    timeframe=timeframe,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    limit=limit,
+                ),
+            )
+            return {"job_id": job_id, "timeframes": (timeframe,)}
+
+        return self.submit(_start())
+
+    def start_historical_download_batch(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframes: Sequence[str],
+        start_ms: Optional[int] = None,
+        end_ms: Optional[int] = None,
+        limit: Optional[int] = None,
+    ) -> Future[dict[str, object]]:
+        """Submit a Core-owned multi-timeframe historical download task."""
+        ctx = self.context
+        requested_timeframes = tuple(timeframes)
+
+        async def _start() -> dict[str, object]:
+            historical_root = CoreBridge._historical_download_root(ctx)
+            downloader = HistoricalDownloader(root=historical_root)
+            job_id = downloader.start_batch(
+                ctx,
+                DownloadBatchRequest(
+                    exchange=exchange,
+                    market_type=market_type,
+                    symbol=symbol,
+                    timeframes=requested_timeframes,
+                    start_ms=start_ms,
+                    end_ms=end_ms,
+                    limit=limit,
+                ),
+            )
+            return {"job_id": job_id, "timeframes": requested_timeframes}
+
+        return self.submit(_start())
+
     def supported_exchange_names(self) -> list[str]:
         """Return exchanges available through the current GUI/Core bridge."""
-        adapter = BybitExchange(testnet=False)
-        return [adapter.name]
+        return self._exchange_registry().supported_exchange_names()
 
     def supported_exchange_markets(self, exchange: str) -> list[str]:
         """Return canonical market types reported by the selected exchange adapter."""
-        adapter = self._exchange_capability_adapter(exchange)
-        return sorted(str(market) for market in adapter.supported_markets())
+        return self._exchange_registry().supported_markets(exchange)
 
     def supported_exchange_timeframes(self, exchange: str, market_type: str) -> list[str]:
         """Return canonical timeframes reported by the selected exchange adapter."""
-        adapter = self._exchange_capability_adapter(exchange)
-        values = adapter.supported_timeframes(market_type)
+        values = self._exchange_registry().supported_timeframes(exchange, market_type)
         return sorted((str(timeframe) for timeframe in values), key=self._timeframe_sort_key)
-
-    def _exchange_capability_adapter(self, exchange: str) -> BybitExchange:
-        ex = (exchange or "").strip().lower()
-        adapter = BybitExchange(testnet=False)
-        if ex == adapter.name:
-            return adapter
-        raise ValueError(f"unsupported exchange: {exchange!r}")
 
     @staticmethod
     def _timeframe_sort_key(timeframe: str) -> tuple[int, int, str]:
@@ -241,9 +374,9 @@ class CoreBridge(QObject):
     def start_realtime_feed(
         self,
         *,
-        market: BybitMarket = "linear",
+        market: str = "linear",
         symbol: str = "BTCUSDT",
-        timeframe: Bybit_Timeframe = "30m",
+        timeframe: str = "30m",
         limit: int = 200,
         testnet: bool = False,
     ) -> None:

@@ -95,6 +95,17 @@ class LruSliceCache:
         while len(self._d) > self._max:
             self._d.popitem(last=False)
 
+    def invalidate_dataset(self, dataset_key: Tuple[str, str, str, str]) -> int:
+        keys = [key for key in self._d if key[0] == dataset_key]
+        for key in keys:
+            self._d.pop(key, None)
+        return len(keys)
+
+    def clear(self) -> int:
+        count = len(self._d)
+        self._d.clear()
+        return count
+
 
 class HistoricalDatasetService:
     """
@@ -249,6 +260,20 @@ class HistoricalDatasetService:
     def dataset_exists(self, dataset_id: DatasetId) -> bool:
         """Compatibility alias for the strict dataset-catalog validation API."""
         return self.has_dataset(dataset_id)
+
+    def invalidate_dataset_cache(self, dataset_id: DatasetId) -> bool:
+        """Remove loaded and sliced cache entries for one dataset identity."""
+        key = dataset_id.key()
+        removed_loaded = self._datasets.pop(key, None) is not None
+        removed_slices = self._slice_cache.invalidate_dataset(key)
+        return removed_loaded or removed_slices > 0
+
+    def invalidate_all_dataset_caches(self) -> int:
+        """Clear all loaded datasets and all resident slice-cache entries."""
+        count = len(self._datasets)
+        self._datasets.clear()
+        count += self._slice_cache.clear()
+        return count
 
     async def open_dataset(self, dataset_id: DatasetId) -> DatasetMeta:
         """

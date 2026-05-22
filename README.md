@@ -19,7 +19,7 @@ Primary architecture documents live in `docs/`:
 
 ## Current Historical Download Manager baseline — 2026-05-18
 
-The Historical Download Manager is now a Core-supervised OHLCV ingestion flow. The GUI collects user input, displays exchange capabilities, requests preflight plans, shows the Confirm OHLCV Download dialog, opens the OHLCV Download Task monitor, and observes audit events. Core owns execution through TaskManager, HistoricalDownloader owns planning/paging/persistence/validation, and the exchange adapter owns venue-specific markets, timeframes, aliases, interval mappings, historical limits, and range-discovery behavior. Supported GUI download flows pass the active historical storage root, `Path(ctx.config.runtime.data_dir) / "historical"`, into the downloader instead of relying on the default root fallback.
+The Historical Download Manager is now a Core-supervised OHLCV ingestion flow. The GUI collects user input, displays exchange capabilities, requests preflight plans, shows the Confirm OHLCV Download dialog, opens the OHLCV Download Task monitor, and observes normalized audit events. Core owns execution through TaskManager, HistoricalDownloader owns planning/paging/persistence/validation, `ExchangeRegistry` owns exchange discovery and adapter factory lookup, and the exchange adapter owns venue-specific markets, timeframes, aliases, interval mappings, historical limits, and range-discovery behavior. Supported GUI download flows pass the active historical storage root, `Path(ctx.config.runtime.data_dir) / "historical"`, into the downloader instead of relying on the default root fallback.
 
 Important accepted behavior:
 
@@ -27,7 +27,10 @@ Important accepted behavior:
 - metadata-aware local file inspection and update-latest planning;
 - preflight range discovery before confirmed download;
 - task monitor progress, Stop/Cancel request handling, validation status, final recap, and batch validation summary;
-- GUI `Limit = 0` means adapter/default page limit, and explicit values are clamped by the adapter maximum.
+- GUI `Limit = 0` means adapter/default page limit, and explicit values are clamped by the adapter maximum;
+- historical capability display and downloader adapter acquisition route through the Core-registered `ExchangeRegistry`; Bybit remains the only default concrete adapter;
+- OHLCV rewrites invalidate the matching `HistoricalDatasetService` dataset/slice cache through public Core/data APIs;
+- audit sinks normalize subsystem events so GUI snapshots and durable JSONL audit history consume one structured event shape.
 
 ## Current Data Manager / Analysis Database workflow — 2026-05-16
 
@@ -167,6 +170,8 @@ These are chart/apply/runtime contract changes only where appropriate. Renderer 
 
 ## Release packaging guardrails (GUI)
 
+Runtime dependency truth is declared in `pyproject.toml`; it must not drift back to a false empty dependency list.
+
 When producing a GUI distribution zip, exclude development artifacts:
 
 - `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.git/`
@@ -186,7 +191,8 @@ This documentation package records the post-refactor architecture baseline:
 - Data Manager and Analysis Database workflows prepare analysis-ready datasets without becoming chart sessions; the current workflow separates `Database seed creator`, `Build Selected Database`, `Rebuild Selected Database`, and explicit `Edit Selected Database Components...`; durable rename/delete/build/rebuild semantics remain in `AnalysisDatabaseStore`, component changes remain in the explicit component editor path, no-space/duplicate-name policy applies to create/rename, and rebuilds materialize selected databases from their saved manifests without replacing artifact components;
 - Universal Trend Classifier historical mode consumes controller-injected Peaks & Troughs event columns for independent directional-trend and horizontal-range detection, preserves invalid-gap honesty, and keeps compute-only runtime ownership with renderer-only drawing;
 - Core/GUI feed dependency removed from the Bybit feed boundary;
-- historical dataset service exposes explicit public timeline/columns/dataframe APIs;
+- historical exchange capability display and downloader adapter acquisition route through the Core `ExchangeRegistry`;
+- historical dataset service exposes explicit public timeline/columns/dataframe/cache-invalidation APIs;
 - historical chart controller, panel, workspace, panes, and renderers are physically split while preserving public import façades;
 - workspace owns Autoscale/manual-y and pane contracts;
 - viewport remains horizontal camera only;

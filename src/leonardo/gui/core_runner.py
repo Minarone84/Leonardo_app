@@ -10,6 +10,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 
 from leonardo.core.context import AppContext
 from leonardo.core.app import LeonardoApp
+from leonardo.core.audit import normalize_audit_event
 from leonardo.core.config import load_config
 
 @dataclass(frozen=True)
@@ -162,21 +163,15 @@ class CoreRunner:
     def _audit_event_to_dict(event: object) -> dict[str, Any]:
         """Normalize audit events for GUI consumers.
 
-        Historical download events may be emitted as plain dictionaries while
-        runtime events are AuditEvent dataclass instances. The GUI should see a
-        stable dictionary shape either way.
+        The GUI sees a stable dictionary shape while Core owns compatibility
+        normalization for legacy mapping-shaped audit events.
         """
-        if isinstance(event, dict):
-            return dict(event)
-        payload = getattr(event, "__dict__", None)
-        if isinstance(payload, dict):
-            return dict(payload)
-        return {
-            "event_type": getattr(event, "event_type", "unknown"),
-            "severity": getattr(event, "severity", "info"),
-            "message": getattr(event, "message", str(event)),
-            "fields": getattr(event, "fields", {}) or {},
-        }
+        normalized = normalize_audit_event(event)
+        payload = dict(normalized.__dict__)
+        ts_ms = normalized.fields.get("ts_ms")
+        if ts_ms is not None:
+            payload["ts_ms"] = ts_ms
+        return payload
 
     # ---------------- Internal ----------------
 

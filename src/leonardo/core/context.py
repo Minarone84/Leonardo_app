@@ -120,6 +120,9 @@ class TaskManager:
             else:
                 if self._state is not None:
                     asyncio.create_task(self._state.task_completed(name, where=where))
+            finally:
+                if self._tasks.get(name) is task:
+                    self._tasks.pop(name, None)
 
         task.add_done_callback(_done)
 

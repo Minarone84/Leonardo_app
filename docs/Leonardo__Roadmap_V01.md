@@ -1,6 +1,6 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.17
+Version: v0.18
 Status: Living document (expected to change)
 Updated: 2026-05-22
 
@@ -164,6 +164,8 @@ not included in runtime service lifecycle state
 
 This separation ensures runtime lifecycle state reflects only services that actually participate in lifecycle transitions.
 
+Current capability providers include `HistoricalDatasetService` for dataset/timeline/slice access and `ExchangeRegistry` for exchange discovery and adapter factory lookup. `ExchangeRegistry` is not lifecycle-managed; adapters remain transport/API objects opened and closed by the caller performing exchange work.
+
 ------------------------------------------------------------
 
 Audit and observability (foundation layer)
@@ -182,7 +184,7 @@ Audit represents historical truth
 
 Phase 2 refinement:
 
-Runtime-origin audit events are constructed through a centralized emission path in StateStore  
+Runtime-origin audit events are constructed through a centralized emission path in StateStore. Audit sinks normalize accepted subsystem events into one structured, JSONL-safe shape before in-memory storage, durable JSONL persistence, or GUI snapshot display.  
 
 This ensures:
 
@@ -376,6 +378,8 @@ Implemented baseline:
   - M7E made Bybit's historical page limit adapter-owned, with GUI `Limit = 0` resolving to the adapter default and explicit values clamped to the adapter maximum.
   - M7F normalized validation so fixed canonical timeframes such as `3m`, `2h`, `6h`, and `12h` validate without moving exchange-specific support truth into the validator.
   - M7G passes the configured historical root, `Path(ctx.config.runtime.data_dir) / "historical"`, into downloader preflight and execution paths.
+  - M7H normalizes historical download audit events through the Core audit path and persists subsystem events safely to JSONL.
+  - M7I routes historical exchange capability display and downloader adapter acquisition through the Core `ExchangeRegistry`; Bybit remains the only registered default adapter.
 - M8 Historical chart/study hardening is accepted:
   - M8A hardened historical dataset opening with GUI-thread result marshalling, open-generation guards, and stale slice-result protection.
   - M8B moved historical chart dataset selection onto CoreBridge/HistoricalDatasetService catalog surfaces instead of GUI filesystem discovery.
@@ -418,7 +422,7 @@ Implemented baseline:
 
 Next direction:
 
-- Treat the current Historical Download Manager M7 behavior as the accepted OHLCV ingestion baseline.
+- Treat the current Historical Download Manager M7 behavior as the accepted OHLCV ingestion baseline, including normalized audit emission, post-write dataset-cache invalidation, and the minimal Core `ExchangeRegistry` provider boundary.
 - Treat the current historical chart/study M8 behavior as the accepted chart-session baseline.
 - Treat the current Data Manager M4/M5/M6 behavior as the accepted analysis-database baseline.
 - Integrate GUI release checks into CI/build packaging so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files and preserve Data Manager ownership boundaries.
@@ -487,6 +491,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.18: Core-boundary repair and exchange-registry baseline. Documents normalized audit event handling, implemented HistoricalDatasetService cache invalidation APIs, downloader post-write dataset-cache invalidation, pyproject runtime dependency truth, and the minimal Core `ExchangeRegistry` capability provider used by CoreBridge and HistoricalDownloader while keeping Bybit as the only default adapter.
+
 v0.17: Historical Notebook / preset delete / Pan Anchor polish. Documents Notebook Manager assignment/delete ownership, Notes/Potential Trades/POI final row layouts, Potential Trades Long/Short runtime markers, annotation offset persistence, notebook auto-save-on-close, confirmed saved Study Setup and Workspace Snapshot deletion, maximized Historical Data Manager opening, and off-by-default Pan Anchor horizontal timestamp-based pan synchronization.
 
 v0.16: Historical Notebook and Workspace Snapshot integration. Documents NotebookStore persistence, Notes menu actions, Save/Load/Assign Notebook workflows, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level Go To buttons, runtime POI chart markers, and the Open Notebook quick action. Study Setup remains notebook-free and POI markers remain runtime chart annotations rather than hidden studies.
@@ -587,7 +593,7 @@ Next production priorities:
 2. add contract tests for viewport pan/zoom and workspace Autoscale/manual-y;
 3. add import-boundary tests for Core↔GUI and financial-tools runtime/spec/naming layers;
 4. integrate release packaging guardrails (static checks + clean zip) into CI/build so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files;
-5. declare runtime dependencies in packaging metadata.
+5. keep runtime dependencies declared in packaging metadata.
 
 UTC / Peaks & Troughs historical integration completed:
 - historical UTC uses controller-injected Peaks & Troughs columns rather than owning artifact loading;

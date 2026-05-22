@@ -1,7 +1,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import asdict, dataclass, is_dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 import json
@@ -29,6 +30,113 @@ class AuditEvent:
     fields: dict[str, Any]
 
 
+_RESERVED_EVENT_KEYS = {
+    "ts",
+    "ts_ms",
+    "event_type",
+    "type",
+    "severity",
+    "level",
+    "message",
+    "msg",
+    "fields",
+    "payload",
+}
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _json_safe(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, datetime):
+        return value.astimezone(timezone.utc).isoformat()
+    if isinstance(value, Path):
+        return str(value)
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [_json_safe(item) for item in value]
+    if is_dataclass(value) and not isinstance(value, type):
+        return _json_safe(asdict(value))
+    return str(value)
+
+
+def _fields_from(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    return {"payload": _json_safe(value)}
+
+
+def _ts_from_mapping(raw: Mapping[str, Any]) -> str:
+    ts = raw.get("ts")
+    if ts:
+        return str(ts)
+    ts_ms = raw.get("ts_ms")
+    if ts_ms is not None:
+        try:
+            return datetime.fromtimestamp(float(ts_ms) / 1000.0, timezone.utc).isoformat()
+        except (TypeError, ValueError, OverflowError):
+            return _now_iso()
+    return _now_iso()
+
+
+def normalize_audit_event(event: object) -> AuditEvent:
+    """Return a JSON-safe structured audit event.
+
+    The audit boundary accepts the current ``AuditEvent`` model and legacy
+    mapping-shaped subsystem events. Mapping compatibility is centralized here
+    so sinks and GUI snapshot adapters do not need separate historical-download
+    special cases.
+    """
+    if isinstance(event, AuditEvent):
+        return AuditEvent(
+            ts=str(event.ts or _now_iso()),
+            event_type=str(event.event_type or "unknown"),
+            severity=str(event.severity or "info"),
+            message=str(event.message or ""),
+            fields=_fields_from(event.fields),
+        )
+
+    if isinstance(event, Mapping):
+        fields = _fields_from(event.get("fields"))
+        if "payload" in event and "payload" not in fields:
+            fields["payload"] = _json_safe(event["payload"])
+        if "ts_ms" in event and "ts_ms" not in fields:
+            fields["ts_ms"] = _json_safe(event["ts_ms"])
+        for key, value in event.items():
+            if key in _RESERVED_EVENT_KEYS or key in fields:
+                continue
+            fields[str(key)] = _json_safe(value)
+
+        event_type = event.get("event_type") or event.get("type") or "unknown"
+        severity = event.get("severity") or event.get("level") or "info"
+        message = event.get("message") or event.get("msg") or event_type
+        return AuditEvent(
+            ts=_ts_from_mapping(event),
+            event_type=str(event_type),
+            severity=str(severity),
+            message=str(message),
+            fields=fields,
+        )
+
+    payload = getattr(event, "__dict__", None)
+    if isinstance(payload, Mapping):
+        return normalize_audit_event(payload)
+
+    return AuditEvent(
+        ts=_now_iso(),
+        event_type="unknown",
+        severity="info",
+        message=str(event),
+        fields={},
+    )
+
+
 class AuditSink(Protocol):
     """Protocol implemented by audit event consumers.
 
@@ -36,7 +144,7 @@ class AuditSink(Protocol):
     support a best-effort shutdown/flush step.
     """
 
-    async def emit(self, event: AuditEvent) -> None:
+    async def emit(self, event: object) -> None:
         """Consume a structured audit event."""
         ...
 
@@ -63,10 +171,11 @@ class InMemoryAuditSink:
         self._events: list[AuditEvent] = []
         self._lock = asyncio.Lock()
 
-    async def emit(self, event: AuditEvent) -> None:
+    async def emit(self, event: object) -> None:
         """Append an event and evict older entries when capacity is exceeded."""
+        normalized = normalize_audit_event(event)
         async with self._lock:
-            self._events.append(event)
+            self._events.append(normalized)
             if len(self._events) > self._max:
                 self._events = self._events[-self._max :]
 
@@ -97,9 +206,10 @@ class JsonlAuditSink:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._fp = self._path.open("a", encoding="utf-8")
 
-    async def emit(self, event: AuditEvent) -> None:
+    async def emit(self, event: object) -> None:
         """Serialize and append a single event to the JSONL stream."""
-        self._fp.write(json.dumps(event.__dict__, ensure_ascii=False) + "\n")
+        normalized = normalize_audit_event(event)
+        self._fp.write(json.dumps(normalized.__dict__, ensure_ascii=False) + "\n")
         self._fp.flush()
 
     async def close(self) -> None:
@@ -122,13 +232,14 @@ class CompositeAuditSink:
         """Store the ordered sink collection used for fan-out emission."""
         self._sinks = sinks
 
-    async def emit(self, event: AuditEvent) -> None:
+    async def emit(self, event: object) -> None:
         """Emit an event to all configured sinks on a best-effort basis."""
+        normalized = normalize_audit_event(event)
         # Fail-soft fan-out is intentional: one broken sink must not cascade
         # into a broader runtime failure.
         for s in self._sinks:
             try:
-                await s.emit(event)
+                await s.emit(normalized)
             except Exception:
                 # Last-resort suppression is preserved here because audit
                 # emission should never become a single point of runtime

@@ -1,9 +1,9 @@
 🧠 Leonardo — Historical Download Subsystem (Updated)
 
 Date: 02/26/2026
-Updated: 2026-05-18
+Updated: 2026-05-22
 Scope: Connection + Historical Data Layer
-Status: Functional, stable, integrated with Core runtime and exchange capability ownership
+Status: Functional, stable, integrated with Core runtime, normalized audit emission, dataset-cache invalidation, and exchange-registry capability ownership
 
 1. Purpose of This Document
 
@@ -19,6 +19,7 @@ It covers:
 • Audit integration
 • Runtime integration
 • Exchange capability ownership
+• Exchange registry/provider boundary
 • Preflight and confirmation flow
 • Multi-timeframe task monitoring
 • Validation and cancellation behavior
@@ -38,7 +39,7 @@ This means:
 • all downloads run as background tasks managed by TaskManager
 • task lifecycle is tracked in runtime state
 • errors are routed through the centralized error system
-• all meaningful events emit structured audit entries
+• all meaningful events emit structured, normalized audit entries
 
 Runtime Behavior
 
@@ -46,7 +47,7 @@ When a download is started:
 
 • a background task is created via Core
 • the task is tracked in runtime state
-• progress and completion are emitted via audit events
+• progress and completion are emitted via normalized audit events
 
 The GUI does not manage execution directly.
 
@@ -87,7 +88,7 @@ Core:
 • execution
 • state tracking
 • error handling
-• audit emission
+• normalized audit emission
 
 Current accepted Download Manager baseline
 
@@ -118,6 +119,8 @@ This includes:
 • historical range discovery behavior
 
 The GUI must ask CoreBridge/capability callbacks for supported values and display the result. It must not hardcode Bybit market or timeframe truth.
+
+`ExchangeRegistry` is the current Core capability/provider boundary for exchange discovery and adapter creation. It is registered through `AppContext` as a capability provider, not as a lifecycle-managed runtime service. `CoreBridge` asks the registry for display capabilities, and `HistoricalDownloader` asks the registry for a fresh/local adapter instance for execution. Bybit is currently the only concrete default adapter.
 
 ------------------------------------------------------------
 2. Historical Storage Architecture
@@ -187,11 +190,12 @@ The HistoricalDownloader orchestrates:
 
 • input canonicalization
 • path resolution from the injected historical root
+• exchange adapter acquisition through `ExchangeRegistry`
 • exchange paging
 • idempotent merge
 • atomic persistence
 • post-write `HistoricalDatasetService` cache invalidation
-• audit emission
+• normalized audit emission
 • background task execution (via Core runtime)
 
 3.1 Preflight and planning
@@ -259,8 +263,10 @@ After completion, the historical validation layer checks the saved CSV. Validati
 Fixed-duration timeframe validation supports canonical minute/hour/day/week units. Month candles are variable-length, so exact fixed-delta validation is not applied to `1M`.
 
 ------------------------------------------------------------
-4. Exchange Adapter — Bybit
+4. Exchange Registry and Adapter — Bybit
 ------------------------------------------------------------
+
+`ExchangeRegistry` owns exchange discovery and adapter factory lookup for historical ingestion and capability display. It currently registers Bybit as the only default adapter. The registry is a capability provider, not a runtime lifecycle service: adapters remain transport/API objects and do not become StateStore-tracked runtime entities.
 
 Bybit-specific truth lives in the Bybit adapter/capability layer.
 
@@ -276,7 +282,7 @@ The adapter owns:
 • oldest available OHLCV timestamp discovery
 • REST and websocket transport details
 
-The data naming layer keeps the neutral app identity. It does not convert app market names into Bybit API categories. The downloader passes canonical identity to the adapter, and the adapter performs the venue-specific conversion.
+The data naming layer keeps the neutral app identity. It does not convert app market names into Bybit API categories. The downloader obtains the adapter through `ExchangeRegistry`, passes canonical identity to the adapter, and the adapter performs the venue-specific conversion.
 
 ------------------------------------------------------------
 5. CSV Storage Layer
@@ -363,7 +369,7 @@ Updated Interaction Model
 
 The GUI:
 
-• asks the active capability surface for supported market/timeframe values
+• asks CoreBridge for supported exchange/market/timeframe values backed by the registered `ExchangeRegistry`
 • resolves the active historical root as `Path(ctx.config.runtime.data_dir) / "historical"` and passes it into downloader preflight and execution paths
 • submits preflight and confirmed download requests to Core
 • does NOT execute downloads
@@ -376,7 +382,7 @@ Core:
 • executes downloads via TaskManager
 • tracks task lifecycle
 • routes cancellation
-• emits audit events
+• emits normalized audit events
 
 GUI observes via:
 
@@ -422,17 +428,20 @@ Audit is now part of the global runtime observability system, not just a local f
 GUI (HistoricalDownloadWindow)
   │
   ├── capability display requests
-  │       └──▶ CoreBridge → exchange adapter/capability surface
+  │       └──▶ CoreBridge → ExchangeRegistry capability provider
+  │                         └──▶ Bybit adapter capability surface
   │
   ├── preflight request
   │       └──▶ CoreBridge → HistoricalDownloader.preflight_batch(...)
-  │                         └──▶ BybitExchange range/limit capabilities
+  │                         └──▶ ExchangeRegistry
+  │                               └──▶ Bybit adapter range/limit capabilities
   │
   ├── confirmed download request
   │       └──▶ CoreBridge → TaskManager (Core Runtime)
   │                         └──▶ HistoricalDownloader
-  │                               └──▶ BybitExchange (REST adapter)
-  │                                     └──▶ GET /v5/market/kline
+  │                               └──▶ ExchangeRegistry
+  │                                     └──▶ Bybit adapter (REST transport)
+  │                                           └──▶ GET /v5/market/kline
   │
   └── cancellation request
             └──▶ CoreBridge → TaskManager cancel task
@@ -443,9 +452,11 @@ HistoricalDownloader
   │       ├──▶ {configured historical root}/{...}/ohlcv/candles.csv
   │       └──▶ {configured historical root}/{...}/ohlcv/candles.meta.json
   │
+  ├──▶ HistoricalDatasetService cache invalidation
+  │
   ├──▶ HistoricalDatasetValidator
   │
-  └──▶ ctx.audit.emit(...)
+  └──▶ normalized audit event emission
               └──▶ GUI polling via CoreBridge
 
 ------------------------------------------------------------
@@ -462,6 +473,7 @@ The current subsystem solves:
 • GUI progress without GUI execution ownership
 • task monitor final recap and batch validation summary
 • Stop/Cancel routing through Core/TaskManager
+• exchange discovery and adapter acquisition through `ExchangeRegistry`
 • Bybit market/timeframe/alias/limit ownership in the adapter
 • adapter-default page limits with adapter-max clamping
 • dataset-service cache invalidation after OHLCV writes so chart sessions do not reopen stale in-memory candles
@@ -490,7 +502,7 @@ The subsystem now:
 • coexists with partition-local artifact recipe and recipe collection records used by Data Manager recovery workflows
 • supports Analysis Database manifest-driven build/rebuild and separate explicit component edits
 • is async-safe and GUI-safe
-• is integrated with Core runtime state and audit
+• is integrated with Core runtime state and normalized audit
 • is extensible to additional exchanges
 
 ------------------------------------------------------------
@@ -500,7 +512,7 @@ The subsystem now:
 Current known limitations:
 
 • only Bybit has a concrete exchange adapter in the current implementation
-• exchange discovery is still effectively single-exchange until a registry/provider layer is introduced
+• the minimal exchange registry/provider layer exists, but only Bybit is registered by default
 • the GUI may expose a broad numeric limit field, but Core still clamps execution to the selected adapter maximum
 • no full multi-exchange connection/rate-limit framework is implemented yet
 • websocket/realtime lifecycle remains a separate feed/orchestration concern from historical ingestion
@@ -579,6 +591,10 @@ The downloader still owns:
 - idempotent merge;
 - atomic persistence;
 - adjacent OHLCV metadata sidecar writing;
-- structured audit emission.
+- structured normalized audit emission.
 
 GUI still submits and observes. Core still executes and supervises.
+
+### Exchange-registry boundary — 2026-05-22
+
+Historical capability display and downloader adapter acquisition now route through the registered `ExchangeRegistry` capability provider. `CoreBridge` no longer constructs the Bybit adapter directly for capability display, and `HistoricalDownloader` no longer constructs Bybit directly for execution. Bybit remains the only concrete default adapter; broader multi-exchange lifecycle, credentials, reconnect, and rate-limit frameworks remain future work.

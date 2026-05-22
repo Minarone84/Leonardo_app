@@ -1,0 +1,14 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+
+def test_historical_download_window_uses_core_bridge_download_boundary() -> None:
+    source = Path("src/leonardo/gui/windows/historical_download_window.py").read_text(encoding="utf-8")
+
+    assert "from leonardo.data.historical.downloader" not in source
+    assert "HistoricalDownloader" not in source
+    assert "DownloadRequest" not in source
+    assert "DownloadBatchRequest" not in source
+    assert "runtime.data_dir" not in source
+    assert ' / "historical"' not in source

@@ -9,13 +9,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, List, Sequence
 
+from leonardo.core.audit import make_event
 from leonardo.core.context import AppContext
+from leonardo.core.registry_keys import SVC_EXCHANGE_REGISTRY, SVC_HISTORICAL_DATASET
 from leonardo.data.naming import MarketId, canonicalize
+from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService
 from leonardo.data.historical.paths import HistoricalPaths, default_historical_root
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore, merge_idempotent
 
-from leonardo.connection.exchange.adapters.bybit import BybitExchange
 from leonardo.connection.exchange.base import BaseExchange
+from leonardo.connection.exchange.registry import ExchangeRegistry
 
 
 @dataclass(frozen=True)
@@ -565,6 +568,7 @@ class HistoricalDownloader:
 
                 merged = merge_idempotent(existing, incoming)
                 self._store.write_atomic(file_path, merged, market=market)
+                await self._invalidate_dataset_cache_after_write(ctx, job_id, market)
                 existing = merged
 
                 oldest_ts = incoming[0].ts_ms
@@ -670,6 +674,61 @@ class HistoricalDownloader:
                     await adapter.close()
                 except Exception:
                     pass
+
+    async def _invalidate_dataset_cache_after_write(
+        self,
+        ctx: AppContext,
+        job_id: str,
+        market: MarketId,
+    ) -> None:
+        try:
+            svc = ctx.get_service(SVC_HISTORICAL_DATASET, HistoricalDatasetService)
+        except (AttributeError, KeyError, TypeError) as e:
+            await self._emit_cache_invalidation_issue(
+                ctx,
+                job_id,
+                market,
+                reason="historical_dataset_service_unavailable",
+                error=repr(e),
+            )
+            return
+
+        try:
+            svc.invalidate_dataset_cache(
+                DatasetId(
+                    exchange=market.exchange,
+                    market_type=market.market_type,
+                    symbol=market.symbol,
+                    timeframe=market.timeframe,
+                )
+            )
+        except Exception as e:
+            await self._emit_cache_invalidation_issue(
+                ctx,
+                job_id,
+                market,
+                reason="cache_invalidation_failed",
+                error=repr(e),
+            )
+
+    async def _emit_cache_invalidation_issue(
+        self,
+        ctx: AppContext,
+        job_id: str,
+        market: MarketId,
+        *,
+        reason: str,
+        error: str,
+    ) -> None:
+        try:
+            await self._emit(ctx, "download cache invalidation failed", job_id, market, extra={
+                "reason": reason,
+                "error": error,
+            })
+        except Exception:
+            # Cache invalidation diagnostics must not convert a successful
+            # data write into a failed download result.
+            return
 
     def _normalize_batch_timeframes(self, req: DownloadBatchRequest) -> tuple[str, ...]:
         seen: set[str] = set()
@@ -982,19 +1041,19 @@ class HistoricalDownloader:
         return None
 
     async def _server_time_ms(self, adapter: BaseExchange) -> int:
-        # Prefer exchange server time when available (Bybit provides /v5/market/time).
-        if isinstance(adapter, BybitExchange) and hasattr(adapter, "get_server_time_ms"):
-            return await adapter.get_server_time_ms()
+        server_time = getattr(adapter, "get_server_time_ms", None)
+        if callable(server_time):
+            return int(await server_time())
         return int(time.time() * 1000)
 
     async def _get_exchange(self, ctx: AppContext, exchange_name: str) -> BaseExchange:
-        _ = ctx
-        ex = exchange_name.strip().lower()
-        if ex == "bybit":
-            adapter = BybitExchange(testnet=False)
-            await adapter.open()
-            return adapter
-        raise ValueError(f"unsupported exchange: {exchange_name!r}")
+        try:
+            registry = ctx.get_service(SVC_EXCHANGE_REGISTRY, ExchangeRegistry)
+            adapter = registry.get(exchange_name)
+        except (KeyError, TypeError) as e:
+            raise ValueError(f"unsupported exchange: {exchange_name!r}") from e
+        await adapter.open()
+        return adapter
 
     def _to_store_candles(self, seq: Sequence[object]) -> List[Candle]:
         out: List[Candle] = []
@@ -1020,17 +1079,15 @@ class HistoricalDownloader:
         elif message == "download batch cancelled":
             severity = "warning"
 
-        event = {
-            "event_type": "historical_download",
-            "severity": severity,
-            "message": message,
-            "ts_ms": int(time.time() * 1000),
-            "fields": {
-                "job_id": job_id,
-                "batch": True,
-                **extra,
-            },
-        }
+        event = make_event(
+            "historical_download",
+            severity,
+            message,
+            ts_ms=int(time.time() * 1000),
+            job_id=job_id,
+            batch=True,
+            **extra,
+        )
         await ctx.audit.emit(event)  # type: ignore[attr-defined]
 
     async def _emit(self, ctx: AppContext, message: str, job_id: str, market: MarketId, *, extra: dict) -> None:
@@ -1050,20 +1107,18 @@ class HistoricalDownloader:
             elif status == "warning":
                 severity = "warning"
 
-        event = {
-            "event_type": "historical_download",
-            "severity": severity,
-            "message": message,
-            "ts_ms": int(time.time() * 1000),
-            "fields": {
-                "job_id": job_id,
-                "exchange": market.exchange,
-                "market_type": market.market_type,
-                "symbol": market.symbol,
-                "timeframe": market.timeframe,
-                **extra,
-            },
-        }
+        event = make_event(
+            "historical_download",
+            severity,
+            message,
+            ts_ms=int(time.time() * 1000),
+            job_id=job_id,
+            exchange=market.exchange,
+            market_type=market.market_type,
+            symbol=market.symbol,
+            timeframe=market.timeframe,
+            **extra,
+        )
         await ctx.audit.emit(event)  # type: ignore[attr-defined]
 
     def start(self, ctx: AppContext, req: DownloadRequest) -> str:

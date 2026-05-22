@@ -18,7 +18,8 @@ from leonardo.core.errors import ErrorRouter
 from leonardo.core.context import AppContext, TaskManager
 from leonardo.core.services.heartbeat import HeartbeatService
 
-from leonardo.core.registry_keys import SVC_HISTORICAL_DATASET
+from leonardo.connection.exchange import build_default_exchange_registry
+from leonardo.core.registry_keys import SVC_EXCHANGE_REGISTRY, SVC_HISTORICAL_DATASET
 from leonardo.data.historical.dataset_service import HistoricalDatasetService
 
 
@@ -263,6 +264,8 @@ class LeonardoApp:
         log(self._logger, logging.INFO, "startup begin", profile=self._config.profile)
 
         data_root = Path(self._config.runtime.data_dir)
+
+        self._ctx.register_service(SVC_EXCHANGE_REGISTRY, build_default_exchange_registry())
 
         # Historical dataset access is a capability provider, not a lifecycle-
         # managed service. It is registered explicitly for lookup through the

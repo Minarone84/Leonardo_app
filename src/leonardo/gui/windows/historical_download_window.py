@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Callable, Optional, Any
 
 from PySide6.QtCore import QTimer, Qt
@@ -995,10 +994,6 @@ class HistoricalDownloadWindow(QMainWindow):
             return None
         return int(s)
 
-    def _configured_historical_root(self, ctx: Any) -> Path:
-        """Return the active historical root from the Core runtime config."""
-        return Path(ctx.config.runtime.data_dir) / "historical"
-
     def _set_status(self, msg: str) -> None:
         self.status_lbl.setText(msg)
 
@@ -1119,27 +1114,15 @@ class HistoricalDownloadWindow(QMainWindow):
         self.stop_btn.setEnabled(False)
         self._set_status("Preparing download range. Checking local metadata and exchange candles...")
 
-        ctx = self._bridge.context
-        historical_root = self._configured_historical_root(ctx)
-
-        async def _preflight():
-            from leonardo.data.historical.downloader import DownloadBatchRequest, HistoricalDownloader
-
-            dl = HistoricalDownloader(root=historical_root)
-            return await dl.preflight_batch(
-                ctx,
-                DownloadBatchRequest(
-                    exchange=market.exchange,
-                    market_type=market.market_type,
-                    symbol=market.symbol,
-                    timeframes=form.timeframes,
-                    start_ms=form.start_ms,
-                    end_ms=form.end_ms,
-                    limit=form.limit,
-                ),
-            )
-
-        self._preflight_fut = self._bridge.submit(_preflight())
+        self._preflight_fut = self._bridge.preflight_historical_download_batch(
+            exchange=market.exchange,
+            market_type=market.market_type,
+            symbol=market.symbol,
+            timeframes=form.timeframes,
+            start_ms=form.start_ms,
+            end_ms=form.end_ms,
+            limit=form.limit,
+        )
         self._preflight_watch.start()
 
     def _poll_preflight_future(self) -> None:
@@ -1308,48 +1291,26 @@ class HistoricalDownloadWindow(QMainWindow):
         self._set_status("Submitting job...")
         self._open_task_dialog(form, market)
 
-        # IMPORTANT: capture ctx in GUI thread; do not touch CoreBridge (QObject) inside core thread coroutine
-        ctx = self._bridge.context
-        historical_root = self._configured_historical_root(ctx)
-
-        async def _submit():
-            from leonardo.data.historical.downloader import (
-                DownloadBatchRequest,
-                DownloadRequest,
-                HistoricalDownloader,
+        if len(form.timeframes) == 1:
+            self._submit_fut = self._bridge.start_historical_download(
+                exchange=market.exchange,
+                market_type=market.market_type,
+                symbol=market.symbol,
+                timeframe=form.timeframes[0],
+                start_ms=form.start_ms,
+                end_ms=form.end_ms,
+                limit=form.limit,
             )
-
-            dl = HistoricalDownloader(root=historical_root)
-            if len(form.timeframes) == 1:
-                job_id = dl.start(
-                    ctx,
-                    DownloadRequest(
-                        exchange=market.exchange,
-                        market_type=market.market_type,
-                        symbol=market.symbol,
-                        timeframe=form.timeframes[0],
-                        start_ms=form.start_ms,
-                        end_ms=form.end_ms,
-                        limit=form.limit,
-                    ),
-                )
-            else:
-                job_id = dl.start_batch(
-                    ctx,
-                    DownloadBatchRequest(
-                        exchange=market.exchange,
-                        market_type=market.market_type,
-                        symbol=market.symbol,
-                        timeframes=form.timeframes,
-                        start_ms=form.start_ms,
-                        end_ms=form.end_ms,
-                        limit=form.limit,
-                    ),
-                )
-            return {"job_id": job_id, "timeframes": form.timeframes}
-
-        # submit to core loop
-        self._submit_fut = self._bridge.submit(_submit())
+        else:
+            self._submit_fut = self._bridge.start_historical_download_batch(
+                exchange=market.exchange,
+                market_type=market.market_type,
+                symbol=market.symbol,
+                timeframes=form.timeframes,
+                start_ms=form.start_ms,
+                end_ms=form.end_ms,
+                limit=form.limit,
+            )
         self._submit_watch.start()
         self._poll.start()
 

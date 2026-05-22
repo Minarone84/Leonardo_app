@@ -1,7 +1,7 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.7  
-Date: 2026-05-18
+Version: v3.8  
+Date: 2026-05-22
 
 ## Overview
 
@@ -130,6 +130,7 @@ GUI intent
 → CoreBridge
 → TaskManager
 → HistoricalDownloader
+→ ExchangeRegistry capability provider
 → BaseExchange capability contract
 → concrete exchange adapter
 → CsvOHLCVStore / HistoricalDatasetValidator
@@ -143,7 +144,7 @@ Core owns:
 - downloader execution;
 - page-limit resolution and adapter-max clamping;
 - validation invocation and validation audit emission;
-- structured audit event history.
+- structured, normalized audit event history.
 
 Exchange adapters own venue-specific capability truth, including:
 
@@ -198,9 +199,10 @@ These participate in startup and shutdown and appear in runtime lifecycle tracki
 
 These are long-lived service objects available by lookup but not tracked as lifecycle-managed runtime entities.
 
-Example:
+Examples:
 
 - `HistoricalDatasetService`
+- `ExchangeRegistry`
 
 ### Important rule
 
@@ -224,6 +226,24 @@ Constraints:
 
 Runtime truth belongs to `StateStore`.  
 Service lookup belongs to explicit context ownership.
+
+---
+
+## Exchange Registry Capability Provider
+
+`ExchangeRegistry` is the Core-side capability/provider boundary for exchange discovery and historical adapter creation.
+
+It is registered explicitly through `AppContext` as a capability provider, not as a lifecycle-managed runtime service. Bybit is currently the only default registered adapter.
+
+Rules:
+
+- `CoreBridge` may ask the registry for supported exchanges, markets, and timeframes for GUI display;
+- `HistoricalDownloader` may ask the registry for a fresh/local adapter instance for preflight and execution;
+- adapters remain transport/API objects and are opened/closed by the caller that performs the work;
+- adapters do not become runtime lifecycle services and do not mutate `StateStore` directly;
+- unsupported exchanges must fail clearly at the provider boundary.
+
+This removes ad hoc Bybit construction from historical capability display and ingestion execution without introducing a full connection manager.
 
 ---
 
@@ -793,7 +813,7 @@ The Leonardo Core provides:
 - read-only artifact recovery planning, delegated artifact regeneration, explicit Analysis Database component editing, and store-owned linked Analysis Database rebuilds
 - observable runtime lifecycle and state
 - explicit distinction between compute truth and render truth
-- Core-supervised historical OHLCV download planning, execution, cancellation, validation, and audit emission
+- Core-supervised historical OHLCV download planning, execution, cancellation, validation, normalized audit emission, and post-write dataset-cache invalidation
 
 It is:
 
@@ -848,10 +868,14 @@ invalidate_all_dataset_caches() -> int
 
 Downstream controller code should call these APIs directly. Private reach-through into service internals such as `_datasets` is not part of the production contract.
 
+### Exchange registry boundary
+
+`ExchangeRegistry` is now part of the Core capability-provider surface. `LeonardoApp` registers the default registry explicitly, currently with Bybit as the only concrete adapter factory. `CoreBridge` and `HistoricalDownloader` consume this provider instead of constructing Bybit directly in historical capability/download paths.
+
 ### Frozen boundary rules
 
 - Core remains independent from GUI.
 - Feed lifecycle is tracked at feed/orchestration level.
-- Adapters remain transport-only.
+- Adapters remain transport-only and are not lifecycle-managed Core services.
 - `StateStore` remains the runtime-state writer.
 - Dataset-service APIs expose timeline/full-dataframe truth; viewport, panes, and renderers never access dataset storage directly.

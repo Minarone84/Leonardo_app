@@ -5,9 +5,9 @@ from types import SimpleNamespace
 
 import pandas as pd
 
+import leonardo.data.historical.utc_dependency_sources as utc_dependency_sources
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore
 from leonardo.data.naming import canonicalize
-from leonardo.gui.historical_chart import tool_execution
 from leonardo.gui.historical_chart.tool_execution import HistoricalChartToolExecutionMixin
 
 
@@ -77,7 +77,7 @@ def test_peaks_troughs_dependency_lookup_uses_configured_historical_root(
             observed_roots.append(Path(historical_root))
             super().__init__(historical_root=historical_root)
 
-    monkeypatch.setattr(tool_execution, "DerivedCsvStore", _SpyDerivedCsvStore)
+    monkeypatch.setattr(utc_dependency_sources, "DerivedCsvStore", _SpyDerivedCsvStore)
 
     loaded = _ChartToolExecutionHarness(data_dir=data_dir)._load_saved_peaks_troughs_dataframe()
 

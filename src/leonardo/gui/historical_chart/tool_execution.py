@@ -6,6 +6,13 @@ from typing import Any, Dict
 import pandas as pd
 
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore
+from leonardo.data.historical.utc_dependency_sources import (
+    load_saved_peaks_troughs_dataframe,
+    prepare_utc_peak_trough_dependencies,
+    utc_dependency_role_name,
+    utc_peak_trough_columns,
+    utc_peak_trough_columns_for_purpose,
+)
 from leonardo.data.naming import canonicalize
 from leonardo.financial_tools.execution_context import ToolExecutionContext
 from leonardo.financial_tools.constructs.constructs import Constructs, ConstructRequest
@@ -29,57 +36,13 @@ class HistoricalChartToolExecutionMixin:
         *,
         purpose: str,
     ) -> tuple[str, str]:
-        """Return one UTC Peaks & Troughs dependency pair.
-
-        Trend and range are independent dependency requests.  The controller may
-        load the saved Peaks & Troughs artifact once, but each detector resolves
-        its own selected fractal so future changes to one detector do not
-        silently change the other.
-        """
-        if purpose == "trend":
-            window = int(params.get("trend_fractal_window", params.get("fractal_window", 5)))
-            peak_column = str(
-                params.get("trend_peak_column")
-                or params.get("peak_column")
-                or f"peak_fractal_{window}"
-            ).strip()
-            trough_column = str(
-                params.get("trend_trough_column")
-                or params.get("trough_column")
-                or f"trough_fractal_{window}"
-            ).strip()
-        elif purpose == "range":
-            window = int(params.get("range_fractal_window", 3))
-            peak_column = str(params.get("range_peak_column") or f"peak_fractal_{window}").strip()
-            trough_column = str(params.get("range_trough_column") or f"trough_fractal_{window}").strip()
-        else:
-            raise ValueError("UTC dependency purpose must be 'trend' or 'range'.")
-
-        if not peak_column or not trough_column:
-            raise ValueError(f"UTC {purpose} Peaks & Troughs dependency columns must be non-empty.")
-        return peak_column, trough_column
+        return utc_peak_trough_columns_for_purpose(params, purpose=purpose)
 
     def _utc_peak_trough_columns(self, params: Dict[str, Any]) -> tuple[str, ...]:
-        """Return all unique Peaks & Troughs columns required by UTC."""
-        columns: list[str] = []
-        for purpose in ("trend", "range"):
-            for column_name in self._utc_peak_trough_columns_for_purpose(params, purpose=purpose):
-                if column_name not in columns:
-                    columns.append(column_name)
-        return tuple(columns)
+        return utc_peak_trough_columns(params)
 
     def _utc_dependency_role_name(self, *, params: Dict[str, Any], column_name: str) -> str:
-        trend_columns = set(self._utc_peak_trough_columns_for_purpose(params, purpose="trend"))
-        range_columns = set(self._utc_peak_trough_columns_for_purpose(params, purpose="range"))
-        if column_name in trend_columns and column_name in range_columns:
-            purpose = "trend_range"
-        elif column_name in trend_columns:
-            purpose = "trend"
-        elif column_name in range_columns:
-            purpose = "range"
-        else:
-            purpose = "dependency"
-        return f"universal_trend_classifier.{purpose}.{column_name}"
+        return utc_dependency_role_name(params=params, column_name=column_name)
 
     def _load_saved_peaks_troughs_dataframe(self) -> pd.DataFrame:
         """Load the saved Peaks & Troughs artifact for the active historical dataset.
@@ -94,53 +57,17 @@ class HistoricalChartToolExecutionMixin:
             symbol=self._symbol,
             timeframe=self._timeframe,
         )
-        store = DerivedCsvStore(historical_root=self._historical_root())
-        refs = store.list_instances(
+        return load_saved_peaks_troughs_dataframe(
+            historical_root=self._historical_root(),
             market=market,
-            kind="indicators",
-            tool_key="peaks_troughs",
+            expected_instance_key=self._expected_peaks_troughs_instance_key(),
         )
-        if not refs:
-            raise FileNotFoundError(
-                "Universal Trend Classifier requires a saved Peaks & Troughs indicator "
-                "for this dataset/timeframe before it can run."
-            )
 
-        selected_ref = None
+    def _expected_peaks_troughs_instance_key(self) -> str:
         try:
-            expected_instance_key = self._build_instance_key("peaks_troughs", {})
+            return str(self._build_instance_key("peaks_troughs", {}))
         except Exception:
-            expected_instance_key = ""
-
-        if expected_instance_key:
-            for ref in refs:
-                if str(getattr(ref, "instance_key", "")).strip() == expected_instance_key:
-                    selected_ref = ref
-                    break
-
-        if selected_ref is None:
-            if len(refs) == 1:
-                selected_ref = refs[0]
-            else:
-                available = ", ".join(str(getattr(ref, "instance_key", "")) for ref in refs)
-                raise ValueError(
-                    "Multiple saved Peaks & Troughs artifacts were found for this dataset/timeframe, "
-                    "but no canonical default instance could be selected. "
-                    f"Available instances: {available}"
-                )
-
-        raw_path = str(getattr(selected_ref, "path", "")).strip()
-        if not raw_path:
-            raise FileNotFoundError("Saved Peaks & Troughs artifact reference has no path.")
-
-        path = Path(raw_path).expanduser()
-        if not path.exists():
-            raise FileNotFoundError(f"Saved Peaks & Troughs artifact not found: {path}")
-
-        src_df = pd.read_csv(path)
-        if src_df.empty:
-            raise ValueError(f"Saved Peaks & Troughs artifact is empty: {path}")
-        return src_df
+            return ""
 
     def _inject_utc_peak_trough_sources(self, *, df: pd.DataFrame, params: Dict[str, Any]) -> pd.DataFrame:
         """Inject saved Peaks & Troughs columns required by UTC.
@@ -154,31 +81,19 @@ class HistoricalChartToolExecutionMixin:
         which requires a shared ``ts_ms`` or ``time`` key and rejects duplicate
         join-key values. Positional alignment remains forbidden.
         """
-        required_columns = self._utc_peak_trough_columns(params)
-        columns_to_inject = [column_name for column_name in required_columns if column_name not in df.columns]
-        if not columns_to_inject:
-            return df
-
-        src_df = self._load_saved_peaks_troughs_dataframe()
-        missing = [name for name in columns_to_inject if name not in src_df.columns]
-        if missing:
-            raise ValueError(
-                "Saved Peaks & Troughs artifact does not contain the columns required by UTC: "
-                f"{missing}"
-            )
-
-        out = df
-        for column_name in columns_to_inject:
-            if column_name in out.columns:
-                continue
-            out = self._merge_source_dataframe_column(
-                df=out,
-                src_df=src_df,
-                column_name=column_name,
-                role_name=self._utc_dependency_role_name(params=params, column_name=column_name),
-                source_label="saved Peaks & Troughs artifact",
-            )
-        return out
+        market = canonicalize(
+            exchange=self._exchange,
+            market_type=self._market_type,
+            symbol=self._symbol,
+            timeframe=self._timeframe,
+        )
+        return prepare_utc_peak_trough_dependencies(
+            df=df,
+            historical_root=self._historical_root(),
+            market=market,
+            params=params,
+            expected_instance_key=self._expected_peaks_troughs_instance_key(),
+        )
 
     def apply_financial_tool(self, payload: Dict[str, Any]) -> None:
         """

@@ -175,6 +175,18 @@ def _save_rsi_artifact(root: Path, recipe: ArtifactRecipe, *, params: dict[str, 
     )
 
 
+def _save_peaks_troughs_artifact(root: Path, df: pd.DataFrame) -> Path:
+    return DerivedCsvStore(historical_root=root).save_dataframe(
+        market=_market(),
+        kind="indicators",
+        tool_key="peaks_troughs",
+        instance_key="peaks_troughs",
+        df=df,
+        params={},
+        params_status="explicit",
+    )
+
+
 def test_recovery_planner_reports_missing_artifact_as_recalculable(tmp_path: Path) -> None:
     _write_ohlcv(tmp_path)
     recipe = _recipe(tmp_path, _rsi_payload(period=14))
@@ -286,6 +298,93 @@ def test_recovery_planner_blocks_utc_when_peaks_troughs_artifact_is_missing(tmp_
     assert item.status == "blocked"
     assert item.can_recalculate is False
     assert any("Peaks & Troughs" in reason for reason in item.blocked_reasons)
+
+
+def test_recovery_planner_blocks_utc_when_peaks_troughs_columns_are_missing(tmp_path: Path) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, _utc_payload())
+    _save_peaks_troughs_artifact(
+        tmp_path,
+        pd.DataFrame(
+            {
+                "ts_ms": [1_700_000_000_000, 1_700_001_800_000],
+                "peak_fractal_5": [1.0, 2.0],
+                "trough_fractal_5": [3.0, 4.0],
+            }
+        ),
+    )
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    item = report.items[0]
+    assert item.status == "blocked"
+    assert item.can_recalculate is False
+    assert any("does not contain columns required by UTC" in reason for reason in item.blocked_reasons)
+
+
+def test_recovery_planner_blocks_utc_when_peaks_troughs_join_key_is_missing(tmp_path: Path) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, _utc_payload())
+    path = _save_peaks_troughs_artifact(
+        tmp_path,
+        pd.DataFrame(
+            {
+                "ts_ms": [1_700_000_000_000, 1_700_001_800_000],
+                "peak_fractal_5": [1.0, 2.0],
+                "trough_fractal_5": [3.0, 4.0],
+                "peak_fractal_3": [5.0, 6.0],
+                "trough_fractal_3": [7.0, 8.0],
+            }
+        ),
+    )
+    pd.read_csv(path).drop(columns=["ts_ms"]).to_csv(path, index=False)
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    item = report.items[0]
+    assert item.status == "blocked"
+    assert item.can_recalculate is False
+    assert any("cannot be aligned safely for UTC" in reason for reason in item.blocked_reasons)
+
+
+def test_recovery_planner_blocks_utc_when_peaks_troughs_join_key_has_duplicates(tmp_path: Path) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, _utc_payload())
+    path = _save_peaks_troughs_artifact(
+        tmp_path,
+        pd.DataFrame(
+            {
+                "ts_ms": [1_700_000_000_000, 1_700_001_800_000],
+                "peak_fractal_5": [1.0, 2.0],
+                "trough_fractal_5": [3.0, 4.0],
+                "peak_fractal_3": [5.0, 6.0],
+                "trough_fractal_3": [7.0, 8.0],
+            }
+        ),
+    )
+    broken = pd.read_csv(path)
+    broken.loc[1, "ts_ms"] = broken.loc[0, "ts_ms"]
+    broken.to_csv(path, index=False)
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    item = report.items[0]
+    assert item.status == "blocked"
+    assert item.can_recalculate is False
+    assert any("duplicate 'ts_ms' values" in reason for reason in item.blocked_reasons)
+
+
+def test_recovery_planner_uses_shared_utc_dependency_column_resolver() -> None:
+    root = Path(__file__).resolve().parents[1]
+    planner_source = (
+        root / "src" / "leonardo" / "data" / "historical" / "artifact_recovery_planner.py"
+    ).read_text(encoding="utf-8")
+
+    assert "from leonardo.data.historical.utc_dependency_sources import utc_peak_trough_columns" in planner_source
+    assert "def _utc_peak_trough_columns" not in planner_source
 
 
 def test_recovery_planner_selected_recipe_ids_keep_collection_order(tmp_path: Path) -> None:

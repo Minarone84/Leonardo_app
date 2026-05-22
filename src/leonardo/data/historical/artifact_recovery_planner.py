@@ -21,6 +21,7 @@ from leonardo.data.historical.artifact_recipe_store import ArtifactRecipe
 from leonardo.data.historical.derived_store_csv import DerivedKind, DerivedCsvStore
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.store_csv import CsvOHLCVStore
+from leonardo.data.historical.utc_dependency_sources import utc_peak_trough_columns
 from leonardo.data.naming import MarketId
 from leonardo.financial_tools.ft_naming import build_construct_instance_key_from_params
 
@@ -544,7 +545,7 @@ class ArtifactRecoveryPlanner:
         return tuple(blockers)
 
     def _utc_dependency_blockers(self, *, recipe: ArtifactRecipe) -> tuple[str, ...]:
-        required_columns = self._utc_peak_trough_columns(recipe.params)
+        required_columns = utc_peak_trough_columns(recipe.params)
         refs = self._list_peaks_troughs_artifacts(market=recipe.market)
         if not refs:
             return (
@@ -575,13 +576,26 @@ class ArtifactRecoveryPlanner:
         if error:
             return (f"Saved Peaks & Troughs artifact is unreadable: {error}",)
 
+        blockers: list[str] = []
         missing = [column for column in required_columns if column not in columns]
         if missing:
-            return (
+            blockers.append(
                 "Saved Peaks & Troughs artifact does not contain columns required by UTC: "
                 f"{missing}",
             )
-        return ()
+
+        join_key = "ts_ms" if "ts_ms" in columns else "time" if "time" in columns else ""
+        if not join_key:
+            blockers.append(
+                "Saved Peaks & Troughs artifact cannot be aligned safely for UTC; "
+                f"'ts_ms' or 'time' is required: {path}"
+            )
+        elif self._csv_join_key_has_duplicates(path=path, join_key=join_key):
+            blockers.append(
+                f"Saved Peaks & Troughs artifact contains duplicate {join_key!r} values: {path}"
+            )
+
+        return tuple(blockers)
 
     def _list_peaks_troughs_artifacts(self, *, market: MarketId) -> list[dict[str, object]]:
         indicator_dir = self._paths.dataset_dir(market, "indicators")
@@ -695,44 +709,6 @@ class ArtifactRecoveryPlanner:
                 for index, entry in enumerate(role_meta):
                     if isinstance(entry, Mapping):
                         yield f"{role_name}[{index}]", entry
-
-    def _utc_peak_trough_columns_for_purpose(
-        self,
-        params: Mapping[str, Any],
-        *,
-        purpose: str,
-    ) -> tuple[str, str]:
-        if purpose == "trend":
-            window = int(params.get("trend_fractal_window", params.get("fractal_window", 5)))
-            peak_column = str(
-                params.get("trend_peak_column")
-                or params.get("peak_column")
-                or f"peak_fractal_{window}"
-            ).strip()
-            trough_column = str(
-                params.get("trend_trough_column")
-                or params.get("trough_column")
-                or f"trough_fractal_{window}"
-            ).strip()
-        elif purpose == "range":
-            window = int(params.get("range_fractal_window", 3))
-            peak_column = str(params.get("range_peak_column") or f"peak_fractal_{window}").strip()
-            trough_column = str(params.get("range_trough_column") or f"trough_fractal_{window}").strip()
-        else:
-            raise ValueError("UTC dependency purpose must be 'trend' or 'range'.")
-
-        if not peak_column or not trough_column:
-            raise ValueError(f"UTC {purpose} Peaks & Troughs dependency columns must be non-empty.")
-        return peak_column, trough_column
-
-    def _utc_peak_trough_columns(self, params: Mapping[str, Any]) -> tuple[str, ...]:
-        columns: list[str] = []
-        for purpose in ("trend", "range"):
-            for column_name in self._utc_peak_trough_columns_for_purpose(params, purpose=purpose):
-                if column_name not in columns:
-                    columns.append(column_name)
-        return tuple(columns)
-
 
 def _normalized_json_equal(left: Any, right: Any) -> bool:
     return _normalize_for_compare(left) == _normalize_for_compare(right)

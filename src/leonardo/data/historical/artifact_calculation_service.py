@@ -7,6 +7,7 @@ from typing import Any, Dict, Iterable, Literal, Mapping
 import pandas as pd
 
 from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
+from leonardo.data.historical.artifact_result_conversion import result_to_save_dataframe
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore, DerivedKind
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.store_csv import CsvOHLCVStore
@@ -118,7 +119,7 @@ class ArtifactCalculationService:
             df=full_df,
             params=params,
         )
-        result_df = self._result_to_dataframe_for_save(result)
+        result_df = result_to_save_dataframe(result, default_timeframe=market.timeframe)
         instance_key = self._build_instance_key(tool_key=tool_key, params=params)
         kind = self._kind_from_tool_type(tool_type)
 
@@ -231,45 +232,6 @@ class ArtifactCalculationService:
                 ConstructRequest(name=tool_key, data=df, params=dict(params), context=context)
             )
         raise ValueError(f"Unsupported artifact calculation tool_type: {tool_type}")
-
-    def _result_to_dataframe_for_save(self, result: Any) -> pd.DataFrame:
-        if getattr(result, "lines", None):
-            return self._line_result_to_dataframe(result)
-
-        metadata = dict(getattr(result, "metadata", {}) or {})
-        labeled_rows = metadata.get("labeled_rows")
-        if labeled_rows:
-            result_df = pd.DataFrame(labeled_rows)
-            if result_df.empty:
-                raise ValueError("Construct labeled_rows is empty.")
-            return result_df
-
-        raise ValueError("Financial tool produced no saveable output rows.")
-
-    def _line_result_to_dataframe(self, result: Any) -> pd.DataFrame:
-        df = pd.DataFrame(index=result.index)
-
-        if getattr(result, "time", None) is not None:
-            df["time"] = result.time
-        if getattr(result, "timeframe", None) is not None:
-            df["timeframe"] = result.timeframe
-
-        for line in result.lines:
-            series = line.values.reindex(result.index)
-            if pd.api.types.is_bool_dtype(series):
-                df[line.key] = series.astype("bool")
-            elif pd.api.types.is_numeric_dtype(series):
-                df[line.key] = series.astype("float32")
-            else:
-                df[line.key] = series
-
-        if "time" not in df.columns:
-            if "ts_ms" in df.columns:
-                df["time"] = df["ts_ms"]
-            else:
-                df["time"] = list(range(len(df)))
-
-        return df.reset_index(drop=True)
 
     def _resolve_construct_sources_into_dataframe(
         self,

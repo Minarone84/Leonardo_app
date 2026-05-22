@@ -5,6 +5,7 @@ from typing import Any, Dict
 
 import pandas as pd
 
+from leonardo.data.historical.artifact_result_conversion import result_to_save_dataframe
 from leonardo.financial_tools.ft_naming import build_construct_instance_key_from_params
 from leonardo.financial_tools.ft_specs import ToolSpec, format_output_signals
 from leonardo.gui.chart.model import Series as ChartSeries
@@ -645,30 +646,7 @@ class HistoricalChartProjectionMixin:
         }
 
     def _result_to_dataframe(self, result) -> pd.DataFrame:
-        df = pd.DataFrame(index=result.index)
-
-        if getattr(result, "time", None) is not None:
-            df["time"] = result.time
-        if getattr(result, "timeframe", None) is not None:
-            df["timeframe"] = result.timeframe
-
-        for line in result.lines:
-            series = line.values.reindex(result.index)
-            if pd.api.types.is_numeric_dtype(series):
-                df[line.key] = series.astype("float32")
-            else:
-                df[line.key] = series
-
-        if "time" not in df.columns:
-            if "ts_ms" in df.columns:
-                df["time"] = df["ts_ms"]
-            else:
-                df["time"] = list(range(len(df)))
-
-        if "timeframe" not in df.columns:
-            df["timeframe"] = self._timeframe
-
-        return df.reset_index(drop=True)
+        return result_to_save_dataframe(result, default_timeframe=self._timeframe)
 
     def _construct_result_to_dataframe_for_save(self, result) -> pd.DataFrame:
         """
@@ -681,21 +659,7 @@ class HistoricalChartProjectionMixin:
         This keeps construct save semantics aligned with the construct family,
         where not every construct is analysis-only.
         """
-        if getattr(result, "lines", None):
-            return self._result_to_dataframe(result)
-
-        metadata = dict(getattr(result, "metadata", {}) or {})
-        labeled_rows = metadata.get("labeled_rows")
-
-        if labeled_rows:
-            result_df = pd.DataFrame(labeled_rows)
-            if result_df.empty:
-                raise ValueError("Construct labeled_rows is empty.")
-            return result_df
-
-        raise ValueError(
-            "Construct produced neither renderable lines nor labeled_rows for save."
-        )
+        return result_to_save_dataframe(result, default_timeframe=self._timeframe)
 
     def _extract_runtime_output_names(self, result, *, spec: ToolSpec) -> list[str]:
         """

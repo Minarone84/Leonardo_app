@@ -1255,14 +1255,18 @@ class FinancialToolsManagerWindow(QDialog):
                 continue
 
             for ref in refs:
-                for column_name in self._read_selectable_columns_from_artifact(Path(ref.path)):
+                for column_meta in self._read_selectable_columns_from_artifact(Path(ref.path), store=store):
+                    column_name = str(column_meta.get("column_name", "")).strip()
+                    if not column_name:
+                        continue
                     dedupe_key = (str(ref.path), tool_key, column_name)
                     if dedupe_key in seen:
                         continue
                     seen.add(dedupe_key)
 
                     display_name = f"Saved · {ref.instance_key}  ->  {column_name}"
-                    options.append(
+                    source_option = dict(column_meta)
+                    source_option.update(
                         {
                             "family": family_kind,
                             "series_key": column_name,
@@ -1275,6 +1279,7 @@ class FinancialToolsManagerWindow(QDialog):
                             "source_kind": "saved",
                         }
                     )
+                    options.append(source_option)
 
         options.sort(key=lambda item: item["display_name"].lower())
         return options
@@ -1308,7 +1313,55 @@ class FinancialToolsManagerWindow(QDialog):
         options.sort(key=lambda item: item["display_name"].lower())
         return options
 
-    def _read_selectable_columns_from_artifact(self, path: Path) -> list[str]:
+    @classmethod
+    def _is_structural_artifact_column(cls, column_name: str, column: Any | None = None) -> bool:
+        name = str(column_name).strip()
+        if name in {"time", "timeframe", "ts_ms"}:
+            return True
+        if column is None:
+            return False
+        role = str(getattr(column, "role", "") or "").strip().lower()
+        semantic_role = str(getattr(column, "semantic_role", "") or "").strip().lower()
+        return role == "primary_key" or semantic_role in {"primary_key", "metadata"}
+
+    @classmethod
+    def _source_column_meta_from_manifest(cls, manifest) -> list[dict[str, Any]]:
+        source_columns: list[dict[str, Any]] = []
+        for column in tuple(getattr(manifest, "columns", ()) or ()):
+            column_name = str(getattr(column, "name", "") or "").strip()
+            if not column_name or cls._is_structural_artifact_column(column_name, column):
+                continue
+            if not bool(getattr(column, "selectable", False)):
+                continue
+
+            source_columns.append(
+                {
+                    "series_key": column_name,
+                    "column_name": column_name,
+                    "label": str(getattr(column, "label", "") or ""),
+                    "role": str(getattr(column, "role", "") or ""),
+                    "selectable": bool(getattr(column, "selectable", False)),
+                    "analysis_usable": getattr(column, "analysis_usable", None),
+                    "renderable": getattr(column, "renderable", None),
+                    "semantic_role": str(getattr(column, "semantic_role", "") or ""),
+                    "value_type": str(getattr(column, "value_type", "") or ""),
+                    "signal_type": str(getattr(column, "signal_type", "") or ""),
+                    "can_drive_style_rules": getattr(column, "can_drive_style_rules", None),
+                }
+            )
+        return source_columns
+
+    def _read_selectable_columns_from_artifact(
+        self,
+        path: Path,
+        *,
+        store: DerivedCsvStore | None = None,
+    ) -> list[dict[str, Any]]:
+        metadata_store = store or DerivedCsvStore(historical_root=self._historical_root)
+        manifest = metadata_store.load_metadata_manifest(path)
+        if manifest is not None and tuple(getattr(manifest, "columns", ()) or ()):
+            return self._source_column_meta_from_manifest(manifest)
+
         try:
             with path.open("r", encoding="utf-8") as handle:
                 header = handle.readline().strip()
@@ -1319,12 +1372,14 @@ class FinancialToolsManagerWindow(QDialog):
             return []
 
         columns = [col.strip() for col in header.split(",") if col.strip()]
-        selectable = [
-            col
+        return [
+            {
+                "series_key": col,
+                "column_name": col,
+            }
             for col in columns
             if col not in self.NON_SELECTABLE_ARTIFACT_COLUMNS
         ]
-        return selectable
 
     def _populate_source_value_combo(self, role_name: str, family_kind: str) -> None:
         combo = self._source_value_editors.get(role_name)

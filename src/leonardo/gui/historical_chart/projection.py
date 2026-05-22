@@ -140,33 +140,93 @@ class HistoricalChartProjectionMixin:
         canonical_index = pd.Index(canonical_timeline, name="ts_ms")
         series = line_values.copy()
 
-        if len(series) == len(canonical_index):
-            return pd.Series(series.to_numpy(copy=True), index=canonical_index)
+        result_ts_ms = getattr(result, "ts_ms", None)
+        if result_ts_ms is not None:
+            return self._align_series_with_explicit_timeline(
+                series=series,
+                timeline_values=result_ts_ms,
+                canonical_index=canonical_index,
+                source_label="result.ts_ms",
+            )
 
         result_time = getattr(result, "time", None)
-        result_timeline = self._coerce_timeline_values(result_time)
-        if result_timeline and len(result_timeline) == len(series):
-            aligned = pd.Series(
-                series.to_numpy(copy=True),
-                index=pd.Index(result_timeline, name="ts_ms"),
+        if result_time is not None:
+            return self._align_series_with_explicit_timeline(
+                series=series,
+                timeline_values=result_time,
+                canonical_index=canonical_index,
+                source_label="result.time",
             )
-            return aligned.reindex(canonical_index)
 
-        try:
-            series_index_values = [int(value) for value in series.index.tolist()]
-        except Exception:
-            series_index_values = []
-
-        if series_index_values and len(series_index_values) == len(series):
-            aligned = pd.Series(
-                series.to_numpy(copy=True),
-                index=pd.Index(series_index_values, name="ts_ms"),
+        if self._series_index_has_explicit_timeline(series.index, len(series)):
+            return self._align_series_with_explicit_timeline(
+                series=series,
+                timeline_values=series.index,
+                canonical_index=canonical_index,
+                source_label="series.index",
             )
-            return aligned.reindex(canonical_index)
+
+        if len(series) == len(canonical_index):
+            # Runtime families historically emit full-dataset values without
+            # timeline metadata. Positional alignment is valid only for that
+            # invariant and must not override explicit timeline data.
+            return pd.Series(series.to_numpy(copy=True), index=canonical_index)
 
         raise ValueError(
             "Runtime study output cannot be aligned to the canonical chart timeline."
         )
+
+    def _align_series_with_explicit_timeline(
+        self,
+        *,
+        series: pd.Series,
+        timeline_values,
+        canonical_index: pd.Index,
+        source_label: str,
+    ) -> pd.Series:
+        """Align runtime output values using explicit timeline metadata."""
+        timeline = self._coerce_runtime_timeline_values(
+            timeline_values,
+            expected_len=len(series),
+            source_label=source_label,
+        )
+        explicit_index = pd.Index(timeline, name="ts_ms")
+        if explicit_index.has_duplicates:
+            raise ValueError(
+                f"Runtime study output {source_label} contains duplicate timeline values."
+            )
+        if not explicit_index.isin(canonical_index).any():
+            raise ValueError(
+                f"Runtime study output {source_label} does not overlap the canonical chart timeline."
+            )
+        aligned = pd.Series(series.to_numpy(copy=True), index=explicit_index)
+        return aligned.reindex(canonical_index)
+
+    def _coerce_runtime_timeline_values(
+        self,
+        timeline_values,
+        *,
+        expected_len: int,
+        source_label: str,
+    ) -> list[int]:
+        """Coerce explicit runtime timeline metadata for chart projection."""
+        timeline = self._coerce_timeline_values(timeline_values)
+        if len(timeline) != expected_len:
+            raise ValueError(
+                f"Runtime study output {source_label} length does not match the line value length."
+            )
+        return [int(ts) for ts in timeline]
+
+    def _series_index_has_explicit_timeline(self, index: pd.Index, expected_len: int) -> bool:
+        """Return whether a series index carries timeline data rather than row positions."""
+        if expected_len <= 0:
+            return False
+        if isinstance(index, pd.RangeIndex):
+            return False
+        index_values = list(index)
+        if index_values == list(range(expected_len)):
+            return False
+        return bool(self._coerce_timeline_values(index))
 
     def _build_projection_key(self, *, tool_key: str, params: Dict[str, Any]) -> str:
         """Build a deterministic controller-local study projection key."""

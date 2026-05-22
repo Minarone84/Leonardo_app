@@ -7,10 +7,11 @@ import uuid
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFontMetrics
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -41,19 +42,16 @@ _SECTION_TRADES = "trades"
 _SECTION_POI = "points_of_interest"
 
 _GOTO_COLUMN = 0
-_DATE_COLUMN = 1
+_SUPPORTED_DATE_TIME_TEXT = "9999-12-31 23:59:59"
+_POI_TITLE_COLUMN_WIDTH = 300
 
-_NOTE_COLUMNS = ("Go", "Date / Time", "Note")
+_NOTE_COLUMNS = ("Date / Time", "Note")
 _TRADE_COLUMNS = (
-    "Go",
     "Date / Time",
     "Direction",
-    "Starting price",
-    "Target % movement",
-    "Closing price",
-    "Equity",
-    "Leverage",
-    "Asset bought",
+    "Starting Price",
+    "Target % Movement",
+    "Closing Price",
     "Outcome",
     "Note",
 )
@@ -81,6 +79,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self.setWindowTitle("Historical Notebook")
         self.resize(1020, 760)
         self.setMinimumSize(800, 560)
+        self._increase_window_font(point_delta=1)
 
         self._notebook_id: str | None = None
         self._created_at_ms: int | None = None
@@ -135,7 +134,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self._load_button.clicked.connect(self.load_requested.emit)
         header_row.addWidget(self._load_button)
 
-        self._assign_button = QPushButton("Assign", root)
+        self._assign_button = QPushButton("Manager", root)
         self._assign_button.setObjectName("historicalNotebookAssignButton")
         self._assign_button.clicked.connect(self.assign_requested.emit)
         header_row.addWidget(self._assign_button)
@@ -173,7 +172,26 @@ class HistoricalNotebookWindow(QMainWindow):
         self._chart_tabs.setTabsClosable(True)
         self._chart_tabs.setMovable(True)
         self._chart_tabs.tabCloseRequested.connect(self._on_chart_tab_close_requested)
+        self._apply_bold_tab_font(self._chart_tabs)
         layout.addWidget(self._chart_tabs, 1)
+
+    def _increase_window_font(self, *, point_delta: int) -> None:
+        font = self.font()
+        point_size = font.pointSize()
+        if point_size > 0:
+            font.setPointSize(point_size + int(point_delta))
+        else:
+            point_size_f = font.pointSizeF()
+            if point_size_f > 0:
+                font.setPointSizeF(point_size_f + float(point_delta))
+            else:
+                font.setPointSize(10 + int(point_delta))
+        self.setFont(font)
+
+    def _apply_bold_tab_font(self, tabs: QTabWidget) -> None:
+        font = tabs.tabBar().font()
+        font.setBold(True)
+        tabs.tabBar().setFont(font)
 
     def notebook_id(self) -> str | None:
         return self._notebook_id
@@ -232,8 +250,7 @@ class HistoricalNotebookWindow(QMainWindow):
             entries[str(entry["chart_key"])] = entry
         self._chart_entries_by_key = entries
 
-        if assigned_snapshot_label:
-            self._assigned_snapshot_label.setText(f"Assigned snapshot: {assigned_snapshot_label}")
+        self.set_assigned_snapshot_label(assigned_snapshot_label)
 
         self._rebuild_chart_tabs()
         self._update_status()
@@ -366,6 +383,7 @@ class HistoricalNotebookWindow(QMainWindow):
 
         inner_tabs = QTabWidget(wrapper)
         inner_tabs.setObjectName("historicalNotebookInnerTabs")
+        self._apply_bold_tab_font(inner_tabs)
         layout.addWidget(inner_tabs, 1)
 
         notes_table = self._new_section_table(chart_key, _SECTION_NOTES, _NOTE_COLUMNS)
@@ -379,7 +397,7 @@ class HistoricalNotebookWindow(QMainWindow):
         }
 
         inner_tabs.addTab(self._section_widget(notes_table, "Add Note"), "Notes")
-        inner_tabs.addTab(self._section_widget(trades_table, "Add Trade"), "Trades")
+        inner_tabs.addTab(self._section_widget(trades_table, "Add Trade"), "Potential Trades")
         inner_tabs.addTab(self._section_widget(poi_table, "Add Point of Interest"), "Point of Interest")
 
         self._populate_table(notes_table, entry.get(_SECTION_NOTES, []) or [], _SECTION_NOTES)
@@ -417,11 +435,54 @@ class HistoricalNotebookWindow(QMainWindow):
         table.setAlternatingRowColors(True)
         table.setWordWrap(True)
         table.verticalHeader().setVisible(False)
+        self._configure_table_columns(table, section)
         table.itemChanged.connect(lambda item, table=table: self._on_table_item_changed(table, item))
         table.cellDoubleClicked.connect(
             lambda row, column, table=table: self._on_table_cell_double_clicked(table, row, column)
         )
         return table
+
+    def _configure_table_columns(self, table: QTableWidget, section: str) -> None:
+        header = table.horizontalHeader()
+        header.setStretchLastSection(False)
+        for column in range(table.columnCount()):
+            header.setSectionResizeMode(column, QHeaderView.Interactive)
+
+        date_column = self._date_column_for_section(section)
+        if date_column >= 0:
+            table.setColumnWidth(date_column, self._date_time_column_width(table))
+
+        if section == _SECTION_NOTES:
+            header.setSectionResizeMode(1, QHeaderView.Stretch)
+            return
+
+        if section == _SECTION_TRADES:
+            table.setColumnWidth(1, 110)
+            table.setColumnWidth(2, 120)
+            table.setColumnWidth(3, 145)
+            table.setColumnWidth(4, 120)
+            table.setColumnWidth(5, 95)
+            header.setSectionResizeMode(6, QHeaderView.Stretch)
+            return
+
+        if section == _SECTION_POI:
+            header.setSectionResizeMode(_GOTO_COLUMN, QHeaderView.Fixed)
+            table.setColumnWidth(_GOTO_COLUMN, 52)
+            table.setColumnWidth(2, _POI_TITLE_COLUMN_WIDTH)
+            header.setSectionResizeMode(3, QHeaderView.Stretch)
+
+    def _date_time_column_width(self, table: QTableWidget) -> int:
+        return (
+            QFontMetrics(table.font()).horizontalAdvance(_SUPPORTED_DATE_TIME_TEXT)
+            + 34
+        )
+
+    def _date_column_for_section(self, section: str) -> int:
+        if section in {_SECTION_NOTES, _SECTION_TRADES}:
+            return 0
+        if section == _SECTION_POI:
+            return 1
+        return -1
 
     def _populate_table(
         self,
@@ -435,7 +496,7 @@ class HistoricalNotebookWindow(QMainWindow):
             for raw_row in rows:
                 row = dict(raw_row) if isinstance(raw_row, Mapping) else {}
                 self._append_row_payload(table, section, row)
-            table.resizeColumnsToContents()
+            self._configure_table_columns(table, section)
         finally:
             self._updating_tables = False
 
@@ -451,9 +512,6 @@ class HistoricalNotebookWindow(QMainWindow):
                     "starting_price": None,
                     "target_pct_movement": None,
                     "closing_price": None,
-                    "equity": None,
-                    "leverage": None,
-                    "asset_bought": None,
                     "outcome": "Good",
                     "note": "",
                 }
@@ -473,31 +531,29 @@ class HistoricalNotebookWindow(QMainWindow):
         table.insertRow(row_index)
         row_id = str(payload.get("row_id", "") or uuid.uuid4().hex)
         date_item = self._table_item(str(payload.get("date_text", "") or ""), row_id=row_id)
-        self._set_goto_button_cell(table, row_index)
-        table.setItem(row_index, _DATE_COLUMN, date_item)
+        date_column = self._date_column_for_section(section)
+        table.setItem(row_index, date_column, date_item)
 
         if section == _SECTION_NOTES:
-            table.setItem(row_index, 2, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
+            table.setItem(row_index, 1, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
             return
 
         if section == _SECTION_TRADES:
-            self._set_combo_cell(table, row_index, 2, ("Long", "Short"), str(payload.get("direction", "Long") or "Long"))
+            self._set_combo_cell(table, row_index, 1, ("Long", "Short"), str(payload.get("direction", "Long") or "Long"))
             numeric_keys = (
                 "starting_price",
                 "target_pct_movement",
                 "closing_price",
-                "equity",
-                "leverage",
-                "asset_bought",
             )
-            for offset, key in enumerate(numeric_keys, start=3):
+            for offset, key in enumerate(numeric_keys, start=2):
                 value = payload.get(key)
                 table.setItem(row_index, offset, self._table_item("" if value is None else str(value), row_id=row_id))
-            self._set_combo_cell(table, row_index, 9, ("Good", "Bad"), str(payload.get("outcome", "Good") or "Good"))
-            table.setItem(row_index, 10, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
+            self._set_combo_cell(table, row_index, 5, ("Good", "Bad"), str(payload.get("outcome", "Good") or "Good"))
+            table.setItem(row_index, 6, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
             return
 
         if section == _SECTION_POI:
+            self._set_goto_button_cell(table, row_index)
             table.setItem(row_index, 2, self._table_item(str(payload.get("title", "") or ""), row_id=row_id))
             table.setItem(row_index, 3, self._table_item(str(payload.get("description", "") or ""), row_id=row_id))
 
@@ -575,9 +631,10 @@ class HistoricalNotebookWindow(QMainWindow):
 
     def _rows_from_table(self, table: QTableWidget, section: str) -> list[dict[str, Any]]:
         rows: list[dict[str, Any]] = []
+        date_column = self._date_column_for_section(section)
         for row in range(table.rowCount()):
             row_id = self._row_id_for_table_row(table, row)
-            date_text = self._item_text(table, row, _DATE_COLUMN)
+            date_text = self._item_text(table, row, date_column)
             ts_ms = self._parse_date_text_to_ts_ms(date_text)
             if section == _SECTION_NOTES:
                 rows.append(
@@ -585,7 +642,7 @@ class HistoricalNotebookWindow(QMainWindow):
                         "row_id": row_id,
                         "date_text": date_text,
                         "ts_ms": ts_ms,
-                        "note": self._item_text(table, row, 2),
+                        "note": self._item_text(table, row, 1),
                     }
                 )
             elif section == _SECTION_TRADES:
@@ -594,15 +651,12 @@ class HistoricalNotebookWindow(QMainWindow):
                         "row_id": row_id,
                         "date_text": date_text,
                         "ts_ms": ts_ms,
-                        "direction": self._combo_text(table, row, 2) or "Long",
-                        "starting_price": self._float_or_none(self._item_text(table, row, 3)),
-                        "target_pct_movement": self._float_or_none(self._item_text(table, row, 4)),
-                        "closing_price": self._float_or_none(self._item_text(table, row, 5)),
-                        "equity": self._float_or_none(self._item_text(table, row, 6)),
-                        "leverage": self._float_or_none(self._item_text(table, row, 7)),
-                        "asset_bought": self._float_or_none(self._item_text(table, row, 8)),
-                        "outcome": self._combo_text(table, row, 9) or "Good",
-                        "note": self._item_text(table, row, 10),
+                        "direction": self._combo_text(table, row, 1) or "Long",
+                        "starting_price": self._float_or_none(self._item_text(table, row, 2)),
+                        "target_pct_movement": self._float_or_none(self._item_text(table, row, 3)),
+                        "closing_price": self._float_or_none(self._item_text(table, row, 4)),
+                        "outcome": self._combo_text(table, row, 5) or "Good",
+                        "note": self._item_text(table, row, 6),
                     }
                 )
             elif section == _SECTION_POI:
@@ -618,7 +672,8 @@ class HistoricalNotebookWindow(QMainWindow):
         return rows
 
     def _row_id_for_table_row(self, table: QTableWidget, row: int) -> str:
-        item = table.item(row, _DATE_COLUMN)
+        section = str(table.property("section") or "")
+        item = table.item(row, self._date_column_for_section(section))
         if item is not None:
             row_id = str(item.data(Qt.UserRole) or "").strip()
             if row_id:
@@ -653,15 +708,20 @@ class HistoricalNotebookWindow(QMainWindow):
         self._status_label.setText(message)
 
     def _on_row_goto_clicked(self, table: QTableWidget, row: int) -> None:
+        section = str(table.property("section") or "")
+        if section != _SECTION_POI:
+            return
+
         chart_key = str(table.property("chart_key") or "").strip()
         if not chart_key:
             self._set_goto_status("Go To failed: notebook chart key is missing.")
             return
 
-        item = table.item(row, _DATE_COLUMN)
+        date_column = self._date_column_for_section(section)
+        item = table.item(row, date_column)
         if item is not None:
             table.closePersistentEditor(item)
-        date_text = self._item_text(table, row, _DATE_COLUMN)
+        date_text = self._item_text(table, row, date_column)
         if not date_text:
             self._set_goto_status("Go To failed: Date / Time is empty.")
             return
@@ -686,7 +746,10 @@ class HistoricalNotebookWindow(QMainWindow):
         row: int,
         column: int,
     ) -> None:
-        if column != _DATE_COLUMN:
+        section = str(table.property("section") or "")
+        if section != _SECTION_POI:
+            return
+        if column != self._date_column_for_section(section):
             return
 
         self._on_row_goto_clicked(table, row)

@@ -28,12 +28,9 @@
       ],
       "trades": [
         {
-          "asset_bought": null,
           "closing_price": 110.0,
           "date_text": "2026/05/22",
           "direction": "Long",
-          "equity": 500.0,
-          "leverage": null,
           "note": "",
           "outcome": "Good",
           "row_id": "f522d5b5b99c4086b9df48bb7b555066",
@@ -91,12 +88,12 @@
       "trades": []
     }
   ],
-  "content_hash": "6a0c5151eb7fdb6b349118e843231297a8359b62c34085a88c579c996f6138d4",
+  "content_hash": "d769bb6df71e3491fae749c4d3b89a7ec9913ef8134d1091999582bdf4e1680e",
   "created_at_ms": 1779372983436,
   "description": "",
   "display_name": "Test_A",
   "notebook_id": "8756e27bc04f4f288be55f2e99c4a44f",
   "object_type": "historical_workspace_notebook",
   "schema_version": 1,
-  "updated_at_ms": 1779380574761
+  "updated_at_ms": 1779436408957
 }

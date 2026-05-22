@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import replace
 from pathlib import Path
-import time
 from typing import Any, Mapping, Optional
 
 from PySide6.QtCore import Qt
@@ -54,6 +52,9 @@ from leonardo.gui.windows._historical_data_manager.workspace_snapshot_dialogs im
 )
 from leonardo.gui.windows._historical_data_manager.notebook_window import (
     HistoricalNotebookWindow,
+)
+from leonardo.gui.windows._historical_data_manager.notebook_manager_dialog import (
+    HistoricalNotebookManagerDialog,
 )
 from leonardo.gui.windows.historical_workspace_widget import HistoricalWorkspaceWidget
 
@@ -535,9 +536,9 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_placeholder_tile: Optional[QAction] = None
         self._action_placeholder_open_dataset: Optional[QAction] = None
         self._action_create_notebook: Optional[QAction] = None
+        self._action_notebook_manager: Optional[QAction] = None
         self._action_save_notebook: Optional[QAction] = None
         self._action_load_notebook: Optional[QAction] = None
-        self._action_assign_notebook_to_workspace_snapshot: Optional[QAction] = None
         self._action_open_assigned_notebook: Optional[QAction] = None
         self._action_view_mode_scroll_4: Optional[QAction] = None
         self._action_view_mode_fit_8: Optional[QAction] = None
@@ -713,6 +714,13 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_open_assigned_notebook = action_open_assigned_notebook
         menu_notes.addAction(action_open_assigned_notebook)
 
+        action_notebook_manager = QAction("Notebook Manager...", self)
+        action_notebook_manager.setToolTip("Manage saved notebooks and workspace snapshot assignments.")
+        action_notebook_manager.setStatusTip("Manage saved notebooks and workspace snapshot assignments.")
+        action_notebook_manager.triggered.connect(self._on_open_notebook_manager)
+        self._action_notebook_manager = action_notebook_manager
+        menu_notes.addAction(action_notebook_manager)
+
         action_save_notebook = QAction("Save Notebook", self)
         action_save_notebook.setToolTip("Save the active historical notebook.")
         action_save_notebook.setStatusTip("Save the active historical notebook.")
@@ -726,17 +734,6 @@ class HistoricalDataManagerWindow(QMainWindow):
         action_load_notebook.triggered.connect(self._on_load_notebook)
         self._action_load_notebook = action_load_notebook
         menu_notes.addAction(action_load_notebook)
-
-        action_assign_notebook = QAction("Assign Notebook to Workspace Snapshot", self)
-        action_assign_notebook.setToolTip(
-            "Assign the active notebook to a saved workspace snapshot."
-        )
-        action_assign_notebook.setStatusTip(
-            "Assign the active notebook to a saved workspace snapshot."
-        )
-        action_assign_notebook.triggered.connect(self._on_assign_notebook_to_workspace_snapshot)
-        self._action_assign_notebook_to_workspace_snapshot = action_assign_notebook
-        menu_notes.addAction(action_assign_notebook)
 
         # Keep quick preset/snapshot actions on the same row as the menu bar.
         #
@@ -1427,9 +1424,7 @@ class HistoricalDataManagerWindow(QMainWindow):
             notebook_window.refresh_requested.connect(self._refresh_notebook_from_workspace)
             notebook_window.save_requested.connect(self._on_save_notebook)
             notebook_window.load_requested.connect(self._on_load_notebook)
-            notebook_window.assign_requested.connect(
-                self._on_assign_notebook_to_workspace_snapshot
-            )
+            notebook_window.assign_requested.connect(self._on_open_notebook_manager)
             notebook_window.goto_requested.connect(self._on_notebook_goto_requested)
             notebook_window.poi_markers_changed.connect(
                 self._on_notebook_poi_markers_changed
@@ -1450,6 +1445,20 @@ class HistoricalDataManagerWindow(QMainWindow):
         notebook_window.raise_()
         notebook_window.activateWindow()
         self._set_status("Notebook window opened")
+
+    def _on_open_notebook_manager(self) -> None:
+        dialog = HistoricalNotebookManagerDialog(
+            notebook_store=self._notebook_store(),
+            workspace_snapshot_store=self._workspace_snapshot_store(),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            self._set_status("Notebook manager closed")
+            return
+
+        notebook_id = dialog.selected_open_notebook_id()
+        if notebook_id:
+            self._open_notebook_by_id(notebook_id, title="Notebook Manager")
 
     def _refresh_notebook_from_workspace(self) -> None:
         """Refresh the notebook editor from the current embedded chart list."""
@@ -1582,87 +1591,36 @@ class HistoricalDataManagerWindow(QMainWindow):
             return
 
         index = labels.index(selected)
+        self._open_notebook_by_id(summaries[index].notebook_id, title="Load Notebook")
+
+    def _open_notebook_by_id(
+        self,
+        notebook_id: str,
+        *,
+        title: str,
+        assigned_snapshot_label: str | None = None,
+    ) -> bool:
         try:
-            notebook = store.load_notebook(summaries[index].notebook_id)
+            notebook = self._notebook_store().load_notebook(notebook_id)
         except Exception as exc:
             QMessageBox.warning(
                 self,
-                "Load Notebook",
+                title,
                 f"Could not load notebook: {exc!r}",
             )
-            return
+            return False
 
         notebook_window = self._ensure_notebook_window()
-        notebook_window.set_notebook(notebook)
+        notebook_window.set_notebook(
+            notebook,
+            assigned_snapshot_label=assigned_snapshot_label,
+        )
         self._refresh_notebook_from_workspace()
         notebook_window.show()
         notebook_window.raise_()
         notebook_window.activateWindow()
         self._set_status(f"Loaded notebook: {notebook.display_name}")
-
-    def _on_assign_notebook_to_workspace_snapshot(self) -> None:
-        notebook_window = self._notebook_window
-        if notebook_window is None or not notebook_window.notebook_id():
-            QMessageBox.information(
-                self,
-                "Assign Notebook to Workspace Snapshot",
-                "Save the notebook before assigning it to a workspace snapshot.",
-            )
-            return
-
-        snapshot_store = self._workspace_snapshot_store()
-        summaries = snapshot_store.list_summaries()
-        if not summaries:
-            QMessageBox.information(
-                self,
-                "Assign Notebook to Workspace Snapshot",
-                "No saved workspace snapshots were found.",
-            )
-            return
-
-        labels = [
-            f"{summary.display_name} ({summary.chart_count} chart(s))"
-            for summary in summaries
-        ]
-        selected, accepted = QInputDialog.getItem(
-            self,
-            "Assign Notebook to Workspace Snapshot",
-            "Workspace snapshot:",
-            labels,
-            0,
-            False,
-        )
-        if not accepted:
-            self._set_status("Notebook assignment cancelled")
-            return
-
-        index = labels.index(selected)
-        try:
-            notebook_ref = {
-                "notebook_id": notebook_window.notebook_id(),
-                "display_name": notebook_window.display_name(),
-            }
-            snapshot = snapshot_store.load_snapshot(summaries[index].snapshot_id)
-            updated = replace(
-                snapshot,
-                notebook_ref=notebook_ref,
-                updated_at_ms=int(time.time() * 1000),
-            )
-            saved = snapshot_store.save_snapshot(updated, overwrite=True)
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Assign Notebook to Workspace Snapshot",
-                f"Could not assign notebook: {exc!r}",
-            )
-            return
-
-        notebook_window.set_assigned_snapshot_label(saved.display_name)
-        self._set_current_workspace_notebook_ref(notebook_ref)
-        self._set_status(
-            f"Assigned notebook '{notebook_window.display_name()}' "
-            f"to snapshot '{saved.display_name}'"
-        )
+        return True
 
     def _on_notebook_goto_requested(self, chart_key: str, ts_ms: int) -> None:
         self._set_status(f"Notebook Go To requested for {chart_key} at {int(ts_ms)}")

@@ -7,7 +7,12 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from leonardo.data.chart_presets.notebook_store import notebook_chart_key
+from leonardo.data.chart_presets.notebook_store import (
+    HISTORICAL_NOTEBOOK_OBJECT_TYPE,
+    HISTORICAL_NOTEBOOK_SCHEMA_VERSION,
+    HistoricalNotebook,
+    notebook_chart_key,
+)
 from leonardo.gui.windows._historical_data_manager.notebook_window import (
     HistoricalNotebookWindow,
 )
@@ -51,7 +56,7 @@ def test_notebook_window_has_structured_tabs_and_tables() -> None:
     assert "QToolButton" in source
     assert "QTableWidget" in source
     assert '"Notes"' in source
-    assert '"Trades"' in source
+    assert '"Potential Trades"' in source
     assert '"Point of Interest"' in source
     assert '"Date / Time"' in source
     assert '"Direction"' in source
@@ -63,20 +68,22 @@ def test_notebook_window_has_structured_tabs_and_tables() -> None:
     assert '"Description"' in source
 
 
-def test_all_notebook_tables_share_date_time_go_to_path() -> None:
+def test_only_poi_tables_use_date_time_go_to_path() -> None:
     source = _source(NOTEBOOK)
     table_body = _function_source(NOTEBOOK, "_new_section_table")
+    append_body = _function_source(NOTEBOOK, "_append_row_payload")
     goto_button_body = _function_source(NOTEBOOK, "_set_goto_button_cell")
     row_goto_body = _function_source(NOTEBOOK, "_on_row_goto_clicked")
     goto_body = _function_source(NOTEBOOK, "_on_table_cell_double_clicked")
 
-    assert '_NOTE_COLUMNS = ("Go", "Date / Time", "Note")' in source
-    assert '"Go",\n    "Date / Time",\n    "Direction",' in source
+    assert '_NOTE_COLUMNS = ("Date / Time", "Note")' in source
+    assert '"Date / Time",\n    "Direction",' in source
     assert '_POI_COLUMNS = ("Go", "Date / Time", "Title", "Description")' in source
     assert "notes_table = self._new_section_table" in source
     assert "trades_table = self._new_section_table" in source
     assert "poi_table = self._new_section_table" in source
-    assert "self._set_goto_button_cell(table, row_index)" in source
+    assert source.count("self._set_goto_button_cell(table, row_index)") == 1
+    assert "if section == _SECTION_POI:" in append_body
     assert "button.setText(\"Go\")" in goto_button_body
     assert "Center chart on this row's Date / Time" in goto_button_body
     assert "self._on_row_goto_button_clicked(" in goto_button_body
@@ -84,13 +91,14 @@ def test_all_notebook_tables_share_date_time_go_to_path() -> None:
     assert "row=row" not in goto_button_body
     assert "cellDoubleClicked.connect" in table_body
     assert "_on_table_cell_double_clicked(table, row, column)" in table_body
-    assert "if column != _DATE_COLUMN:" in goto_body
+    assert "section != _SECTION_POI" in goto_body
+    assert "column != self._date_column_for_section(section)" in goto_body
     assert "self._on_row_goto_clicked(table, row)" in goto_body
     assert "table.closePersistentEditor(item)" in row_goto_body
-    assert "date_text = self._item_text(table, row, _DATE_COLUMN)" in row_goto_body
+    assert "section != _SECTION_POI" in row_goto_body
+    assert "date_text = self._item_text(table, row, date_column)" in row_goto_body
     assert "self.goto_requested.emit(chart_key, int(ts_ms))" in row_goto_body
     assert "chart_key not in self._active_chart_keys" not in row_goto_body
-    assert "_SECTION_POI" not in goto_body
 
 
 def test_row_goto_button_resolves_current_row_dynamically() -> None:
@@ -157,29 +165,144 @@ def test_poi_row_goto_button_click_emits_dataset_key_and_timestamp() -> None:
         window.close()
 
 
-def test_notebook_table_columns_shift_row_sync_indexes_for_go_button() -> None:
+def test_notes_row_date_does_not_emit_go_to() -> None:
+    _qapp()
+    dataset = {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m",
+    }
+    chart_key = notebook_chart_key(dataset)
+    window = HistoricalNotebookWindow()
+    try:
+        window.refresh_from_chart_options(
+            [
+                {
+                    "position": 1,
+                    "label": "Position 1: bybit / linear / BTCUSDT / 30m",
+                    "dataset": dataset,
+                }
+            ]
+        )
+        table = window._tables_by_chart_key[chart_key]["notes"]
+        window._append_empty_row(table)
+        row = table.rowCount() - 1
+        date_item = table.item(row, 0)
+        assert date_item is not None
+        date_item.setText("2026-05-21 14:30")
+        assert table.cellWidget(row, 0) is None
+
+        captured: list[tuple[str, int]] = []
+        window.goto_requested.connect(
+            lambda emitted_key, emitted_ts: captured.append(
+                (str(emitted_key), int(emitted_ts))
+            )
+        )
+
+        window._on_table_cell_double_clicked(table, row, 0)
+
+        assert captured == []
+    finally:
+        window.close()
+
+
+def test_notebook_table_columns_match_required_layout() -> None:
     source = _source(NOTEBOOK)
     append_body = _function_source(NOTEBOOK, "_append_row_payload")
     rows_body = _function_source(NOTEBOOK, "_rows_from_table")
+    configure_body = _function_source(NOTEBOOK, "_configure_table_columns")
 
     assert "_GOTO_COLUMN = 0" in source
-    assert "_DATE_COLUMN = 1" in source
-    assert "table.setItem(row_index, _DATE_COLUMN, date_item)" in append_body
-    assert "table.setItem(row_index, 2, self._table_item(str(payload.get(\"note\"" in append_body
-    assert "self._set_combo_cell(table, row_index, 2" in append_body
-    assert "enumerate(numeric_keys, start=3)" in append_body
-    assert "self._set_combo_cell(table, row_index, 9" in append_body
-    assert "table.setItem(row_index, 10" in append_body
+    assert "_SUPPORTED_DATE_TIME_TEXT = \"9999-12-31 23:59:59\"" in source
+    assert "_POI_TITLE_COLUMN_WIDTH = 300" in source
+    assert "self._increase_window_font(point_delta=1)" in source
+    assert "def _apply_bold_tab_font" in source
+    assert "_DATE_COLUMN" not in source
+    assert "QHeaderView.Stretch" in configure_body
+    assert "table.setColumnWidth(2, _POI_TITLE_COLUMN_WIDTH)" in configure_body
+    assert "table.setItem(row_index, date_column, date_item)" in append_body
+    assert "table.setItem(row_index, 1, self._table_item(str(payload.get(\"note\"" in append_body
+    assert "self._set_combo_cell(table, row_index, 1" in append_body
+    assert "enumerate(numeric_keys, start=2)" in append_body
+    assert "self._set_combo_cell(table, row_index, 5" in append_body
+    assert "table.setItem(row_index, 6" in append_body
     assert "table.setItem(row_index, 2, self._table_item(str(payload.get(\"title\"" in append_body
     assert "table.setItem(row_index, 3, self._table_item(str(payload.get(\"description\"" in append_body
-    assert "date_text = self._item_text(table, row, _DATE_COLUMN)" in rows_body
-    assert '"direction": self._combo_text(table, row, 2) or "Long"' in rows_body
-    assert '"starting_price": self._float_or_none(self._item_text(table, row, 3))' in rows_body
-    assert '"asset_bought": self._float_or_none(self._item_text(table, row, 8))' in rows_body
-    assert '"outcome": self._combo_text(table, row, 9) or "Good"' in rows_body
-    assert '"note": self._item_text(table, row, 10)' in rows_body
+    assert "date_text = self._item_text(table, row, date_column)" in rows_body
+    assert '"direction": self._combo_text(table, row, 1) or "Long"' in rows_body
+    assert '"starting_price": self._float_or_none(self._item_text(table, row, 2))' in rows_body
+    assert '"target_pct_movement": self._float_or_none(self._item_text(table, row, 3))' in rows_body
+    assert '"closing_price": self._float_or_none(self._item_text(table, row, 4))' in rows_body
+    assert '"outcome": self._combo_text(table, row, 5) or "Good"' in rows_body
+    assert '"note": self._item_text(table, row, 6)' in rows_body
     assert '"title": self._item_text(table, row, 2)' in rows_body
     assert '"description": self._item_text(table, row, 3)' in rows_body
+    assert "asset_bought" not in append_body
+    assert "asset_bought" not in rows_body
+
+
+def test_legacy_trade_fields_load_without_crashing_and_are_ignored_by_editor() -> None:
+    _qapp()
+    dataset = {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m",
+    }
+    chart_key = notebook_chart_key(dataset)
+    notebook = HistoricalNotebook(
+        schema_version=HISTORICAL_NOTEBOOK_SCHEMA_VERSION,
+        object_type=HISTORICAL_NOTEBOOK_OBJECT_TYPE,
+        notebook_id="legacy_trade_notebook",
+        content_hash="",
+        display_name="Legacy Trades",
+        description="",
+        created_at_ms=1000,
+        updated_at_ms=2000,
+        chart_entries=(
+            {
+                "chart_key": chart_key,
+                "dataset": dataset,
+                "last_seen_position": 1,
+                "notes": [],
+                "trades": [
+                    {
+                        "row_id": "trade_1",
+                        "date_text": "2026-05-21 14:30",
+                        "ts_ms": 1779373800000,
+                        "direction": "Long",
+                        "starting_price": 100000.0,
+                        "target_pct_movement": 2.5,
+                        "closing_price": 102500.0,
+                        "equity": 1000.0,
+                        "leverage": 3.0,
+                        "asset_bought": 0.03,
+                        "outcome": "Good",
+                        "note": "Legacy row",
+                    }
+                ],
+                "points_of_interest": [],
+            },
+        ),
+    )
+    window = HistoricalNotebookWindow()
+    try:
+        window.set_notebook(notebook)
+        payload = window.chart_entries_payload()
+        trade = payload[0]["trades"][0]
+
+        assert trade["direction"] == "Long"
+        assert trade["starting_price"] == 100000.0
+        assert trade["target_pct_movement"] == 2.5
+        assert trade["closing_price"] == 102500.0
+        assert trade["outcome"] == "Good"
+        assert trade["note"] == "Legacy row"
+        assert "equity" not in trade
+        assert "leverage" not in trade
+        assert "asset_bought" not in trade
+    finally:
+        window.close()
 
 
 def test_notebook_chart_key_uses_dataset_identity_not_position() -> None:
@@ -228,7 +351,7 @@ def test_date_go_to_emits_request_without_direct_chart_mutation() -> None:
 
     assert "goto_requested = Signal(str, object)" in source
     assert "self.goto_requested.emit(chart_key, int(ts_ms))" in body
-    assert "date_text = self._item_text(table, row, _DATE_COLUMN)" in body
+    assert "date_text = self._item_text(table, row, date_column)" in body
     assert "Go To requested:" in body
     assert "Go To failed: Date / Time is empty." in body
     assert "Go To failed: Date / Time could not be parsed." in body
@@ -320,10 +443,11 @@ def test_historical_data_manager_coordinates_notebook_persistence() -> None:
     source = _source(HDM)
 
     assert "HistoricalNotebookStore" in source
+    assert "HistoricalNotebookManagerDialog" in source
     assert '"chart_presets" / "notebooks"' in source
     assert "def _on_save_notebook" in source
     assert "def _on_load_notebook" in source
-    assert "def _on_assign_notebook_to_workspace_snapshot" in source
+    assert "def _on_open_notebook_manager" in source
     assert "save_notebook" in source
     assert "load_notebook" in source
     assert "notebook_window.goto_requested.connect" in source

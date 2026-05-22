@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import ast
-from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -18,6 +17,7 @@ from leonardo.gui.windows._historical_data_manager.preset_compatibility import (
 
 ROOT = Path(__file__).resolve().parents[1]
 HDM = ROOT / "src" / "leonardo" / "gui" / "windows" / "historical_data_manager_window.py"
+MANAGER = ROOT / "src" / "leonardo" / "gui" / "windows" / "_historical_data_manager" / "notebook_manager_dialog.py"
 SNAPSHOT_STORE = ROOT / "src" / "leonardo" / "data" / "chart_presets" / "workspace_snapshot_store.py"
 STUDY_STORE = ROOT / "src" / "leonardo" / "data" / "chart_presets" / "study_setup_store.py"
 
@@ -182,17 +182,24 @@ def test_missing_notebook_ref_warns_without_blocking_snapshot_load(tmp_path: Pat
     assert any(issue.code == "assigned_notebook_unavailable" for issue in report.issues)
 
 
-def test_workspace_snapshot_load_and_assign_paths_use_notebook_ref() -> None:
+def test_workspace_snapshot_load_and_notebook_manager_paths_use_notebook_ref() -> None:
     manager_source = _source(HDM)
+    dialog_source = _source(MANAGER)
     load_body = _function_source(HDM, "_on_load_workspace_snapshot")
-    assign_body = _function_source(HDM, "_on_assign_notebook_to_workspace_snapshot")
+    manager_body = _function_source(HDM, "_on_open_notebook_manager")
+    assign_body = _function_source(MANAGER, "_on_assign_clicked")
+    unassign_body = _function_source(MANAGER, "_on_unassign_clicked")
     open_body = _function_source(HDM, "_open_notebook_ref_from_snapshot")
 
     assert "_open_notebook_ref_from_snapshot(snapshot.notebook_ref)" in load_body
+    assert "HistoricalNotebookManagerDialog" in manager_source
+    assert "workspace_snapshot_store=self._workspace_snapshot_store()" in manager_body
+    assert "def _assignment_map" in dialog_source
     assert "notebook_ref = {" in assign_body
-    assert '"notebook_id": notebook_window.notebook_id()' in assign_body
-    assert "snapshot_store.save_snapshot(updated, overwrite=True)" in assign_body
-    assert "self._set_current_workspace_notebook_ref(notebook_ref)" in assign_body
+    assert '"notebook_id": summary.notebook_id' in assign_body
+    assert "self._workspace_snapshot_store.save_snapshot(updated, overwrite=True)" in assign_body
+    assert "notebook_ref=None" in unassign_body
+    assert "self._workspace_snapshot_store.save_snapshot(updated, overwrite=True)" in unassign_body
     assert "self._set_current_workspace_notebook_ref(snapshot.notebook_ref)" in load_body
     assert "self._notebook_store().load_notebook(notebook_id)" in open_body
     assert "Assigned notebook could not be loaded" in open_body

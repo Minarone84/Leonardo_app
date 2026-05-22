@@ -1,0 +1,25 @@
+{
+  "chart_entries": [
+    {
+      "chart_key": "bybit|linear|btcusdt|30m",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m"
+      },
+      "last_seen_position": 1,
+      "notes": [],
+      "points_of_interest": [],
+      "trades": []
+    }
+  ],
+  "content_hash": "7c2e853d3c16b02e803f8bdc0f7faf65f491151ffa1ce6fd33ae8a764352976e",
+  "created_at_ms": 1779437314365,
+  "description": "",
+  "display_name": "Test_notebook_B",
+  "notebook_id": "c702de25dc1c4240b5a6c02e318bfba5",
+  "object_type": "historical_workspace_notebook",
+  "schema_version": 1,
+  "updated_at_ms": 1779437314365
+}

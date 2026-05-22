@@ -1,8 +1,8 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.16
+Version: v0.17
 Status: Living document (expected to change)
-Updated: 2026-05-21
+Updated: 2026-05-22
 
 Purpose
 
@@ -397,13 +397,24 @@ Implemented baseline:
   - Historical workspace visualization mode controls moved to the `Window` menu and the menu bar shows the current mode.
 
 - M10 Historical Notebook / Workspace Snapshot integration is accepted:
-  - Historical Data Manager exposes `Notes` menu actions for creating, opening, saving, loading, and assigning notebooks.
+  - Historical Data Manager exposes `Notes` menu actions for creating, opening, saving, loading, and managing notebooks.
   - `HistoricalNotebookStore` persists notebook JSON under `chart_presets/notebooks` while `HistoricalNotebookWindow` remains an in-memory editor.
   - Workspace Snapshots store only optional `notebook_ref` metadata and never embed notebook content.
   - Notebook chart tabs are keyed by dataset identity, not by chart position.
-  - Notes, Trades, and Points of Interest use structured rows with row-level `Go` buttons that route chart centering through the existing Data Manager / panel / controller path.
-  - POI rows can produce runtime chart markers; those markers are notebook annotations, not hidden studies or financial-tool outputs.
+  - Notes, Potential Trades, and Points of Interest use structured rows with explicit delete/navigation behavior.
+  - POI rows and eligible Potential Trades rows can produce runtime chart markers; those markers are notebook annotations, not hidden studies or financial-tool outputs.
   - The menu-bar quick actions include an `Open Notebook` / `Notebook` button before Study Setup actions when an assigned notebook is available.
+
+- M11 Historical Notebook / preset delete / Pan Anchor polish is accepted:
+  - Notebook Manager owns notebook assignment/unassignment, assignment summaries, descriptions/last-save visibility, and confirmed notebook deletion.
+  - Notebook assignment truth remains only in Workspace Snapshot `notebook_ref`; notebook files do not store assigned-workspace truth.
+  - Notes rows no longer navigate; Potential Trades rows have explicit `Go`, `Delete`, empty-by-default `Direction`, and Long/Short marker semantics.
+  - Potential Trade Long markers render as green upward arrows below bars; Potential Trade Short markers render as red downward arrows above bars.
+  - Notebook JSON persists additive `annotation_settings` for POI, PT Long, and PT Short marker offsets.
+  - Notebooks auto-save on close through the Historical Data Manager/store boundary.
+  - Load Study Setup and Load Workspace Snapshot dialogs expose confirmed Delete actions; Workspace Snapshot deletion does not delete referenced notebooks.
+  - Historical Data Manager opens maximized.
+  - Pan Anchor is accepted as an off-by-default, horizontal-only, timestamp-center pan synchronization mode across active charts in the same Historical Data Manager.
 
 Next direction:
 
@@ -476,6 +487,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.17: Historical Notebook / preset delete / Pan Anchor polish. Documents Notebook Manager assignment/delete ownership, Notes/Potential Trades/POI final row layouts, Potential Trades Long/Short runtime markers, annotation offset persistence, notebook auto-save-on-close, confirmed saved Study Setup and Workspace Snapshot deletion, maximized Historical Data Manager opening, and off-by-default Pan Anchor horizontal timestamp-based pan synchronization.
+
 v0.16: Historical Notebook and Workspace Snapshot integration. Documents NotebookStore persistence, Notes menu actions, Save/Load/Assign Notebook workflows, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level Go To buttons, runtime POI chart markers, and the Open Notebook quick action. Study Setup remains notebook-free and POI markers remain runtime chart annotations rather than hidden studies.
 
 v0.15: Oscillator styling, ARSI upgrade, and historical workspace compact layout. Documents Volume histogram/mean behavior, threshold-aware oscillator segment splitting, dynamic oscillator default-style resolution, Ultimate RSI-style ARSI with orange signal/mean line and 80/50/20 guides, compact chart workspace spacing, Window-menu view mode controls, and current-mode menu-bar label.

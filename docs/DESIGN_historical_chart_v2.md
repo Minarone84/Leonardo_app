@@ -1,7 +1,7 @@
 # Leonardo — Historical Chart Architecture (Current State)
 
-Version: v4.5
-Date: 2026-05-21
+Version: v4.6
+Date: 2026-05-22
 
 Scope: historical chart sessions, chart-space ownership, viewport/camera behavior, autoscale/manual-y behavior, resident slicing, study projection, pane contracts, and renderer execution.
 
@@ -25,7 +25,7 @@ The historical chart system must support:
 - pane-managed oscillator behavior
 - detachable chart sessions
 - renderer execution without semantic ownership
-- runtime notebook annotations without study ownership
+- runtime POI/Potential Trade notebook annotations without study ownership
 
 This document is intentionally chart-specific.
 
@@ -243,6 +243,7 @@ The viewport owns:
 - domain clamping over fixed chart space
 - horizontal zoom behavior inside the supplied chart-space domain
 - x-index ↔ pixel mapping
+- a pan-only notification path for explicit user horizontal pan gestures
 
 ### 8.2 Fixed-domain behavior
 
@@ -482,15 +483,15 @@ For historical conditional studies such as HCK, that visual payload may be a seg
 
 ---
 
-## 11.5 Notebook Runtime Annotation Boundary
+### 11.5 Notebook Runtime Annotation Boundary
 
-Historical Notebook POI markers are chart annotations, not studies.
+Historical Notebook POI and Potential Trade markers are chart annotations, not studies.
 
 Durable notebook truth lives in `HistoricalNotebookStore`. A Workspace Snapshot may reference that notebook through `notebook_ref`, but it must not embed notebook content in the snapshot payload.
 
-When a notebook POI overlay is enabled, `HistoricalDataManagerWindow` derives runtime marker payloads from notebook POI rows and sends them to matching active `HistoricalChartPanel` instances through narrow notebook-marker APIs. The chart layer receives already-derived annotation payloads.
+When notebook overlays are enabled, `HistoricalDataManagerWindow` derives runtime marker payloads from notebook POI rows and eligible Potential Trades rows, then sends them to matching active `HistoricalChartPanel` instances through narrow notebook-marker APIs. The chart layer receives already-derived annotation payloads.
 
-Notebook POI markers must not:
+Notebook POI and Potential Trade markers must not:
 
 - enter `ChartStudyRegistry`;
 - create `ChartStudyInstance` objects;
@@ -498,6 +499,8 @@ Notebook POI markers must not:
 - alter controller full-study truth;
 - be saved as Study Setup content;
 - redefine pane/layout ownership.
+
+Potential Trade markers are derived only from rows with explicit `Long` or `Short` direction. Long markers render as green upward arrows below the bar; Short markers render as red downward arrows above the bar. POI/PT marker offsets are notebook annotation settings, not study style and not renderer semantic ownership.
 
 Renderer participation remains execution-only: it draws the explicit marker payload it is given and must not infer notebook semantics or own notebook persistence.
 
@@ -772,6 +775,25 @@ They do not redefine chart space.
 Refill is controller-owned.
 The viewport never requests its own resident truth directly.
 
+### 16.7 Pan Anchor
+
+Pan Anchor is a Historical Data Manager shell-level coordination mode, not a viewport ownership change.
+
+When Pan Anchor is enabled, a user horizontal pan in one active historical chart causes the other eligible charts in the same Historical Data Manager to recenter around the source chart's current center timestamp.
+
+Rules:
+
+- Pan Anchor is off by default;
+- synchronization is horizontal-only;
+- synchronization is triggered by explicit user horizontal pan gestures, not generic viewport changes;
+- synchronization is timestamp-center based, not raw pixel-delta or raw bar-index based;
+- target charts keep their own visible width, zoom, autoscale/manual-y state, and vertical range;
+- embedded charts and detached charts still tracked by the same Historical Data Manager are eligible;
+- charts in other Historical Data Manager windows are not targeted;
+- programmatic timestamp navigation, notebook Go actions, Potential Trade/POI Go actions, initial chart load, and Workspace Snapshot restore must not become pan-sync sources;
+- Historical Data Manager owns reentry protection so programmatic target recentering does not create sync loops;
+- target recentering must use the existing panel/controller timestamp-centering path, with the controller preserving nearest-timestamp lookup, resident refill, and stale-slice protection.
+
 ---
 
 ## 17. Historical Rendering Performance Rules
@@ -840,6 +862,7 @@ The shared engine remains valid because ownership stays explicit.
 - Studies live on chart space; they do not redefine it.
 - Style does not trigger compute.
 - Save is full-dataset persistence, not render-scoped behavior.
+- Pan Anchor is a shell-level horizontal synchronization mode and must not move viewport, controller, renderer, or dataset ownership.
 - No shared responsibility may be introduced as a convenience shortcut.
 
 ---
@@ -861,7 +884,7 @@ This file should not drift back into a Financial Tools document.
 
 ## 21. Validation Basis
 
-This version also records the compact historical workspace layout update: chart-area margins, embedded grid gaps, splitter handle width, and renderer plot padding may be reduced to maximize data area, while fixed historical chart-space domain padding remains unchanged. View-mode controls are shell-level UI exposed through the historical workspace/window menu, not chart-session semantic ownership. Historical Notebook POI markers are documented as runtime annotations outside the study system and outside financial-tool output truth.
+This version also records the compact historical workspace layout update: chart-area margins, embedded grid gaps, splitter handle width, and renderer plot padding may be reduced to maximize data area, while fixed historical chart-space domain padding remains unchanged. View-mode controls are shell-level UI exposed through the historical workspace/window menu, not chart-session semantic ownership. Historical Notebook POI/PT markers are documented as runtime annotations outside the study system and outside financial-tool output truth. Pan Anchor is documented as shell-level horizontal timestamp synchronization rather than viewport or renderer ownership.
 M1–M6 hardening validated the current implementation with static checks, targeted regression tests, GUI release checks, and full uploaded test validation.
 
 
@@ -876,6 +899,7 @@ This document reflects the current validated implementation across the historica
 - pane-owned explicit render handoff
 - execution-only renderers
 - model-side change batching for coherent refresh
+- shell-level Pan Anchor synchronization through timestamp-centering without synchronizing zoom or vertical state
 
 Validation status for this phase:
 
@@ -889,7 +913,7 @@ That limitation does not change the ownership contract defined in this document.
 
 ## 22. Summary
 
-The Leonardo historical chart is now defined as a stable chart environment with a moving horizontal camera, a workspace-owned price-pane autoscale/manual-y contract, controller-owned resident truth, panel-owned chart-local study lifecycle and identity, workspace-owned pane contracts, runtime notebook annotations, and execution-only renderers. The current price-pane study set includes ordinary line overlays, segmented conditional overlays such as HCK, and marker-style event overlays such as `peaks_troughs`; notebook POI markers remain outside the study system.
+The Leonardo historical chart is now defined as a stable chart environment with a moving horizontal camera, a workspace-owned price-pane autoscale/manual-y contract, controller-owned resident truth, panel-owned chart-local study lifecycle and identity, workspace-owned pane contracts, runtime POI/PT notebook annotations, optional Pan Anchor horizontal synchronization, and execution-only renderers. The current price-pane study set includes ordinary line overlays, segmented conditional overlays such as HCK, and marker-style event overlays such as `peaks_troughs`; notebook POI/PT markers remain outside the study system.
 
 In plain terms:
 

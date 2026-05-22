@@ -1,7 +1,7 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.19
-Date: 2026-05-21
+Version: v3.20
+Date: 2026-05-22
 
 ## Overview
 
@@ -17,7 +17,9 @@ It is built around a modular chart engine that supports:
 - pane-managed rendering
 - chart-local study styling
 - chart-local oscillator visual policy
-- Historical Notebook workflow for chart notes, trades, POIs, row-level Go To, and workspace snapshot notebook references
+- Historical Notebook workflow for notes, Potential Trades, POIs, runtime chart annotations, and workspace snapshot notebook references
+- Historical workspace Pan Anchor for optional horizontal pan synchronization across active charts
+- confirmed delete workflows for saved Study Setups, Workspace Snapshots, notebook rows, and notebooks
 - centralized runtime diagnostics
 
 The GUI supports two deployment models:
@@ -46,6 +48,7 @@ This separation allows:
 - detachable sessions without state loss
 - independent evolution of GUI, compute, and storage
 - stable chart behavior during pan and zoom
+- optional horizontal pan synchronization without moving zoom, vertical scale, or renderer ownership
 - duplicate same-config studies without collapsing chart-local identity
 - chart-local study lifecycle without renderer ownership creep
 - centralized runtime visibility without moving ownership into the GUI
@@ -342,6 +345,24 @@ Both modes preserve the same logical slot order and chart-session identity.
 
 The mode selector is exposed through the `Window` menu as checkable `Scroll 4` / `Fit 8` actions. The top-right menu-bar mode label displays the current mode and updates when the mode changes. This is shell UI only; mode state remains owned by `HistoricalWorkspaceWidget`.
 
+`HistoricalDataManagerWindow` opens maximized by default. This is window presentation only and does not change chart-session, workspace, dataset, or renderer ownership.
+
+### Pan Anchor
+
+`Pan Anchor` is a checkable quick-action button in the Historical Data Manager menu-bar corner. It is off by default.
+
+When enabled, a user horizontal pan in any active historical chart recenters the other eligible charts in the same Historical Data Manager around the source chart's current center timestamp. The target charts keep their own zoom/visible width and vertical y-range/autoscale state.
+
+Pan Anchor rules:
+
+- synchronization is horizontal-only;
+- synchronization is timestamp-center based, not raw pixel or raw bar-index based;
+- embedded charts and detached charts still tracked by the same Historical Data Manager are eligible;
+- charts in other Historical Data Manager windows are not targeted;
+- zoom, autoscale/manual-y, studies, notebook markers, and renderer state are not synchronized;
+- programmatic navigation such as Notebook/POI/Potential Trades Go or Workspace Snapshot load does not become a pan-sync source;
+- Historical Data Manager owns reentry protection so target recentering does not loop back into the source chart.
+
 ### Compact chart-area layout
 
 The historical workspace uses compact chart-area margins and grid spacing to reserve more screen space for data. Pane separation should come from subtle pane/splitter borders and splitter handles rather than large dead gaps. Render surfaces use reduced plot padding while preserving readable right-axis and time-axis labels.
@@ -373,28 +394,54 @@ The same `HistoricalChartPanel` instance is preserved across embed/detach/dock f
 
 ### Historical Notebook
 
-`HistoricalDataManagerWindow` also owns the Historical Notebook user workflow for chart analysis notes.
+`HistoricalDataManagerWindow` also owns the Historical Notebook user workflow for chart analysis notes and runtime notebook annotations.
 
 Notebook responsibilities are split deliberately:
 
 - `HistoricalNotebookWindow` is a GUI-owned in-memory editor. It displays and edits notebook content, emits user intents, and does not own durable persistence.
-- `HistoricalDataManagerWindow` owns the `Notes` menu actions, coordinates `HistoricalNotebookStore`, resolves notebook `Go` requests to active chart panels, and applies runtime POI markers to matching charts.
+- `HistoricalDataManagerWindow` owns the `Notes` menu actions, coordinates `HistoricalNotebookStore`, resolves notebook `Go` requests to active chart panels, applies runtime POI/Potential Trade markers to matching charts, and performs durable auto-save-on-close through the store boundary.
 - `HistoricalNotebookStore` owns durable notebook JSON files under `chart_presets/notebooks` and must remain free of GUI / PySide imports.
 - `HistoricalWorkspaceSnapshotStore` stores only an optional `notebook_ref` with notebook identity/display metadata. It does not embed notebook content.
+- Notebook Manager owns assignment/unassignment UX, assignment summaries, notebook deletion, and cleanup of referencing `notebook_ref` values when an assigned notebook is deleted.
 
 Notebook chart entries are keyed by dataset identity (`exchange`, `market_type`, `symbol`, `timeframe`). Chart position may be shown as `last_seen_position`, but it must not participate in notebook identity.
 
-Notebook tabs contain structured `Notes`, `Trades`, and `Point of Interest` sections. Each row has a compact `Go` button before `Date / Time`; clicking it emits `goto_requested(chart_key, ts_ms)`. The notebook window does not move charts directly. `HistoricalDataManagerWindow` performs active-chart lookup and delegates chart centering through `HistoricalChartPanel` and `HistoricalChartController`.
+Notebook tabs contain structured `Notes`, `Potential Trades`, and `Point of Interest` sections:
 
-POI rows may be projected onto matching active charts as runtime annotation markers. These markers are notebook-driven chart annotations:
+- Notes rows expose `Delete | Date / Time | Note` and do not navigate charts;
+- Potential Trades rows expose `Go | Delete | Date / Time | Direction | Starting Price | Target % Movement | Closing Price | Outcome | Note`;
+- Potential Trades direction is empty by default and must be explicitly set to `Long` or `Short` before a chart marker is projected;
+- Point of Interest rows expose `Go | Delete | Date / Time | Title | Description`;
+- row deletion always asks for confirmation;
+- Date / Time double-click navigation is disabled, so explicit Go buttons are the only notebook navigation path.
+
+Potential Trades and POI `Go` buttons emit `goto_requested(chart_key, ts_ms)`. The notebook window does not move charts directly. `HistoricalDataManagerWindow` performs active-chart lookup and delegates chart centering through `HistoricalChartPanel` and `HistoricalChartController`.
+
+POI rows and eligible Potential Trades rows may be projected onto matching active charts as runtime annotation markers. These markers are notebook-driven chart annotations:
 
 - they are not financial tools;
 - they are not hidden studies;
 - they do not enter `ChartStudyRegistry`;
 - they are not saved as Study Setup content;
-- they are derived from notebook POI rows at runtime.
+- POI markers are derived from notebook POI rows at runtime;
+- Potential Trade markers are derived from Potential Trades rows with valid Long/Short direction at runtime;
+- Long Potential Trade markers render as green upward arrows below the bar;
+- Short Potential Trade markers render as red downward arrows above the bar.
+
+Notebook JSON may include additive `annotation_settings` for `poi_marker_offset`, `pt_long_marker_offset`, and `pt_short_marker_offset`. Existing notebooks without these values load with defaults, and legacy `pt_marker_offset` is only a compatibility fallback. These settings are notebook annotation state, not Study Setup state and not Workspace Snapshot assignment truth.
 
 The menu-bar corner quick actions include an optional `Notebook` button before the Study Setup buttons. It opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
+
+### Saved Study Setup and Workspace Snapshot deletion
+
+The Load Study Setup and Load Workspace Snapshot dialogs expose confirmed Delete actions.
+
+Rules:
+
+- deleting a saved Study Setup uses `ChartStudySetupStore.delete_setup(setup_id)` and does not remove currently applied chart studies;
+- deleting a Workspace Snapshot uses `HistoricalWorkspaceSnapshotStore.delete_snapshot(snapshot_id)` and does not delete referenced notebooks, datasets, saved Study Setups, or saved artifacts;
+- when a snapshot references a notebook, the delete confirmation states that the notebook will not be deleted;
+- dialogs refresh their lists and clear stale selection/details after successful deletion.
 
 ---
 
@@ -1278,7 +1325,10 @@ This README therefore documents the current ownership contract and validated cod
 The GUI currently provides:
 
 - 8-slot adaptive historical workspace with Scroll 4 / Fit 8 modes, dock-back slot preservation, and chart Position controls
-- Historical Notebook support for workspace-linked notes, trades, POIs, row-level Go To, assigned snapshot notebooks, and runtime POI chart annotations
+- Historical Notebook support for workspace-linked notes, Potential Trades, POIs, row-level delete, explicit Go navigation, assigned snapshot notebooks, auto-save-on-close, and runtime POI/PT chart annotations
+- Notebook Manager ownership for notebook assignment/unassignment, assignment summaries, and confirmed notebook deletion
+- Pan Anchor horizontal synchronization across active historical charts
+- confirmed delete actions for saved Study Setups and Workspace Snapshots
 - detachable chart sessions
 - shared chart engine for embedded and floating shells
 - pane-managed layout
@@ -1428,6 +1478,8 @@ Recommended tooling (in the GUI package):
 ---
 
 ## Change log
+
+- **v3.20 (2026-05-22)** — Historical Notebook and workspace final polish: Notebook Manager owns assignment and deletion, Notes rows no longer navigate, Trades became Potential Trades, Potential Trades support explicit Long/Short direction and runtime green/red arrow annotations, POI/PT marker offsets persist in notebook `annotation_settings`, notebooks auto-save on close, saved Study Setup and Workspace Snapshot load dialogs gained confirmed Delete actions, Historical Data Manager opens maximized, and Pan Anchor provides optional horizontal timestamp-based pan synchronization across active charts.
 
 - **v3.19 (2026-05-21)** — Historical Notebook workflow: added `Notes` menu notebook actions, `HistoricalNotebookStore` persistence, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level `Go` buttons, runtime POI chart annotations, and the menu-bar `Notebook` quick action. Study Setups remain notebook-free and POI markers remain runtime annotations rather than hidden studies.
 

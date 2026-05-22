@@ -1,7 +1,7 @@
 # Financial Tools Contract System
 
-Version: v1.3
-Date: 2026-05-20
+Version: v1.4
+Date: 2026-05-22
 
 ## Purpose
 
@@ -148,11 +148,12 @@ The sidecar may include:
 - shape and per-column metadata;
 - tool metadata from `ToolContract`;
 - output metadata from `ft_specs.py`;
+- per-column source-selection metadata such as `selectable`, `renderable`, and `analysis_usable` when available;
 - canonical names and saved identity from `ft_naming.py`;
 - params and bindings with explicit/inferred/unknown status;
 - lineage, fingerprint, quality, and namespaced extension metadata.
 
-Sidecars are consumers of contract data. They must not define new tool behavior, compute logic, render defaults, or naming templates.
+Sidecars are consumers of contract data. They must not define new tool behavior, compute logic, render defaults, or naming templates. Valid sidecar column metadata is also the source-selection truth for saved artifacts: non-renderable but analysis-usable/selectable outputs may be selected as analytical sources, while non-selectable utility columns must not be exposed merely because they exist in the CSV header.
 
 ## Adding a new indicator
 
@@ -211,7 +212,7 @@ validate_all_contracts(include_runtime=True, include_naming=True)
 
 Also verify representative runtime outputs for indicators, oscillators, and constructs against naming/specs output metadata.
 
-When changing sidecar metadata generation, also verify that saved artifact `.meta.json` files still preserve contract-derived `renderable`, `analysis_usable`, semantic role, params, bindings, and output structure without changing runtime CSV values.
+When changing sidecar metadata generation, also verify that saved artifact `.meta.json` files still preserve contract-derived `renderable`, `analysis_usable`, semantic role, params, bindings, and output structure without changing runtime CSV values. When changing saved-source selection, also verify that valid sidecar `selectable` / `analysis_usable` metadata wins over CSV-header guessing and that legacy fallback does not override valid metadata.
 
 When changing chart apply semantics, also verify accidental empty render payloads do not become chart-local studies unless the tool contract explicitly opts into empty render output.
 
@@ -234,7 +235,7 @@ Financial tool execution environment is execution context, not normal tool ident
 - directional trend stream: `peak_fractal_{trend_fractal_window}` and `trough_fractal_{trend_fractal_window}`;
 - horizontal range stream: `peak_fractal_{range_fractal_window}` and `trough_fractal_{range_fractal_window}`.
 
-The legacy `fractal_window` parameter remains a compatibility alias for the directional trend stream. The controller/source-resolution layer is responsible for loading the saved `peaks_troughs` artifact for the same market dataset, aligning it by `ts_ms` or `time`, and injecting all unique selected peak/trough columns before UTC compute. Trend and range dependency intents must be resolved independently even when both are satisfied by the same artifact. UTC runtime must remain compute-only and must not read artifact files directly.
+The legacy `fractal_window` parameter remains a compatibility alias for the directional trend stream. The controller/source-resolution layer is responsible for loading the saved `peaks_troughs` artifact for the same market dataset, aligning it by `ts_ms` or `time`, and injecting all unique selected peak/trough columns before UTC compute. Trend and range dependency intents must be resolved independently even when both are satisfied by the same artifact. UTC runtime must remain compute-only and must not read artifact files directly. Execution paths share UTC Peaks & Troughs dependency preparation through the data-layer helper, while recovery planning shares only the dependency-intent/required-column resolver and remains read-only, including blocker checks for missing or duplicate dependency join keys.
 
 UTC directional trend semantics are contractually constrained:
 

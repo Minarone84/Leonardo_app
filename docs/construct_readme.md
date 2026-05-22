@@ -1,7 +1,7 @@
 # Construct Naming & Behavior Policy (Leonardo)
 
-Version: v1.6  
-Date: 2026-05-12  
+Version: v1.7
+Date: 2026-05-22
 Scope: Construct runtime naming, input-role semantics, multi-output behavior, saved identity, metadata sidecars, execution environment context, renderability boundary, and controller/UI integration
 
 This document defines the canonical rules for:
@@ -42,8 +42,8 @@ Specs may describe roles, semantic metadata, and renderability, but they do not 
 
 ### Separation rule
 
-Constructs define analytical output truth.  
-The chart layer consumes that truth downstream.  
+Constructs define analytical output truth.
+The chart layer consumes that truth downstream.
 Renderers must never reinterpret construct naming or invent construct semantics.
 
 ---
@@ -168,7 +168,7 @@ These values represent the ordered relationship between the three inputs:
 - `5`: mid  > fast > slow
 - `6`: mid  > slow > fast
 
-UI may present these as human-readable “ambient codes” (e.g. `F>M>S`).  
+UI may present these as human-readable “ambient codes” (e.g. `F>M>S`).
 This is **display-only** and must not affect naming or saved identity.
 
 ### Tie handling
@@ -184,7 +184,7 @@ Braids are **multi-output**, but not every output is intended to be chart-render
 - the ambient state output (`base`) is chart-renderable
 - `*_width` and `*_compression` are **analysis outputs** (non-renderable by default), but remain valid runtime outputs for persistence and chaining
 
-The controller must convert **only** `renderable=True` outputs into chart series.  
+The controller must convert **only** `renderable=True` outputs into chart series.
 Non-renderable braid outputs must never become chart series, even though they are valid runtime outputs.
 
 
@@ -345,10 +345,16 @@ Constructs follow the same full-dataset boundary as the rest of the financial-to
 
 The controller must not rename runtime construct outputs while translating them into downstream chart payloads.
 
-Naming truth stays upstream.  
+Naming truth stays upstream.
 Render truth becomes resident-local only at the controller boundary.
 
 Construct execution may receive `ToolExecutionContext`, but that context is not construct naming truth and is not saved artifact identity.
+
+### UTC dependency preparation boundary
+
+`universal_trend_classifier` remains compute-only. Historical apply/save paths prepare required Peaks & Troughs columns before runtime dispatch through a shared data-layer helper. That helper resolves directional and range dependency intents, honors legacy `fractal_window` fallback and explicit trend/range overrides, loads the saved `peaks_troughs` artifact for the same market partition, and aligns required columns by `ts_ms` or `time` only.
+
+Recovery planning uses the same dependency-intent/required-column resolver but remains read-only. It may classify missing artifacts, missing columns, missing join keys, or duplicate join keys as blockers, but it must not inject columns or compute UTC.
 
 ---
 
@@ -434,7 +440,7 @@ Contracts/specs describe which environments a construct supports. The family bri
 
 ### Rule
 
-Specs may describe roles and metadata.  
+Specs may describe roles and metadata.
 Specs must not define output naming templates.
 
 ---
@@ -577,7 +583,7 @@ financial_tools/specs_runtime/
 - Controller filters renderability but does not rename runtime outputs.
 - Saved identity is built through naming runtime helpers.
 - active construct persistence identity includes deterministic hash suffixes and excludes execution environment context.
-- Saved construct CSVs use adjacent `.meta.json` sidecars for artifact identity, params/bindings, output metadata, lineage, and quality metadata.
+- Saved construct CSVs use adjacent `.meta.json` sidecars for artifact identity, params/bindings, output metadata, lineage, and quality metadata. Valid sidecar column metadata supplies source-selection truth where available: selectable analysis outputs may be reused as construct sources, while non-selectable utility outputs remain persisted but hidden from source selection.
 - Execution environment context is validated by the construct bridge and excluded from naming/persistence identity.
 - Construct source alignment requires deterministic keys such as `ts_ms` or `time`.
 - Gap honesty remains a runtime contract for trap area, windowed angle families, and segmented outputs.

@@ -1,6 +1,6 @@
 # Leonardo — Historical Chart Architecture (Current State)
 
-Version: v4.6
+Version: v4.7
 Date: 2026-05-22
 
 Scope: historical chart sessions, chart-space ownership, viewport/camera behavior, autoscale/manual-y behavior, resident slicing, study projection, pane contracts, and renderer execution.
@@ -317,6 +317,7 @@ That means:
 - non-renderable outputs must never become chart series
 - non-renderable `analysis_usable` outputs may remain full-dataset source truth for later construct chaining
 - chart-renderable payloads with no renderable outputs must fail unless `accepts_empty_render_output=True`
+- runtime output projection must prefer explicit `ts_ms` / `time` / non-positional index alignment before using any legacy full-dataset/no-timeline positional fallback
 
 
 ### 9.3.1 UTC dependency preparation
@@ -326,7 +327,7 @@ That means:
 - derive the directional trend pair from UTC params: `peak_fractal_{trend_fractal_window}` and `trough_fractal_{trend_fractal_window}`, with legacy `fractal_window` as the directional fallback;
 - derive the horizontal range pair from UTC params: `peak_fractal_{range_fractal_window}` and `trough_fractal_{range_fractal_window}`;
 - honor advanced explicit overrides only for their own purpose (`trend_peak_column` / `trend_trough_column`, `range_peak_column` / `range_trough_column`);
-- load the saved `peaks_troughs` artifact for the same market partition;
+- load the saved `peaks_troughs` artifact for the same market partition through the shared data-layer UTC dependency helper;
 - merge all unique required columns by `ts_ms` or `time` only;
 - reject missing artifacts, missing columns, duplicate join keys, or unsafe alignment.
 
@@ -335,6 +336,10 @@ Trend and range dependency intents are separate even when they are satisfied fro
 This dependency preparation does not change the compute/render contract. Full UTC output remains controller-owned full-study truth, and resident-local projection remains the only payload sent downstream. The renderer remains execution-only. Historical UTC range replay is sequential: bars are processed in order and confirmed range swings are fed only at their knowable confirmation bar so active ranges can continue/break through later bars in the same way a future realtime path would. Invalid OHLC/source rows remain hard continuity breaks: historical UTC must split directional trend detection by contiguous valid-data segments so uptrend/downtrend intervals never bridge NaN or malformed candle/source gaps.
 
 Saved dependency lookup uses the active historical storage root derived from runtime config, `Path(ctx.config.runtime.data_dir) / "historical"`, rather than the default root fallback.
+
+The same UTC dependency-intent resolver is also consumed by recovery planning. Recovery remains read-only: it classifies missing/unsafe dependencies, including missing or duplicate `ts_ms` / `time` join keys, but does not inject columns or compute UTC.
+
+Full-dataset save conversion uses the shared data-layer `result_to_save_dataframe(...)` helper before `DerivedCsvStore` persistence. This keeps chart save and save-only artifact calculation aligned for timestamps, output ordering, boolean/state outputs, numeric coercion, and NaN/gap honesty without moving persistence or render ownership.
 
 ### 9.4 Refill ownership
 

@@ -1,6 +1,6 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.8  
+Version: v3.9
 Date: 2026-05-22
 
 ## Overview
@@ -112,9 +112,10 @@ Runtime task state contains only active tasks.
 Completed, failed, and cancelled tasks are:
 
 - removed from runtime state
+- removed from TaskManager's active internal task map when the terminal callback still refers to the same task object
 - preserved only in audit history
 
-This prevents runtime state from becoming a historical accumulation layer.
+This prevents runtime state and the task supervisor from becoming historical accumulation layers while preserving terminal facts in audit history.
 
 ---
 
@@ -134,7 +135,7 @@ GUI intent
 → BaseExchange capability contract
 → concrete exchange adapter
 → CsvOHLCVStore / HistoricalDatasetValidator
-→ audit events
+→ normalized audit events
 ```
 
 Core owns:
@@ -156,6 +157,8 @@ Exchange adapters own venue-specific capability truth, including:
 - oldest available OHLCV timestamp discovery when supported.
 
 The GUI may display capabilities and request work, but it must not own historical execution, exchange-specific values, adapter limits, or cancellation truth.
+
+`CoreBridge` resolves plain GUI download intent into Core-side downloader requests, including the configured historical root. The Historical Download Window does not construct `HistoricalDownloader`, downloader request dataclasses, or historical storage roots directly.
 
 ---
 
@@ -199,10 +202,9 @@ These participate in startup and shutdown and appear in runtime lifecycle tracki
 
 These are long-lived service objects available by lookup but not tracked as lifecycle-managed runtime entities.
 
-Examples:
+Example:
 
 - `HistoricalDatasetService`
-- `ExchangeRegistry`
 
 ### Important rule
 
@@ -224,26 +226,8 @@ Constraints:
 - service lookup should be explicit through `AppContext`
 - registry should not be extended as a general service container
 
-Runtime truth belongs to `StateStore`.  
+Runtime truth belongs to `StateStore`.
 Service lookup belongs to explicit context ownership.
-
----
-
-## Exchange Registry Capability Provider
-
-`ExchangeRegistry` is the Core-side capability/provider boundary for exchange discovery and historical adapter creation.
-
-It is registered explicitly through `AppContext` as a capability provider, not as a lifecycle-managed runtime service. Bybit is currently the only default registered adapter.
-
-Rules:
-
-- `CoreBridge` may ask the registry for supported exchanges, markets, and timeframes for GUI display;
-- `HistoricalDownloader` may ask the registry for a fresh/local adapter instance for preflight and execution;
-- adapters remain transport/API objects and are opened/closed by the caller that performs the work;
-- adapters do not become runtime lifecycle services and do not mutate `StateStore` directly;
-- unsupported exchanges must fail clearly at the provider boundary.
-
-This removes ad hoc Bybit construction from historical capability display and ingestion execution without introducing a full connection manager.
 
 ---
 
@@ -324,16 +308,16 @@ Instead, Core provides resident slices.
 
 ### Definitions
 
-**Dataset**  
+**Dataset**
 Full canonical dataset on disk.
 
-**Slice**  
+**Slice**
 Subset of the dataset loaded into memory.
 
-**Viewport**  
+**Viewport**
 Visible global-index region managed by the chart layer.
 
-**Slice payload**  
+**Slice payload**
 A returned slice containing:
 
 - request-scoped identity such as `tab_id` and `request_id`
@@ -496,6 +480,10 @@ They differ by **render scope vs persistence scope**:
 
 This distinction must remain explicit.
 
+Full-dataset save conversion is shared through the data-layer `result_to_save_dataframe(...)` helper. Chart save and save-only artifact calculation use the same conversion semantics for timestamps, output ordering, boolean/state outputs, numeric values, and NaN/gap honesty before persistence is delegated to `DerivedCsvStore`.
+
+Historical UTC dependency preparation is shared through data-layer UTC dependency helpers. Execution paths use the shared helper to resolve, load, align, and inject saved Peaks & Troughs dependencies by `ts_ms` / `time`; recovery planning uses the shared UTC dependency-intent resolver and remains read-only while checking missing columns, missing join keys, and duplicate join keys.
+
 ---
 
 ## Construct Source Alignment
@@ -616,7 +604,7 @@ Artifact recovery is intentionally split into narrow data-layer responsibilities
 
 - `ArtifactRecipeStore` owns durable single-recipe JSON persistence.
 - `ArtifactRecipeCollectionStore` owns durable ordered collection JSON persistence and dependency metadata.
-- `ArtifactRecoveryPlanner` owns read-only recovery classification for expected recipe outputs. It inspects CSV/sidecar/source availability and reports recovery status without calculating or writing artifacts.
+- `ArtifactRecoveryPlanner` owns read-only recovery classification for expected recipe outputs. It inspects CSV/sidecar/source availability, consumes shared UTC dependency-intent resolution where relevant, checks unsafe dependency join-key conditions, and reports recovery status without calculating or writing artifacts.
 - `ArtifactRecoveryRegenerator` owns recovery orchestration for planner-actionable recipes only. It delegates execution to `ArtifactRecipeExecutor` and does not calculate directly.
 - `ArtifactRecipeExecutor` owns recipe execution order/reporting and delegates full-dataset computation/saves to `ArtifactCalculationService`.
 - `ArtifactRecoveryDatabaseRebuilder` gates linked Analysis Database materialization after clean recovery and delegates dataframe rebuilding to `AnalysisDatabaseStore`.
@@ -647,7 +635,7 @@ Artifact sidecars include, where applicable:
 - first/last `ts_ms`;
 - first/last display timestamps in UTC and `Europe/Rome`;
 - row count, column count, and column names;
-- per-column roles, renderability, and analysis usability;
+- per-column roles, renderability, analysis usability, and selectability where available;
 - tool metadata from `ToolContract`, `ft_naming.py`, and `ft_specs.py`;
 - params and bindings with explicit/inferred/unknown status;
 - lineage created/updated timestamps;
@@ -813,7 +801,7 @@ The Leonardo Core provides:
 - read-only artifact recovery planning, delegated artifact regeneration, explicit Analysis Database component editing, and store-owned linked Analysis Database rebuilds
 - observable runtime lifecycle and state
 - explicit distinction between compute truth and render truth
-- Core-supervised historical OHLCV download planning, execution, cancellation, validation, normalized audit emission, and post-write dataset-cache invalidation
+- Core-supervised historical OHLCV download planning, execution, cancellation, validation, and audit emission
 
 It is:
 
@@ -868,14 +856,10 @@ invalidate_all_dataset_caches() -> int
 
 Downstream controller code should call these APIs directly. Private reach-through into service internals such as `_datasets` is not part of the production contract.
 
-### Exchange registry boundary
-
-`ExchangeRegistry` is now part of the Core capability-provider surface. `LeonardoApp` registers the default registry explicitly, currently with Bybit as the only concrete adapter factory. `CoreBridge` and `HistoricalDownloader` consume this provider instead of constructing Bybit directly in historical capability/download paths.
-
 ### Frozen boundary rules
 
 - Core remains independent from GUI.
 - Feed lifecycle is tracked at feed/orchestration level.
-- Adapters remain transport-only and are not lifecycle-managed Core services.
+- Adapters remain transport-only.
 - `StateStore` remains the runtime-state writer.
 - Dataset-service APIs expose timeline/full-dataframe truth; viewport, panes, and renderers never access dataset storage directly.

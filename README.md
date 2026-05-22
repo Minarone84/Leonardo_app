@@ -17,9 +17,9 @@ Primary architecture documents live in `docs/`:
 - `Leonardo__Roadmap_V01.md` — Roadmap and change log.
 
 
-## Current Historical Download Manager baseline — 2026-05-18
+## Current Historical Download Manager baseline — 2026-05-22
 
-The Historical Download Manager is now a Core-supervised OHLCV ingestion flow. The GUI collects user input, displays exchange capabilities, requests preflight plans, shows the Confirm OHLCV Download dialog, opens the OHLCV Download Task monitor, and observes normalized audit events. Core owns execution through TaskManager, HistoricalDownloader owns planning/paging/persistence/validation, `ExchangeRegistry` owns exchange discovery and adapter factory lookup, and the exchange adapter owns venue-specific markets, timeframes, aliases, interval mappings, historical limits, and range-discovery behavior. Supported GUI download flows pass the active historical storage root, `Path(ctx.config.runtime.data_dir) / "historical"`, into the downloader instead of relying on the default root fallback.
+The Historical Download Manager is now a Core-supervised OHLCV ingestion flow. The GUI collects user input, displays exchange capabilities, requests preflight plans, shows the Confirm OHLCV Download dialog, opens the OHLCV Download Task monitor, and observes normalized audit events. Core owns execution through TaskManager, CoreBridge resolves the configured historical root and builds downloader requests from plain GUI intent, HistoricalDownloader owns planning/paging/persistence/validation, `ExchangeRegistry` owns exchange discovery and adapter factory lookup, and the exchange adapter owns venue-specific markets, timeframes, aliases, interval mappings, historical limits, and range-discovery behavior.
 
 Important accepted behavior:
 
@@ -30,7 +30,8 @@ Important accepted behavior:
 - GUI `Limit = 0` means adapter/default page limit, and explicit values are clamped by the adapter maximum;
 - historical capability display and downloader adapter acquisition route through the Core-registered `ExchangeRegistry`; Bybit remains the only default concrete adapter;
 - OHLCV rewrites invalidate the matching `HistoricalDatasetService` dataset/slice cache through public Core/data APIs;
-- audit sinks normalize subsystem events so GUI snapshots and durable JSONL audit history consume one structured event shape.
+- audit sinks normalize subsystem events so GUI snapshots and durable JSONL audit history consume one structured event shape;
+- completed, failed, and cancelled tasks are removed from `TaskManager`'s active task map while remaining preserved in audit history.
 
 ## Current Data Manager / Analysis Database workflow — 2026-05-16
 
@@ -55,7 +56,9 @@ Data Manager remains dataset/artifact oriented and separate from chart sessions.
 
 GUI code collects user selections and presents dialogs. It must not manually rewrite `manifest.json`, move/delete `analysis_databases/{database_id}/`, invent persistence rules, classify artifact recovery state locally, or replace Analysis Database components during build/rebuild. Recovery UI actions are intent surfaces only: status classification belongs to `ArtifactRecoveryPlanner`, artifact regeneration belongs to `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor`, and linked database materialization belongs to `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`.
 
-## Current Historical Chart / Study workflow — 2026-05-18
+Saved artifact source selection in chart/Data Manager workflows consumes `.meta.json` column metadata when available. Valid sidecar `selectable` / `analysis_usable` metadata is the source-selection truth; CSV-header fallback is retained only for legacy, missing, or malformed sidecars.
+
+## Current Historical Chart / Study workflow — 2026-05-22
 
 The historical chart stack is now hardened around the ownership chain:
 
@@ -75,7 +78,11 @@ Accepted behavior includes:
 - active construct saved identity includes deterministic `__h<hash8>` identity;
 - style changes invalidate static render caches through public workspace/pane/surface contracts instead of panel reach-through into renderer internals;
 - `Series.values` consumers honor the `Sequence` contract;
-- `HistoricalDatasetService` exposes explicit dataset-cache invalidation so OHLCV rewrites do not leave stale in-memory timelines/slices.
+- `HistoricalDatasetService` exposes explicit dataset-cache invalidation so OHLCV rewrites do not leave stale in-memory timelines/slices;
+- runtime projection aligns financial-tool output by explicit `ts_ms` / `time` / non-positional index data before falling back to the legacy full-dataset/no-timeline positional invariant;
+- chart save and Data Manager/recipe calculation share `result_to_save_dataframe(...)` for consistent full-dataset saved value conversion, including boolean output preservation and gap honesty;
+- historical UTC dependency preparation is centralized in `utc_dependency_sources.py` for chart apply/save and `ArtifactCalculationService`, while UTC runtime remains compute-only;
+- `ArtifactRecoveryPlanner` shares UTC required-column intent resolution and performs read-only blocker checks for missing or duplicate `ts_ms` / `time` dependency join keys.
 
 M6/M6B completed release-check/test reconciliation and full uploaded test validation without production-code changes.
 
@@ -170,8 +177,6 @@ These are chart/apply/runtime contract changes only where appropriate. Renderer 
 
 ## Release packaging guardrails (GUI)
 
-Runtime dependency truth is declared in `pyproject.toml`; it must not drift back to a false empty dependency list.
-
 When producing a GUI distribution zip, exclude development artifacts:
 
 - `__pycache__/`, `*.pyc`, `.pytest_cache/`, `.git/`
@@ -189,12 +194,12 @@ This documentation package records the post-refactor architecture baseline:
 - financial tools now carry explicit `ToolExecutionContext` so historical and future realtime execution can be distinguished without polluting params, naming, saved identity, or render keys;
 - CSV-backed historical artifacts now use `.meta.json` sidecars for artifact identity, metadata, lineage, fingerprint, and quality metadata;
 - Data Manager and Analysis Database workflows prepare analysis-ready datasets without becoming chart sessions; the current workflow separates `Database seed creator`, `Build Selected Database`, `Rebuild Selected Database`, and explicit `Edit Selected Database Components...`; durable rename/delete/build/rebuild semantics remain in `AnalysisDatabaseStore`, component changes remain in the explicit component editor path, no-space/duplicate-name policy applies to create/rename, and rebuilds materialize selected databases from their saved manifests without replacing artifact components;
-- Universal Trend Classifier historical mode consumes controller-injected Peaks & Troughs event columns for independent directional-trend and horizontal-range detection, preserves invalid-gap honesty, and keeps compute-only runtime ownership with renderer-only drawing;
+- Universal Trend Classifier historical mode consumes shared-helper-injected Peaks & Troughs event columns for independent directional-trend and horizontal-range detection, preserves invalid-gap honesty, and keeps compute-only runtime ownership with renderer-only drawing; recovery planning shares the same dependency-intent resolver while remaining read-only;
 - Core/GUI feed dependency removed from the Bybit feed boundary;
-- historical exchange capability display and downloader adapter acquisition route through the Core `ExchangeRegistry`;
-- historical dataset service exposes explicit public timeline/columns/dataframe/cache-invalidation APIs;
+- historical dataset service exposes explicit public timeline/columns/dataframe APIs;
 - historical chart controller, panel, workspace, panes, and renderers are physically split while preserving public import façades;
 - workspace owns Autoscale/manual-y and pane contracts;
 - viewport remains horizontal camera only;
 - panes remain handoff boundaries;
 - renderers remain execution-only.
+- historical saved-artifact source selection is sidecar-metadata-driven, runtime projection prefers explicit timeline/index alignment, and full-dataset save conversion is shared through `result_to_save_dataframe(...)`.

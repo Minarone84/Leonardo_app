@@ -1,6 +1,6 @@
 # Leonardo Study System (Current State)
 
-Version: v1.9
+Version: v1.10
 Date: 2026-05-22
 
 ## Purpose
@@ -62,7 +62,7 @@ The study system must be:
 
 Important rule:
 
-A study is part of the current chart session.  
+A study is part of the current chart session.
 It is **not** the financial tool definition itself, and it is **not** the persisted artifact identity.
 
 ---
@@ -91,6 +91,7 @@ This supports cache correctness and prevents pan/zoom and crosshair paths from p
 - canonical full-dataset study truth
 - resident slice truth
 - resident-local study projection
+- timeline-first projection alignment for runtime output before any legacy no-timeline positional fallback
 - non-renderable analysis-source retention for temporary construct chaining
 - apply-time renderable filtering
 - apply vs save boundary behavior
@@ -128,7 +129,7 @@ The panel does **not** own computation truth, persistence semantics, pane layout
 - batched projected-study reapply and pruning of managed pane/render state
 - faithful application of final resident-local study payloads into chart panes
 
-Workspace owns pane behavior.  
+Workspace owns pane behavior.
 Studies do not own layout.
 
 ### Renderer
@@ -252,7 +253,7 @@ Supported source kinds currently include:
 
 Important rule:
 
-This is chart-session computation metadata.  
+This is chart-session computation metadata.
 It is not renderer state.
 
 ### `StudyDisplayStyle`
@@ -268,8 +269,8 @@ It includes:
 
 Important rule:
 
-The legacy/global fields are compatibility-only.  
-They are not the identity of expanded renderer-facing segmented payload. Historical segmented visual derivation may expand one logical study into several renderer-facing series/fills while chart-local signal/fill style truth remains anchored to the logical signal names and fill ids.  
+The legacy/global fields are compatibility-only.
+They are not the identity of expanded renderer-facing segmented payload. Historical segmented visual derivation may expand one logical study into several renderer-facing series/fills while chart-local signal/fill style truth remains anchored to the logical signal names and fill ids.
 They are **not** the source of truth for static defaults.
 
 ### `StudySignalStyle`
@@ -415,7 +416,7 @@ It supports operations such as:
 
 Important rule:
 
-The registry stores study state.  
+The registry stores study state.
 It does **not** compute studies, apply panes, or own renderer payloads.
 
 ---
@@ -459,7 +460,7 @@ The controller therefore retains:
 
 When the resident slice changes:
 
-- the controller rebuilds resident-local projected series from stored study truth
+- the controller rebuilds resident-local projected series from stored study truth using explicit `ts_ms` / `time` / non-positional index alignment where available
 - the panel maps controller-projected payloads back onto chart-local study ids
 - the panel resolves the final chart-local styled series/fill payload once per chart-local study instance
 - the workspace reapplies those final resident-local payloads as one coherent batch while preserving pane ownership
@@ -478,12 +479,12 @@ That means:
 
 Important rule:
 
-Panning around a historical chart must behave like moving a camera over existing chart-session truth.  
+Panning around a historical chart must behave like moving a camera over existing chart-session truth.
 It must not turn the renderer into a computation owner.
 
 ### Style and refresh rule
 
-Resident refresh may rebuild resident-local projected payloads.  
+Resident refresh may rebuild resident-local projected payloads.
 Style edits must **not** trigger study recomputation.
 Style reapply may invalidate renderer static-scene caches only through public workspace/pane/surface contracts, never by mutating renderer private cache fields.
 When a study uses historical segmented visual derivation, the panel must re-resolve from controller-projected base series rather than from already segmented workspace/model series so workspace/model do not become a second semantic owner.
@@ -510,7 +511,7 @@ Important rule:
 
 The study layer must not “helpfully” render extra runtime lines just because they exist.
 
-That decision belongs upstream at the controller boundary.
+That decision belongs upstream at the controller boundary. Saved artifacts may still persist non-renderable outputs when valid; saved-source selection is driven by artifact sidecar metadata rather than chart-study renderability alone.
 
 ---
 
@@ -756,7 +757,7 @@ The current Leonardo study system is:
 
 This is the correct contract for studies in Leonardo.
 
-Studies live **on** the chart session.  
+Studies live **on** the chart session.
 They do not own the chart engine, and they do not redefine chart truth.
 
 ---

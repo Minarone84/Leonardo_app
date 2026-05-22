@@ -1,6 +1,6 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.18
+Version: v0.19
 Status: Living document (expected to change)
 Updated: 2026-05-22
 
@@ -32,8 +32,8 @@ stopping
 stopped
 failed
 
-Deterministic startup/shutdown sequencing  
-Service initialization and teardown coordination  
+Deterministic startup/shutdown sequencing
+Service initialization and teardown coordination
 
 ------------------------------------------------------------
 
@@ -43,40 +43,40 @@ Explicit runtime state surface maintained via StateStore
 
 Tracks:
 
-application state  
-lifecycle-managed services and their lifecycle  
-active background tasks  
-GUI-exposed runtime elements (windows, realtime flags)  
+application state
+lifecycle-managed services and their lifecycle
+active background tasks
+GUI-exposed runtime elements (windows, realtime flags)
 
 Phase 3 additions:
 
-connection runtime state (external operational connections)  
-session runtime state (minimal runtime session identity)  
+connection runtime state (external operational connections)
+session runtime state (minimal runtime session identity)
 
 Connection runtime state tracks:
 
-connection identity (feed-level ownership)  
-connection kind (e.g. market_data)  
+connection identity (feed-level ownership)
+connection kind (e.g. market_data)
 lifecycle state:
 
-registered  
-starting  
-running  
-stopping  
-stopped  
-failed  
+registered
+starting
+running
+stopping
+stopped
+failed
 
-last error (if any)  
+last error (if any)
 
 Enforces:
 
-single-writer mutation model  
-controlled state transitions  
-idempotent updates  
+single-writer mutation model
+controlled state transitions
+idempotent updates
 
 Key principle:
 
-Runtime state represents current truth  
+Runtime state represents current truth
 
 ------------------------------------------------------------
 
@@ -86,150 +86,148 @@ Connection lifecycle is owned by orchestration code (e.g. feed tasks).
 
 Important constraints:
 
-connection runtime state is emitted at the feed/orchestration level  
-exchange adapters remain transport-only  
-GUI does not own connection lifecycle  
+connection runtime state is emitted at the feed/orchestration level
+exchange adapters remain transport-only
+GUI does not own connection lifecycle
 
 Adapters must NOT:
 
-emit runtime state  
-track lifecycle state  
-depend on StateStore  
+emit runtime state
+track lifecycle state
+depend on StateStore
 
 This ensures:
 
-clear separation between transport and runtime truth  
-consistent visibility of external dependencies  
-deterministic and debuggable connection behavior  
+clear separation between transport and runtime truth
+consistent visibility of external dependencies
+deterministic and debuggable connection behavior
 
 ------------------------------------------------------------
 
 Task supervision
 
-Centralized async task management via TaskManager  
+Centralized async task management via TaskManager
 
 Task lifecycle tracking:
 
-started  
-completed  
-failed  
-cancelled  
+started
+completed
+failed
+cancelled
 
-Integration with runtime state and audit layer  
-Coordinated shutdown with cancellation and timeout control  
+Integration with runtime state and audit layer
+Coordinated shutdown with cancellation and timeout control
 
 Phase 2 rule:
 
-Runtime task state contains only active tasks  
+Runtime task state contains only active tasks
 
 Completed, failed, and cancelled tasks are:
 
-removed from runtime state  
-preserved exclusively in audit history  
+removed from runtime state
+preserved exclusively in audit history
 
 ------------------------------------------------------------
 
 Service management
 
-Registration of long-lived runtime services  
+Registration of long-lived runtime services
 
 Explicit service lifecycle tracking (lifecycle-managed services only):
 
-registered  
-starting  
-running  
-stopping  
-stopped  
-failed  
+registered
+starting
+running
+stopping
+stopped
+failed
 
-Deterministic startup order and reverse shutdown order  
+Deterministic startup order and reverse shutdown order
 
 ------------------------------------------------------------
 
 Service registration model (Phase 2)
 
-Services are registered explicitly via AppContext  
+Services are registered explicitly via AppContext
 
 Two categories exist:
 
-Lifecycle-managed services  
-participate in startup/shutdown  
-tracked in runtime state  
-included in lifecycle transitions  
+Lifecycle-managed services
+participate in startup/shutdown
+tracked in runtime state
+included in lifecycle transitions
 
-Capability providers  
-long-lived objects available via service lookup  
-do NOT participate in lifecycle tracking  
-not included in runtime service lifecycle state  
+Capability providers
+long-lived objects available via service lookup
+do NOT participate in lifecycle tracking
+not included in runtime service lifecycle state
 
 This separation ensures runtime lifecycle state reflects only services that actually participate in lifecycle transitions.
-
-Current capability providers include `HistoricalDatasetService` for dataset/timeline/slice access and `ExchangeRegistry` for exchange discovery and adapter factory lookup. `ExchangeRegistry` is not lifecycle-managed; adapters remain transport/API objects opened and closed by the caller performing exchange work.
 
 ------------------------------------------------------------
 
 Audit and observability (foundation layer)
 
-Structured audit event emission for all meaningful runtime transitions  
+Structured audit event emission for all meaningful runtime transitions
 
 Provides:
 
-in-memory audit inspection  
-durable JSONL audit logging  
-fail-safe audit emission  
+in-memory audit inspection
+durable JSONL audit logging
+fail-safe audit emission
 
 Key principle:
 
-Audit represents historical truth  
+Audit represents historical truth
 
 Phase 2 refinement:
 
-Runtime-origin audit events are constructed through a centralized emission path in StateStore. Audit sinks normalize accepted subsystem events into one structured, JSONL-safe shape before in-memory storage, durable JSONL persistence, or GUI snapshot display.  
+Runtime-origin audit events are constructed through a centralized emission path in StateStore
 
 This ensures:
 
-consistent event structure  
-stable entity identification  
-reliable downstream diagnostics  
+consistent event structure
+stable entity identification
+reliable downstream diagnostics
 
 ------------------------------------------------------------
 
 Registry (transitional compatibility layer)
 
-Maintains legacy get/set access pattern  
+Maintains legacy get/set access pattern
 
 Provides:
 
-compatibility access for runtime payloads only  
+compatibility access for runtime payloads only
 
 Phase 2 constraints:
 
-Registry writes are restricted to runtime payloads  
-Service objects must NOT be stored in the registry  
-Service objects must be registered explicitly via AppContext  
+Registry writes are restricted to runtime payloads
+Service objects must NOT be stored in the registry
+Service objects must be registered explicitly via AppContext
 
 Important:
 
-Runtime truth is owned by StateStore  
-Service access is explicit  
-Registry is transitional and will be phased out  
+Runtime truth is owned by StateStore
+Service access is explicit
+Registry is transitional and will be phased out
 
 ------------------------------------------------------------
 
 Configuration and bootstrap
 
-Configuration loading and environment profiles  
-Folder tree checks + bootstrap validation  
-Core initialization sequence  
+Configuration loading and environment profiles
+Folder tree checks + bootstrap validation
+Core initialization sequence
 
 ------------------------------------------------------------
 
 Error handling
 
-Centralized error routing  
-Structured error reporting  
-Integration with audit layer  
-Safe shutdown on critical failures  
+Centralized error routing
+Structured error reporting
+Integration with audit layer
+Safe shutdown on critical failures
 
 ------------------------------------------------------------
 2) ENGINE / ORCHESTRATION
@@ -241,12 +239,12 @@ Purpose: The “nervous system” coordinating GUI, data, connections, and analy
 
 Responsibilities (planned):
 
-Event bus / pub-sub  
-Task scheduling  
-Pipeline execution  
-Dependency boundary enforcement  
-Concurrency model  
-Coordination between GUI bridge and core runtime  
+Event bus / pub-sub
+Task scheduling
+Pipeline execution
+Dependency boundary enforcement
+Concurrency model
+Coordination between GUI bridge and core runtime
 
 ------------------------------------------------------------
 3) GUI
@@ -262,9 +260,9 @@ Important notes:
 
 Current MainWindow is a temporary integration surface used for:
 
-runtime validation  
-chart verification  
-temporary realtime control testing  
+runtime validation
+chart verification
+temporary realtime control testing
 
 Phase 4 refinement:
 
@@ -272,25 +270,25 @@ Realtime feed start/stop now flows through an explicit CoreBridge command bounda
 
 Current behavior:
 
-MainWindow requests realtime actions through CoreBridge  
-CoreBridge owns the temporary realtime feed future  
-CoreBridge ignores completion callbacks from stale realtime futures that are no longer active  
-GUI no longer launches feed tasks directly  
-GUI reacts to bridge signals and runtime state instead of owning feed lifecycle  
+MainWindow requests realtime actions through CoreBridge
+CoreBridge owns the temporary realtime feed future
+CoreBridge ignores completion callbacks from stale realtime futures that are no longer active
+GUI no longer launches feed tasks directly
+GUI reacts to bridge signals and runtime state instead of owning feed lifecycle
 
 Future direction:
 
-Dedicated connection management UI  
-Improved status/error presentation in the GUI layer  
-Further separation of temporary test-harness behavior from final connection UX  
+Dedicated connection management UI
+Improved status/error presentation in the GUI layer
+Further separation of temporary test-harness behavior from final connection UX
 
 Responsibilities (target):
 
-Charting system for historical and realtime data  
-Multi-pane chart layouts  
-Shared viewport interaction model  
-Workspaces and layout persistence  
-Dashboards and system visibility  
+Charting system for historical and realtime data
+Multi-pane chart layouts
+Shared viewport interaction model
+Workspaces and layout persistence
+Dashboards and system visibility
 
 ------------------------------------------------------------
 4) CONNECTION
@@ -300,23 +298,23 @@ Purpose: External IO: streams + APIs + credentials + resilience.
 
 Current state:
 
-Basic exchange adapter and feed execution implemented.  
-Connection lifecycle now visible via runtime state (Phase 3).  
-GUI-driven direct feed orchestration removed in favor of explicit CoreBridge control flow (Phase 4).  
+Basic exchange adapter and feed execution implemented.
+Connection lifecycle now visible via runtime state (Phase 3).
+GUI-driven direct feed orchestration removed in favor of explicit CoreBridge control flow (Phase 4).
 
 Important constraints:
 
-Adapters are transport-only  
-Connection lifecycle is owned by feed/orchestration layer  
-GUI must not own feed futures or adapter lifecycle  
-No reconnection framework implemented yet  
+Adapters are transport-only
+Connection lifecycle is owned by feed/orchestration layer
+GUI must not own feed futures or adapter lifecycle
+No reconnection framework implemented yet
 
 Planned responsibilities:
 
-Websocket management  
-API clients  
-Retry and rate limiting  
-Connection health monitoring  
+Websocket management
+API clients
+Retry and rate limiting
+Connection health monitoring
 
 ------------------------------------------------------------
 5) DATA MANAGEMENT
@@ -377,9 +375,7 @@ Implemented baseline:
   - M7D accepted multi-timeframe OHLCV selection, task monitor progress, Stop/OK flow, final recap, and batch validation summary.
   - M7E made Bybit's historical page limit adapter-owned, with GUI `Limit = 0` resolving to the adapter default and explicit values clamped to the adapter maximum.
   - M7F normalized validation so fixed canonical timeframes such as `3m`, `2h`, `6h`, and `12h` validate without moving exchange-specific support truth into the validator.
-  - M7G passes the configured historical root, `Path(ctx.config.runtime.data_dir) / "historical"`, into downloader preflight and execution paths.
-  - M7H normalizes historical download audit events through the Core audit path and persists subsystem events safely to JSONL.
-  - M7I routes historical exchange capability display and downloader adapter acquisition through the Core `ExchangeRegistry`; Bybit remains the only registered default adapter.
+  - M7G aligned download preflight and execution with the configured historical root, `Path(ctx.config.runtime.data_dir) / "historical"`; supported GUI flows now submit plain intent and CoreBridge resolves the root before constructing downloader requests.
 - M8 Historical chart/study hardening is accepted:
   - M8A hardened historical dataset opening with GUI-thread result marshalling, open-generation guards, and stale slice-result protection.
   - M8B moved historical chart dataset selection onto CoreBridge/HistoricalDatasetService catalog surfaces instead of GUI filesystem discovery.
@@ -420,10 +416,20 @@ Implemented baseline:
   - Historical Data Manager opens maximized.
   - Pan Anchor is accepted as an off-by-default, horizontal-only, timestamp-center pan synchronization mode across active charts in the same Historical Data Manager.
 
+- M12 Historical apply/save/recovery hardening is accepted:
+  - Historical Download command boundary cleanup moved downloader request/root construction behind CoreBridge while the GUI passes plain intent and observes audit/task state.
+  - TaskManager terminal cleanup removes completed, failed, and cancelled tasks from its active internal task map while preserving terminal history in audit.
+  - Historical runtime projection now prefers explicit `ts_ms` / `time` / non-positional index alignment before the legacy full-dataset/no-timeline positional fallback.
+  - Financial Tool Manager saved-source selection consumes saved artifact sidecar `selectable` / `analysis_usable` metadata as source-selection truth, with CSV-header fallback only for legacy or malformed sidecars.
+  - Chart save and save-only artifact calculation share `result_to_save_dataframe(...)` so full-dataset saved values preserve timestamps, output order, boolean/state outputs, numeric values, and gaps consistently.
+  - Historical UTC Peaks & Troughs dependency preparation is centralized in `utc_dependency_sources.py` for chart apply/save and `ArtifactCalculationService`, preserving trend/range intent, overrides, configured-root lookup, and deterministic `ts_ms` / `time` alignment.
+  - ArtifactRecoveryPlanner shares UTC dependency-intent resolution, remains read-only, and blocks unsafe UTC dependencies with missing or duplicate join keys.
+  - Consolidated historical validation passed the focused Core/download/chart/data/recovery suite and confirmed no new layering violations in the historical scope.
+
 Next direction:
 
-- Treat the current Historical Download Manager M7 behavior as the accepted OHLCV ingestion baseline, including normalized audit emission, post-write dataset-cache invalidation, and the minimal Core `ExchangeRegistry` provider boundary.
-- Treat the current historical chart/study M8 behavior as the accepted chart-session baseline.
+- Treat the current Historical Download Manager M7 behavior as the accepted OHLCV ingestion baseline.
+- Treat the current historical chart/study M8 behavior plus M12 apply/save/recovery hardening as the accepted chart-session and artifact-calculation baseline.
 - Treat the current Data Manager M4/M5/M6 behavior as the accepted analysis-database baseline.
 - Integrate GUI release checks into CI/build packaging so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files and preserve Data Manager ownership boundaries.
 - Consider adding recipe-hash lineage into saved artifact sidecars in a future migration so recovery can prove exact recipe-hash freshness instead of metadata-level consistency only.
@@ -477,10 +483,10 @@ Current accepted updates:
 Cross-cutting principles
 ------------------------------------------------------------
 
-Boundary rule: GUI ↔ Engine ↔ Core subsystems  
-Auditability: reproducible recommendation fingerprint  
-Failure-first design  
-Security hygiene  
+Boundary rule: GUI ↔ Engine ↔ Core subsystems
+Auditability: reproducible recommendation fingerprint
+Failure-first design
+Security hygiene
 
 ------------------------------------------------------------
 V1 Milestones (initial target)
@@ -491,6 +497,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.19: Historical apply/save/recovery hardening. Documents Historical Download command-boundary cleanup, TaskManager terminal cleanup, timeline-first runtime projection alignment, sidecar-driven saved-source selection, shared `result_to_save_dataframe(...)` save conversion, shared UTC dependency preparation, and recovery planner UTC dependency-intent parity with read-only join-key blocker checks.
+
 v0.18: Core-boundary repair and exchange-registry baseline. Documents normalized audit event handling, implemented HistoricalDatasetService cache invalidation APIs, downloader post-write dataset-cache invalidation, pyproject runtime dependency truth, and the minimal Core `ExchangeRegistry` capability provider used by CoreBridge and HistoricalDownloader while keeping Bybit as the only default adapter.
 
 v0.17: Historical Notebook / preset delete / Pan Anchor polish. Documents Notebook Manager assignment/delete ownership, Notes/Potential Trades/POI final row layouts, Potential Trades Long/Short runtime markers, annotation offset persistence, notebook auto-save-on-close, confirmed saved Study Setup and Workspace Snapshot deletion, maximized Historical Data Manager opening, and off-by-default Pan Anchor horizontal timestamp-based pan synchronization.
@@ -512,63 +520,63 @@ v0.10: Data Manager and artifact metadata baseline. Added Analysis Database work
 
 v0.9: GUI chart stack hardening (contract-first surfaces, volume refresh normalization, release packaging guardrails)
 
-v0.1: Initial roadmap  
-v0.2: Introduced runtime state + dataset architecture  
-v0.3: Implemented StateStore, task lifecycle, service lifecycle, audit integration  
+v0.1: Initial roadmap
+v0.2: Introduced runtime state + dataset architecture
+v0.3: Implemented StateStore, task lifecycle, service lifecycle, audit integration
 v0.4:
 
-Explicit service registration model (lifecycle vs capability separation)  
-Registry restricted to runtime payloads only  
-Active-only task runtime retention  
-Centralized runtime audit event construction  
+Explicit service registration model (lifecycle vs capability separation)
+Registry restricted to runtime payloads only
+Active-only task runtime retention
+Centralized runtime audit event construction
 
 v0.5:
 
-Connection runtime state introduced  
-Feed-level connection lifecycle tracking implemented  
-Session runtime state (minimal surface) introduced  
-Adapter / runtime boundary clarified  
-Runtime connection visibility integrated with audit system  
+Connection runtime state introduced
+Feed-level connection lifecycle tracking implemented
+Session runtime state (minimal surface) introduced
+Adapter / runtime boundary clarified
+Runtime connection visibility integrated with audit system
 
 v0.6:
 
-Explicit CoreBridge-owned realtime control boundary introduced  
-MainWindow direct feed orchestration removed  
-Realtime GUI behavior aligned with bridge signals and runtime truth  
-Temporary realtime stop behavior clarified for the current GUI test harness  
+Explicit CoreBridge-owned realtime control boundary introduced
+MainWindow direct feed orchestration removed
+Realtime GUI behavior aligned with bridge signals and runtime truth
+Temporary realtime stop behavior clarified for the current GUI test harness
 
 
 
 v0.7:
 
-Phase 5 — GUI Visibility Layer completed  
+Phase 5 — GUI Visibility Layer completed
 
-Introduced centralized Runtime Inspector window  
+Introduced centralized Runtime Inspector window
 Provides tabbed visibility into:
 - application runtime state
 - connection lifecycle state
 - active tasks
 - tracked windows
-- recent audit events  
+- recent audit events
 
-GUI remains a read-only observer of runtime state  
-Polling-based snapshot model retained (no signal redesign)  
-No changes to Core runtime semantics or StateStore  
+GUI remains a read-only observer of runtime state
+Polling-based snapshot model retained (no signal redesign)
+No changes to Core runtime semantics or StateStore
 
 Improved system observability without introducing:
 - event bus
 - orchestration engine
-- connection manager subsystem  
+- connection manager subsystem
 
 Established a clear separation:
-Core → authoritative runtime + audit  
-GUI → structured visualization layer  
+Core → authoritative runtime + audit
+GUI → structured visualization layer
 
 
 
-Explicit CoreBridge-owned realtime control boundary introduced  
-MainWindow direct feed orchestration removed  
-Realtime GUI behavior aligned with bridge signals and runtime truth  
+Explicit CoreBridge-owned realtime control boundary introduced
+MainWindow direct feed orchestration removed
+Realtime GUI behavior aligned with bridge signals and runtime truth
 Temporary realtime stop behavior clarified for the current GUI test harness
 ---
 
@@ -593,7 +601,7 @@ Next production priorities:
 2. add contract tests for viewport pan/zoom and workspace Autoscale/manual-y;
 3. add import-boundary tests for Core↔GUI and financial-tools runtime/spec/naming layers;
 4. integrate release packaging guardrails (static checks + clean zip) into CI/build so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files;
-5. keep runtime dependencies declared in packaging metadata.
+5. declare runtime dependencies in packaging metadata.
 
 UTC / Peaks & Troughs historical integration completed:
 - historical UTC uses controller-injected Peaks & Troughs columns rather than owning artifact loading;

@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.21
+Version: v3.22
 Date: 2026-05-22
 
 ## Overview
@@ -104,7 +104,7 @@ Connection runtime state includes:
 
 Important rule:
 
-The GUI must never infer or reconstruct connection state locally.  
+The GUI must never infer or reconstruct connection state locally.
 Connection state must always be read from `StateStore`.
 
 ---
@@ -183,8 +183,8 @@ Responsibilities include:
 
 - collecting exchange, market, symbol, timeframe, optional range, and optional limit input;
 - displaying supported exchanges, markets, and timeframes supplied through CoreBridge/capability callbacks backed by Core `ExchangeRegistry`;
-- requesting Core-owned preflight plans;
-- passing the configured historical root, `Path(ctx.config.runtime.data_dir) / "historical"`, into downloader preflight and execution paths;
+- requesting Core-owned preflight plans through CoreBridge;
+- submitting plain download intent to CoreBridge, which resolves the configured historical root and builds downloader requests internally;
 - showing the Confirm OHLCV Download dialog before execution;
 - opening the OHLCV Download Task monitor for progress, validation, cancellation, and final recap display;
 - requesting Stop/Cancel through CoreBridge.
@@ -211,10 +211,10 @@ HistoricalDownloadWindow
 → ExchangeRegistry capability provider for exchange display / adapter lookup
 → TaskManager
 → HistoricalDownloader
-→ ExchangeRegistry
 → BaseExchange capability contract
 → concrete exchange adapter
 → CsvOHLCVStore + HistoricalDatasetValidator
+→ HistoricalDatasetService cache invalidation
 → normalized audit events
 → OHLCV Download Task monitor
 ```
@@ -496,9 +496,9 @@ It means:
 - panes do not become durable state authorities
 - renderers do not invent chart semantics or hidden ownership
 
-The chart is a stable environment.  
-The camera moves across it.  
-The studies live on it.  
+The chart is a stable environment.
+The camera moves across it.
+The studies live on it.
 The renderer draws it.
 
 ---
@@ -1219,6 +1219,12 @@ Save:
 
 This distinction must stay explicit. GUI code may display and request saved artifacts, but it must not define the sidecar contract or reconstruct artifact identity locally.
 
+Saved source selection in `FinancialToolsManagerWindow` consumes saved artifact sidecar column metadata when available. Valid `.meta.json` `selectable` / `analysis_usable` metadata is source-selection truth; CSV-header fallback exists only for legacy, missing, or malformed sidecars.
+
+Historical save paths share the data-layer `result_to_save_dataframe(...)` helper with Data Manager/recipe calculation so chart save and save-only artifact calculation preserve boolean/state outputs, numeric values, NaN gaps, timestamp behavior, and output ordering consistently.
+
+UTC / Universal Trend Classifier dependency preparation is shared through the data-layer `utc_dependency_sources.py` execution helper for chart apply/save and `ArtifactCalculationService`. The recovery planner consumes the shared UTC dependency-intent resolver and remains read-only while checking missing or duplicate dependency join keys.
+
 ---
 
 ## Historical vs Realtime Distinction
@@ -1480,6 +1486,8 @@ Recommended tooling (in the GUI package):
 ---
 
 ## Change log
+
+- **v3.22 (2026-05-22)** — Historical apply/save/recovery hardening: Financial Tool Manager saved-source selection now consumes sidecar column metadata, historical runtime projection prefers explicit timeline/index alignment before legacy positional fallback, chart save and save-only artifact calculation share result-to-save-dataframe conversion, and UTC dependency preparation/recovery intent resolution are centralized while preserving chart/session ownership boundaries.
 
 - **v3.21 (2026-05-22)** — Historical download/Core capability sync: Historical Download Manager capability display remains GUI intent/display only, while CoreBridge resolves exchange capabilities through the registered Core `ExchangeRegistry`; downloader adapter acquisition is registry-backed, normalized audit snapshots remain GUI-displayable, and GUI ownership boundaries are unchanged.
 

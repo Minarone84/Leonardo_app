@@ -1,8 +1,8 @@
 # DESIGN — Financial Tools System
 
-Leonardo  
-Version: v1.17
-Date: 2026-05-20
+Leonardo
+Version: v1.18
+Date: 2026-05-22
 Scope: Indicators, Oscillators, Constructs, Tool Specs, Naming Policy, Controller Integration, Panel Integration, Workspace Integration, Chart Application
 
 ---
@@ -87,7 +87,7 @@ Rules:
 - specs resolve output metadata through the naming layer
 - chart styling remains downstream
 
-Indicators define data outputs only.  
+Indicators define data outputs only.
 They do not define renderer behavior.
 
 Validated current indicator-family note:
@@ -237,7 +237,7 @@ Historical UTC consumes confirmed Peaks & Troughs event columns through two inde
 
 The compatibility `fractal_window` parameter remains an alias for the directional trend stream. The default directional trend selection is `trend_fractal_window=5`; the default horizontal range selection is `range_fractal_window=3`. Advanced column overrides may still be supplied as `trend_peak_column` / `trend_trough_column` and `range_peak_column` / `range_trough_column`.
 
-UTC runtime remains compute-only. It must not open saved artifact files directly and must not own source resolution. Saved Peaks & Troughs artifact lookup, timestamp-safe alignment, and dataframe injection belong to the historical controller/source-resolution boundary. The controller must treat trend and range Peaks & Troughs dependencies as separate logical injection requests, then deduplicate required columns if both streams resolve to the same pair.
+UTC runtime remains compute-only. It must not open saved artifact files directly and must not own source resolution. Saved Peaks & Troughs artifact lookup, timestamp-safe alignment, and dataframe injection belong to the historical controller/source-resolution boundary. The controller must treat trend and range Peaks & Troughs dependencies as separate logical injection requests, then deduplicate required columns if both streams resolve to the same pair. The current implementation centralizes execution dependency preparation in `utc_dependency_sources.py`; chart apply/save and `ArtifactCalculationService` share that helper, while recovery planning shares only the dependency-intent resolver and stays read-only.
 
 Horizontal range detection uses the range fractal stream only to discover/define a range zone. Once active, range continuation is governed by price acceptance, `hr_break_mode` (`close`, `wick`, or `hybrid`), and pending breakout/reclaim state rather than by requiring more fractals. Historical replay remains sequential: bars are replayed in order and confirmed range swings are fed only when knowable so historical and future realtime behavior can match.
 
@@ -421,7 +421,7 @@ Properties:
 
 Apply and Save may share compute semantics but they do not share render scope.
 
-Apply is render-scoped.  
+Apply is render-scoped.
 Save is persistence-scoped.
 
 ### Saved artifact metadata sidecars
@@ -446,6 +446,10 @@ Params and bindings are recorded as `explicit` when the save caller supplies the
 Historical chart save passes explicit params, explicit construct bindings when present, and durable saved-source lineage (`source_artifacts`) to the persistence layer. Temporary chart-session sources are not written as durable lineage artifacts.
 
 Non-renderable utility outputs remain valid persisted outputs. Their sidecar column metadata must preserve `renderable=false`, and if they are not analysis-usable, `analysis_usable=false` and `selectable=false`.
+
+Saved-source selection must consume valid sidecar column metadata when available. `selectable` / `analysis_usable` metadata is the source-selection truth; CSV-header fallback is a compatibility path for legacy, missing, malformed, or incomplete sidecars and must not override valid metadata.
+
+Full-dataset save conversion is shared through the data-layer `result_to_save_dataframe(...)` helper so chart save and save-only artifact calculation preserve timestamps, output ordering, boolean/state outputs, numeric values, and NaN/gap honesty consistently before persistence.
 
 Restore-only metadata backfill may recreate missing/corrupt sidecars from existing CSV files, but it must not rewrite the CSV value artifact and must not become the normal save path.
 
@@ -646,8 +650,8 @@ Defines pane-level interpretation behavior such as bounds and levels.
 
 ### Rule
 
-Defaults define appearance.  
-Style defines chart-local overrides.  
+Defaults define appearance.
+Style defines chart-local overrides.
 Policy defines pane interpretation.
 
 These must not be collapsed into one layer.
@@ -733,6 +737,9 @@ The current system now supports:
 - pane-local oscillator interaction
 - resident-local render payload enforcement
 - full-dataset apply/save distinction
+- shared full-dataset save conversion through `result_to_save_dataframe(...)`
+- sidecar-driven saved-source selection with legacy CSV-header fallback
+- shared UTC dependency preparation for execution and shared UTC dependency-intent resolution for recovery planning
 - CSV + `.meta.json` sidecar persistence for saved OHLCV and financial-tool artifacts
 
 ---

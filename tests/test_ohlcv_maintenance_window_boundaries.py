@@ -98,7 +98,7 @@ def test_ohlcv_maintenance_window_centralizes_action_state_and_row_styling() -> 
     assert "def _clear_repair_plan" in source
     assert "def _restyle_dataset_row" in source
     assert "self._validate_button.setEnabled(bool(checked) and not busy)" in source
-    assert "self._repair_plan_button.setEnabled(checked_count == 1 and not busy)" in source
+    assert "self._repair_plan_button.setEnabled(self._can_plan_checked_repair() and not busy)" in source
     assert "self._rebuild_metadata_button.setEnabled(checked_count == 1 and not busy)" in source
     assert "self._delete_button.setEnabled(checked_count == 1 and not busy)" in source
     assert "self._execute_repair_button.setEnabled(self._can_execute_checked_repair_plan() and not busy)" in source
@@ -108,6 +108,28 @@ def test_ohlcv_maintenance_window_centralizes_action_state_and_row_styling() -> 
     assert "QColor(255, 242, 128)" in source
     assert "QColor(224, 224, 224)" in source
     assert "font.setBold(bold)" in source
+
+
+def test_ohlcv_maintenance_window_requires_current_validation_before_repair_planning() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert "self._current_validation_keys: set[tuple[str, str, str, str]] = set()" in source
+    assert "def _can_plan_checked_repair" in source
+    assert "if key not in self._current_validation_keys:" in source
+    assert 'return self._validation_status_by_key.get(key) in {"Error", "Warning"}' in source
+    assert "current=True" in source
+    assert "Run Analyze Checked for the checked dataset before planning repair" in source
+    assert "self._repair_plan_button.setEnabled(checked_count == 1 and not busy)" not in source
+
+
+def test_ohlcv_maintenance_window_preserves_repair_recap_after_auto_validation() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert "self._pending_repair_validation_recap" in source
+    assert "self._pending_repair_validation_key" in source
+    assert "def _consume_pending_repair_validation_recap" in source
+    assert "Repair Execution Recap" in source
+    assert "self._pending_repair_validation_recap = repair_text" in source
 
 
 def test_ohlcv_maintenance_window_uses_checked_rows_for_single_dataset_actions() -> None:

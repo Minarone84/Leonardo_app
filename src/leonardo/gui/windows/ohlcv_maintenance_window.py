@@ -219,6 +219,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._pending: dict[str, Future[object]] = {}
         self._select_first_after_refresh = True
         self._validation_status_by_key: dict[tuple[str, str, str, str], str] = {}
+        self._current_validation_keys: set[tuple[str, str, str, str]] = set()
         self._validation_running = False
         self._validation_batch_targets: tuple[object, ...] = ()
         self._validation_batch_queue: list[object] = []
@@ -228,6 +229,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._validation_batch_cancel_requested = False
         self._validation_progress: QProgressDialog | None = None
         self._repair_progress_dialog: OhlcvRepairProgressDialog | None = None
+        self._pending_repair_validation_key: tuple[str, str, str, str] | None = None
+        self._pending_repair_validation_recap = ""
 
         self.setWindowTitle("OHLCV Maintenance")
         self.resize(1160, 720)
@@ -340,6 +343,9 @@ class OHLCVMaintenanceWindow(QMainWindow):
         """Request the dataset catalog and control post-refresh selection."""
         self._select_first_after_refresh = bool(select_first)
         self._last_repair_plan = None
+        self._current_validation_keys.clear()
+        self._pending_repair_validation_key = None
+        self._pending_repair_validation_recap = ""
         self._refresh_button.setEnabled(False)
         self._start_future("list", self._bridge.list_historical_ohlcv_datasets())
         self.statusBar().showMessage("Loading OHLCV dataset list...")
@@ -351,6 +357,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
             self.statusBar().showMessage("Check one or more OHLCV datasets before validating checked rows")
             return
         self._clear_repair_plan()
+        self._pending_repair_validation_key = None
+        self._pending_repair_validation_recap = ""
         self._update_action_state()
         self._start_validation_batch(targets)
 
@@ -367,6 +375,9 @@ class OHLCVMaintenanceWindow(QMainWindow):
         summary = self._sole_checked_dataset()
         if summary is None:
             self.statusBar().showMessage("Check exactly one OHLCV dataset before planning repair")
+            return
+        if not self._can_plan_checked_repair():
+            self.statusBar().showMessage("Run Analyze Checked for the checked dataset before planning repair")
             return
 
         self._clear_repair_plan()
@@ -505,6 +516,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
                         dataset,
                         self._display_validation_status(self._text(result, "validation_status")),
                     )
+                    self._pending_repair_validation_key = self._dataset_key(dataset)
+                    self._pending_repair_validation_recap = repair_text
                 self.statusBar().showMessage("OHLCV repair execution complete")
                 if self._selected_dataset is not None:
                     self._details.setPlainText("Refreshing selected dataset inspection...")
@@ -557,6 +570,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
         elif name == "execute_repair":
             self._validation.setPlainText(f"Repair execution failed:\n{message}")
             self._last_repair_plan = None
+            self._pending_repair_validation_key = None
+            self._pending_repair_validation_recap = ""
             if self._repair_progress_dialog is not None:
                 self._repair_progress_dialog.fail(message)
         elif name == "rebuild_metadata":
@@ -1000,7 +1015,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
 
         self._refresh_button.setEnabled("list" not in self._pending and not self._validation_running)
         self._validate_button.setEnabled(bool(checked) and not busy)
-        self._repair_plan_button.setEnabled(checked_count == 1 and not busy)
+        self._repair_plan_button.setEnabled(self._can_plan_checked_repair() and not busy)
         self._rebuild_metadata_button.setEnabled(checked_count == 1 and not busy)
         self._delete_button.setEnabled(checked_count == 1 and not busy)
         self._execute_repair_button.setEnabled(self._can_execute_checked_repair_plan() and not busy)
@@ -1020,6 +1035,15 @@ class OHLCVMaintenanceWindow(QMainWindow):
         if not bool(getattr(self._last_repair_plan, "actionable", False)):
             return False
         return self._dataset_key(getattr(self._last_repair_plan, "dataset", None)) == self._dataset_key(summary)
+
+    def _can_plan_checked_repair(self) -> bool:
+        summary = self._sole_checked_dataset()
+        if summary is None:
+            return False
+        key = self._dataset_key(summary)
+        if key not in self._current_validation_keys:
+            return False
+        return self._validation_status_by_key.get(key) in {"Error", "Warning"}
 
     def _checked_datasets(self) -> tuple[object, ...]:
         datasets: list[object] = []
@@ -1090,17 +1114,23 @@ class OHLCVMaintenanceWindow(QMainWindow):
 
     def _handle_validation_batch_result(self, report: object) -> None:
         summary = self._validation_batch_current
+        validation_text = ""
         if summary is not None:
-            self._set_dataset_validation_status(summary, self._validation_status_for_report(report))
+            self._set_dataset_validation_status(summary, self._validation_status_for_report(report), current=True)
         self._validation_batch_done += 1
 
         if self._validation_progress is not None:
             self._validation_progress.setValue(self._validation_batch_done)
 
         if self._validation_batch_total > 1:
-            self._validation.setPlainText(self._format_batch_validation(report))
+            validation_text = self._format_batch_validation(report)
         else:
-            self._validation.setPlainText(self._format_validation(report))
+            validation_text = self._format_validation(report)
+
+        recap = self._consume_pending_repair_validation_recap(summary)
+        if recap:
+            validation_text = "\n\n".join((validation_text, "Repair Execution Recap", recap))
+        self._validation.setPlainText(validation_text)
 
         self._start_next_validation_in_batch()
 
@@ -1127,8 +1157,11 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 f"Validation complete for {self._validation_batch_done} OHLCV dataset(s)"
             )
 
-    def _set_dataset_validation_status(self, summary: object, status: str) -> None:
-        self._validation_status_by_key[self._dataset_key(summary)] = status
+    def _set_dataset_validation_status(self, summary: object, status: str, *, current: bool = False) -> None:
+        key = self._dataset_key(summary)
+        self._validation_status_by_key[key] = status
+        if current:
+            self._current_validation_keys.add(key)
         for row in range(self._dataset_table.rowCount()):
             item = self._dataset_table.item(row, 0)
             row_summary = None if item is None else item.data(Qt.ItemDataRole.UserRole)
@@ -1147,6 +1180,16 @@ class OHLCVMaintenanceWindow(QMainWindow):
         if message:
             self._validation.setPlainText(message)
             self.statusBar().showMessage(message)
+
+    def _consume_pending_repair_validation_recap(self, summary: object | None) -> str:
+        if summary is None or self._pending_repair_validation_key is None:
+            return ""
+        if self._dataset_key(summary) != self._pending_repair_validation_key:
+            return ""
+        recap = self._pending_repair_validation_recap
+        self._pending_repair_validation_key = None
+        self._pending_repair_validation_recap = ""
+        return recap
 
     def _validation_status_for_report(self, report: object) -> str:
         return self._display_validation_status(self._text(report, "status"))

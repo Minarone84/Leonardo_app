@@ -13,6 +13,7 @@ runtime payload storage and compatibility access.
 SVC_GUI_WINDOW_MANAGER = "services.gui.window_manager"
 SVC_EXCHANGE_REGISTRY = "svc.exchange.registry"  # Exchange adapter factories/capabilities
 SVC_HISTORICAL_DATASET = "svc.historical.dataset"  # Historical data read access
+SVC_HISTORICAL_OHLCV_MAINTENANCE = "svc.historical.ohlcv_maintenance"  # Read-only OHLCV inspection
 
 # ---- Runtime state (facts about "now") ----
 RT_APP = "rt_app"                      # dict application lifecycle snapshot

@@ -21,3 +21,12 @@ def test_historical_download_window_status_uses_read_only_message_panel() -> Non
     assert "self.status_panel.setReadOnly(True)" in source
     assert "self._status_text" in source
     assert "self.status_lbl.text().startswith" not in source
+
+
+def test_historical_download_window_exposes_ohlcv_maintenance_intent_only() -> None:
+    source = Path("src/leonardo/gui/windows/historical_download_window.py").read_text(encoding="utf-8")
+
+    assert "ohlcv_maintenance_requested = Signal()" in source
+    assert "self.maintenance_btn = QPushButton(\"OHLCV Maintenance...\")" in source
+    assert "self.maintenance_btn.clicked.connect(self.ohlcv_maintenance_requested.emit)" in source
+    assert "OHLCVMaintenanceWindow" not in source

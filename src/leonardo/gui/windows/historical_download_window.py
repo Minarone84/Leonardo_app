@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional, Any
 
-from PySide6.QtCore import QTimer, Qt
+from PySide6.QtCore import QTimer, Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -750,6 +750,8 @@ class DownloadTaskMonitorDialog(QDialog):
 
 
 class HistoricalDownloadWindow(QMainWindow):
+    ohlcv_maintenance_requested = Signal()
+
     def __init__(
         self,
         core_bridge,
@@ -824,6 +826,7 @@ class HistoricalDownloadWindow(QMainWindow):
         self.start_btn = QPushButton("Start")
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setEnabled(False)
+        self.maintenance_btn = QPushButton("OHLCV Maintenance...")
 
         self._status_text = "Idle."
         self.status_panel = QPlainTextEdit()
@@ -856,6 +859,7 @@ class HistoricalDownloadWindow(QMainWindow):
         btn_row = QHBoxLayout()
         btn_row.addWidget(self.start_btn)
         btn_row.addWidget(self.stop_btn)
+        btn_row.addWidget(self.maintenance_btn)
         btn_row.addStretch(1)
 
         layout = QVBoxLayout()
@@ -877,6 +881,7 @@ class HistoricalDownloadWindow(QMainWindow):
 
         self.start_btn.clicked.connect(self._on_start)
         self.stop_btn.clicked.connect(self._on_stop)
+        self.maintenance_btn.clicked.connect(self.ohlcv_maintenance_requested.emit)
 
         # ---- Progress polling timer ----
         self._poll = QTimer(self)

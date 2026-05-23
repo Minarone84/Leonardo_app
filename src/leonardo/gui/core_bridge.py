@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import Future
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional, Sequence, TypeVar
@@ -8,9 +9,14 @@ from PySide6.QtCore import QObject, Qt, QTimer, Signal, Slot
 
 from leonardo.connection.exchange.registry import ExchangeRegistry
 from leonardo.core.context import AppContext
-from leonardo.core.registry_keys import SVC_EXCHANGE_REGISTRY, SVC_HISTORICAL_DATASET
+from leonardo.core.registry_keys import (
+    SVC_EXCHANGE_REGISTRY,
+    SVC_HISTORICAL_DATASET,
+    SVC_HISTORICAL_OHLCV_MAINTENANCE,
+)
 from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService
 from leonardo.data.historical.downloader import DownloadBatchRequest, DownloadRequest, HistoricalDownloader
+from leonardo.data.historical.ohlcv_maintenance import HistoricalOhlcvMaintenanceService
 from leonardo.gui.core_runner import CoreRunner
 
 T = TypeVar("T")
@@ -136,6 +142,13 @@ class CoreBridge(QObject):
         """Return the Core-owned historical dataset service for catalog access."""
         return self.context.get_service(SVC_HISTORICAL_DATASET, HistoricalDatasetService)
 
+    def _historical_ohlcv_maintenance_service(self) -> HistoricalOhlcvMaintenanceService:
+        """Return the Core-owned OHLCV maintenance service."""
+        return self.context.get_service(
+            SVC_HISTORICAL_OHLCV_MAINTENANCE,
+            HistoricalOhlcvMaintenanceService,
+        )
+
     def _exchange_registry(self) -> ExchangeRegistry:
         """Return the Core-owned exchange registry capability provider."""
         return self.context.get_service(SVC_EXCHANGE_REGISTRY, ExchangeRegistry)
@@ -181,6 +194,83 @@ class CoreBridge(QObject):
         """Return whether Core can identify the exact OHLCV dataset value file."""
         dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
         return self._historical_dataset_service().has_dataset(dataset_id)
+
+    def list_historical_ohlcv_datasets(self) -> Future[object]:
+        """Return read-only OHLCV dataset summaries through the Core boundary."""
+        service = self._historical_ohlcv_maintenance_service()
+
+        async def _list() -> object:
+            return await asyncio.to_thread(service.list_ohlcv_datasets)
+
+        return self.submit(_list())
+
+    def inspect_historical_ohlcv_dataset(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> Future[object]:
+        """Inspect one OHLCV dataset without mutating stored data."""
+        service = self._historical_ohlcv_maintenance_service()
+        dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
+
+        async def _inspect() -> object:
+            return await asyncio.to_thread(service.inspect_ohlcv, dataset_id)
+
+        return self.submit(_inspect())
+
+    def validate_historical_ohlcv_dataset(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> Future[object]:
+        """Validate one OHLCV dataset without mutating stored data."""
+        service = self._historical_ohlcv_maintenance_service()
+        dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
+
+        async def _validate() -> object:
+            return await asyncio.to_thread(service.validate_ohlcv, dataset_id)
+
+        return self.submit(_validate())
+
+    def delete_historical_ohlcv_dataset(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> Future[object]:
+        """Delete one OHLCV dataset through the Core/data maintenance boundary."""
+        service = self._historical_ohlcv_maintenance_service()
+        dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
+
+        async def _delete() -> object:
+            return await asyncio.to_thread(service.delete_ohlcv, dataset_id)
+
+        return self.submit(_delete())
+
+    def rebuild_historical_ohlcv_metadata(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> Future[object]:
+        """Rebuild one OHLCV metadata sidecar through the Core/data boundary."""
+        service = self._historical_ohlcv_maintenance_service()
+        dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
+
+        async def _rebuild() -> object:
+            return await asyncio.to_thread(service.rebuild_ohlcv_metadata, dataset_id)
+
+        return self.submit(_rebuild())
 
     def cancel_historical_download(self, job_id: str) -> Future[bool]:
         """Request cancellation of one active historical download task.

@@ -12,6 +12,7 @@ from leonardo.gui.windows.signals_window import SignalsWindow
 from leonardo.gui.windows.runtime_inspector_window import WindowsInspectorWindow
 from leonardo.gui.windows.data_manager_window import DataManagerWindow
 from leonardo.gui.windows.historical_download_window import HistoricalDownloadWindow
+from leonardo.gui.windows.ohlcv_maintenance_window import OHLCVMaintenanceWindow
 from leonardo.gui.windows.historical_chart_window import HistoricalChartWindow
 from leonardo.gui.windows.historical_data_manager_window import HistoricalDataManagerWindow
 from leonardo.gui.windows.historical_chart_panel import HistoricalChartPanel
@@ -42,6 +43,7 @@ class WindowManager(QObject):
         self._data_manager: Optional[DataManagerWindow] = None
 
         self._historical_download: Optional[HistoricalDownloadWindow] = None
+        self._ohlcv_maintenance: Optional[OHLCVMaintenanceWindow] = None
         self._historical_data_manager: Optional[HistoricalDataManagerWindow] = None
         self._historical_data_manager_closing: bool = False
 
@@ -146,6 +148,9 @@ class WindowManager(QObject):
                 parent=parent or self._parent,
             )
             self._historical_download.setAttribute(Qt.WA_DeleteOnClose, True)
+            self._historical_download.ohlcv_maintenance_requested.connect(
+                lambda: self.open_ohlcv_maintenance(parent=self._historical_download)
+            )
             self._historical_download.destroyed.connect(self._on_historical_download_destroyed)
             self._safe_submit(self._state.window_open("historical_download", "HistoricalDownloadWindow", where="gui"))
 
@@ -161,6 +166,43 @@ class WindowManager(QObject):
     def _on_historical_download_destroyed(self) -> None:
         self._historical_download = None
         self._safe_submit(self._state.window_close("historical_download", where="gui"))
+
+    def get_ohlcv_maintenance(self) -> Optional[OHLCVMaintenanceWindow]:
+        return self._ohlcv_maintenance
+
+    def open_ohlcv_maintenance(
+        self,
+        *,
+        parent: Optional[QObject] = None,
+    ) -> OHLCVMaintenanceWindow:
+        if self._ohlcv_maintenance is None:
+            parent_widget = parent if isinstance(parent, QWidget) else self._parent
+            self._ohlcv_maintenance = OHLCVMaintenanceWindow(
+                core_bridge=self._core,
+                parent=parent_widget if isinstance(parent_widget, QWidget) else None,
+            )
+            self._ohlcv_maintenance.setAttribute(Qt.WA_DeleteOnClose, True)
+            self._ohlcv_maintenance.destroyed.connect(self._on_ohlcv_maintenance_destroyed)
+            self._safe_submit(
+                self._state.window_open(
+                    "ohlcv_maintenance",
+                    "OHLCVMaintenanceWindow",
+                    where="gui",
+                )
+            )
+
+        self._ohlcv_maintenance.show()
+        self._ohlcv_maintenance.raise_()
+        self._ohlcv_maintenance.activateWindow()
+        return self._ohlcv_maintenance
+
+    def close_ohlcv_maintenance(self) -> None:
+        if self._ohlcv_maintenance is not None:
+            self._ohlcv_maintenance.close()
+
+    def _on_ohlcv_maintenance_destroyed(self) -> None:
+        self._ohlcv_maintenance = None
+        self._safe_submit(self._state.window_close("ohlcv_maintenance", where="gui"))
 
     def get_historical_data_manager(self) -> Optional[HistoricalDataManagerWindow]:
         return self._historical_data_manager

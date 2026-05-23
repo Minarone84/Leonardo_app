@@ -260,6 +260,24 @@ class CsvOHLCVStore:
             except OSError:
                 pass
 
+    def rebuild_metadata_sidecar(self, file_path: Path, *, market: MarketId | None = None) -> OHLCVLocalState:
+        """
+        Rewrite the OHLCV metadata sidecar from an existing CSV file.
+
+        The CSV values are read but not modified. The generated sidecar uses the
+        same OHLCV manifest contract as ``write_atomic`` and is intended for
+        explicit maintenance workflows that need to replace missing, corrupt, or
+        stale metadata without redownloading candles.
+        """
+        csv_path = Path(file_path)
+        if not csv_path.is_file():
+            raise FileNotFoundError(f"OHLCV CSV not found: {csv_path}")
+        candles = self.read(csv_path)
+        if not candles:
+            raise ValueError(f"Cannot rebuild OHLCV metadata for empty CSV: {csv_path}")
+        self._write_metadata_sidecar(file_path=csv_path, candles=list(candles), market=market)
+        return self.inspect(csv_path, market=market, repair_metadata=False)
+
     def _write_metadata_sidecar(
         self,
         *,

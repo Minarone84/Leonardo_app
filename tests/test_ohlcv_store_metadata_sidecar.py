@@ -78,3 +78,22 @@ def test_ohlcv_metadata_is_skipped_for_nonstandard_paths(tmp_path: Path):
     CsvOHLCVStore().write_atomic(csv_path, _candles())
     assert csv_path.exists()
     assert not metadata_path_for_csv(csv_path).exists()
+
+
+def test_ohlcv_rebuild_metadata_sidecar_does_not_rewrite_csv(tmp_path: Path):
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1M")
+    csv_path = tmp_path / market.exchange / market.market_type / market.symbol / "1mo" / "ohlcv" / "candles.csv"
+    store = CsvOHLCVStore()
+    store.write_atomic(csv_path, _candles(), market=market, write_metadata=False)
+    before = csv_path.read_text(encoding="utf-8")
+
+    state = store.rebuild_metadata_sidecar(csv_path, market=market)
+
+    assert state.metadata_valid is True
+    assert state.row_count == 2
+    assert csv_path.read_text(encoding="utf-8") == before
+    manifest = HistoricalCsvArtifactManifest.from_dict(
+        json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    )
+    assert manifest.market.timeframe == "1M"
+    assert manifest.identity.artifact_uid == "ohlcv:bybit:linear:LINKUSDT:1M:ohlcv__candles"

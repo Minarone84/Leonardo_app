@@ -131,6 +131,7 @@ class OhlcvRepairRange:
     reason: str
     issue_count: int
     rows: tuple[int, ...]
+    estimated_bars: int | None = None
 
 
 @dataclass(frozen=True)
@@ -145,6 +146,8 @@ class OhlcvRepairPlan:
     ranges: tuple[OhlcvRepairRange, ...]
     issues: tuple[OhlcvValidationIssue, ...]
     warnings: tuple[str, ...]
+    csv_fingerprint_size_bytes: int | None = None
+    csv_fingerprint_modified_at_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -158,6 +161,8 @@ class OhlcvRepairExecutionRange:
     total_rows_after: int
     job_id: str
     file_path: Path
+    estimated_bars: int | None = None
+    downloaded_bars: int | None = None
 
 
 @dataclass(frozen=True)
@@ -175,6 +180,7 @@ class OhlcvRepairExecutionReport:
     validation_status: str
     validation_row_count: int
     validation_issues: tuple[OhlcvValidationIssue, ...]
+    final_row_count: int = 0
     metadata_updated: bool = False
     metadata_update_error: str = ""
     cache_invalidated: bool = False
@@ -315,6 +321,7 @@ class HistoricalOhlcvMaintenanceService:
         else:
             message = "No timestamp-addressable repair range could be derived from the validation issues."
 
+        fingerprint = self._store.file_fingerprint(summary.csv_path)
         return OhlcvRepairPlan(
             dataset=summary,
             status=report.status,
@@ -324,6 +331,8 @@ class HistoricalOhlcvMaintenanceService:
             ranges=ranges,
             issues=issues,
             warnings=warnings,
+            csv_fingerprint_size_bytes=fingerprint.size_bytes,
+            csv_fingerprint_modified_at_ms=fingerprint.modified_at_ms,
         )
 
     async def execute_ohlcv_repair(
@@ -361,6 +370,8 @@ class HistoricalOhlcvMaintenanceService:
                     end_ts_ms=int(repair_range.end_ts_ms),
                     start_utc=repair_range.start_utc,
                     end_utc=repair_range.end_utc,
+                    estimated_bars=repair_range.estimated_bars,
+                    downloaded_bars=None,
                     total_rows_after=int(result.total_rows),
                     job_id=job_id,
                     file_path=result.file_path,
@@ -383,6 +394,7 @@ class HistoricalOhlcvMaintenanceService:
             range_results=tuple(range_results),
             validation_status=final_validation.status,
             validation_row_count=final_validation.row_count,
+            final_row_count=final_validation.row_count,
             validation_issues=final_validation.issues,
             metadata_updated=final_validation.metadata_updated,
             metadata_update_error=final_validation.metadata_update_error,
@@ -505,6 +517,12 @@ class HistoricalOhlcvMaintenanceService:
             raise ValueError("Repair plan dataset does not match the selected OHLCV dataset")
         if not plan.actionable or not plan.ranges:
             raise ValueError("Repair plan has no actionable ranges")
+        current_fingerprint = self._store.file_fingerprint(summary.csv_path)
+        if (
+            plan.csv_fingerprint_size_bytes != current_fingerprint.size_bytes
+            or plan.csv_fingerprint_modified_at_ms != current_fingerprint.modified_at_ms
+        ):
+            raise ValueError("Repair plan is stale because the OHLCV CSV changed after planning")
         for repair_range in plan.ranges:
             start_ts_ms = int(repair_range.start_ts_ms)
             end_ts_ms = int(repair_range.end_ts_ms)
@@ -604,9 +622,15 @@ class HistoricalOhlcvMaintenanceService:
                 reason="; ".join(reasons),
                 issue_count=len(reasons),
                 rows=rows,
+                estimated_bars=self._estimated_bars(start_ts_ms, end_ts_ms, step_ms),
             )
             for start_ts_ms, end_ts_ms, rows, reasons in merged
         )
+
+    def _estimated_bars(self, start_ts_ms: int, end_ts_ms: int, step_ms: int | None) -> int | None:
+        if step_ms is None or step_ms <= 0:
+            return None
+        return int((end_ts_ms - start_ts_ms) // step_ms) + 1
 
     def _row_index_for_issue(self, issue: OhlcvValidationIssue) -> int | None:
         match = _VALIDATION_ROW_RE.search(issue.message)

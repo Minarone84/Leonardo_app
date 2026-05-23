@@ -6,14 +6,17 @@ from concurrent.futures import Future
 from typing import Optional
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
+    QDialog,
+    QDialogButtonBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QProgressDialog,
     QPushButton,
     QSplitter,
@@ -24,6 +27,176 @@ from PySide6.QtWidgets import (
 )
 
 from leonardo.gui.core_bridge import CoreBridge
+
+
+class OhlcvRepairConfirmDialog(QDialog):
+    """Explicit confirmation dialog for a reviewed OHLCV repair plan."""
+
+    def __init__(self, *, summary: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Confirm OHLCV Repair")
+        self.resize(880, 680)
+        self.setMinimumSize(720, 520)
+
+        title = QLabel("Confirm OHLCV Repair", self)
+        title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        hint = QLabel("Review the planned redownload ranges before executing repair.", self)
+        hint.setWordWrap(True)
+        hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        self.summary_box = QPlainTextEdit(self)
+        self.summary_box.setReadOnly(True)
+        self.summary_box.setPlainText(summary)
+        self.summary_box.setMinimumHeight(380)
+
+        buttons = QDialogButtonBox(self)
+        self.execute_button = buttons.addButton("Execute Repair", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.cancel_button = buttons.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(title)
+        layout.addWidget(hint)
+        layout.addWidget(self.summary_box, 1)
+        layout.addWidget(buttons)
+
+        self.execute_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+
+class OhlcvRepairProgressDialog(QDialog):
+    """Maintenance-specific progress surface for explicit OHLCV repair."""
+
+    def __init__(self, *, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("OHLCV Repair Progress")
+        self.resize(880, 700)
+        self.setMinimumSize(720, 560)
+
+        self.title_lbl = QLabel("OHLCV Repair Progress", self)
+        self.title_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.context_lbl = QLabel("", self)
+        self.context_lbl.setWordWrap(True)
+        self.context_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self.status_lbl = QLabel("Waiting to start repair...", self)
+        self.status_lbl.setWordWrap(True)
+        self.status_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        self.progress = QProgressBar(self)
+        self.progress.setRange(0, 100)
+        self.progress.setValue(0)
+        self.progress.setFormat("Repair progress: waiting")
+
+        self.log_box = QPlainTextEdit(self)
+        self.log_box.setReadOnly(True)
+        self.log_box.setMinimumHeight(160)
+
+        self.recap_box = QPlainTextEdit(self)
+        self.recap_box.setReadOnly(True)
+        self.recap_box.setMinimumHeight(260)
+        self.recap_box.setPlainText("Final recap will appear when repair finishes.")
+
+        self.close_button = QPushButton("Close", self)
+        self.close_button.setEnabled(False)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        button_row.addWidget(self.close_button)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.title_lbl)
+        layout.addWidget(self.context_lbl)
+        layout.addWidget(self.status_lbl)
+        layout.addWidget(self.progress)
+        layout.addWidget(self.log_box)
+        layout.addWidget(QLabel("Final recap", self))
+        layout.addWidget(self.recap_box, 1)
+        layout.addLayout(button_row)
+
+        self.close_button.clicked.connect(self.accept)
+
+    def start(self, plan: object) -> None:
+        """Show an honest indeterminate state until service execution returns."""
+        dataset = getattr(plan, "dataset", None)
+        ranges = tuple(getattr(plan, "ranges", ()) or ())
+        self.context_lbl.setText(
+            "Dataset: "
+            f"{self._text(dataset, 'exchange')} / {self._text(dataset, 'market_type')} / "
+            f"{self._text(dataset, 'symbol')} / {self._text(dataset, 'timeframe')}"
+        )
+        self.status_lbl.setText(
+            f"Executing repair for {len(ranges)} planned range(s). Waiting for service result..."
+        )
+        self.progress.setRange(0, 0)
+        self.progress.setFormat("Repair running")
+        self.append_log("starting", f"Submitting {len(ranges)} planned repair range(s).")
+        for index, item in enumerate(ranges, start=1):
+            estimated = self._text(item, "estimated_bars") or "unavailable"
+            self.append_log(
+                f"range {index}",
+                (
+                    f"{self._text(item, 'start_utc')} -> {self._text(item, 'end_utc')} | "
+                    f"estimated bars={estimated} | reason={self._text(item, 'reason')}"
+                ),
+            )
+
+    def finish(self, report: object, *, recap: str) -> None:
+        requested = self._int(getattr(report, "ranges_requested", None))
+        completed = self._int(getattr(report, "ranges_completed", None))
+        if requested > 0:
+            self.progress.setRange(0, requested)
+            self.progress.setValue(min(completed, requested))
+            self.progress.setFormat(f"Repair ranges: {completed} / {requested}")
+        else:
+            self.progress.setRange(0, 1)
+            self.progress.setValue(1)
+            self.progress.setFormat("Repair complete")
+
+        validation_status = self._text(report, "validation_status") or "unknown"
+        self.status_lbl.setText(f"Repair complete. Final validation: {validation_status}")
+        for index, item in enumerate(tuple(getattr(report, "range_results", ()) or ()), start=1):
+            downloaded = self._text(item, "downloaded_bars") or "unavailable"
+            self.append_log(
+                f"completed {index}",
+                (
+                    f"{self._text(item, 'start_utc')} -> {self._text(item, 'end_utc')} | "
+                    f"downloaded bars={downloaded} | rows after={self._text(item, 'total_rows_after')}"
+                ),
+            )
+        self.append_log("validating", f"Final validation status: {validation_status}")
+        self.append_log("metadata", f"Metadata updated: {self._yes_no(getattr(report, 'metadata_updated', False))}")
+        self.append_log("cache", f"Cache invalidated: {self._yes_no(getattr(report, 'cache_invalidated', False))}")
+        self.recap_box.setPlainText(recap)
+        self.close_button.setEnabled(True)
+
+    def fail(self, message: str) -> None:
+        self.progress.setRange(0, 1)
+        self.progress.setValue(0)
+        self.progress.setFormat("Repair failed")
+        self.status_lbl.setText(f"Repair failed: {message}")
+        self.append_log("error", message)
+        self.recap_box.setPlainText(f"Repair execution failed:\n{message}")
+        self.close_button.setEnabled(True)
+
+    def append_log(self, label: str, detail: str) -> None:
+        self.log_box.appendPlainText(f"[{label}] {detail}")
+
+    def _text(self, obj: object, name: str) -> str:
+        if obj is None:
+            return ""
+        value = getattr(obj, name, "")
+        if value is None:
+            return ""
+        return str(value)
+
+    def _yes_no(self, value: object) -> str:
+        return "yes" if bool(value) else "no"
+
+    def _int(self, value: object) -> int:
+        try:
+            return int(value) if value is not None else 0
+        except (TypeError, ValueError):
+            return 0
 
 
 class OHLCVMaintenanceWindow(QMainWindow):
@@ -52,6 +225,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._validation_batch_done = 0
         self._validation_batch_cancel_requested = False
         self._validation_progress: QProgressDialog | None = None
+        self._repair_progress_dialog: OhlcvRepairProgressDialog | None = None
 
         self.setWindowTitle("OHLCV Maintenance")
         self.resize(1160, 720)
@@ -71,17 +245,20 @@ class OHLCVMaintenanceWindow(QMainWindow):
         toolbar = QHBoxLayout()
         toolbar.setSpacing(8)
         self._refresh_button = QPushButton("Refresh Datasets", self)
-        self._validate_button = QPushButton("Analyze / Validate Selected", self)
+        self._validate_current_button = QPushButton("Analyze Current", self)
+        self._validate_button = QPushButton("Analyze Checked", self)
         self._repair_plan_button = QPushButton("Plan Repair", self)
         self._execute_repair_button = QPushButton("Execute Repair...", self)
         self._rebuild_metadata_button = QPushButton("Rebuild Metadata...", self)
         self._delete_button = QPushButton("Delete Selected", self)
+        self._validate_current_button.setEnabled(False)
         self._validate_button.setEnabled(False)
         self._repair_plan_button.setEnabled(False)
         self._execute_repair_button.setEnabled(False)
         self._rebuild_metadata_button.setEnabled(False)
         self._delete_button.setEnabled(False)
         toolbar.addWidget(self._refresh_button)
+        toolbar.addWidget(self._validate_current_button)
         toolbar.addWidget(self._validate_button)
         toolbar.addWidget(self._repair_plan_button)
         toolbar.addWidget(self._execute_repair_button)
@@ -134,7 +311,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._validation.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._validation.setMinimumHeight(160)
         self._validation.setPlainText(
-            "Check one or more datasets, then run Analyze / Validate Selected."
+            "Select a dataset to analyze the current row, or check one or more datasets to analyze checked rows."
         )
         validation_layout.addWidget(self._validation, 1)
         layout.addWidget(validation_group, 2)
@@ -144,6 +321,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._watch.timeout.connect(self._poll_pending)
 
         self._refresh_button.clicked.connect(self.refresh_datasets)
+        self._validate_current_button.clicked.connect(self.validate_current)
         self._validate_button.clicked.connect(self.validate_selected)
         self._repair_plan_button.clicked.connect(self.plan_repair_selected)
         self._execute_repair_button.clicked.connect(self.execute_repair_selected)
@@ -152,6 +330,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._select_all_button.clicked.connect(self.select_all_datasets)
         self._deselect_all_button.clicked.connect(self.deselect_all_datasets)
         self._dataset_table.itemSelectionChanged.connect(self._on_selection_changed)
+        self._dataset_table.itemChanged.connect(self._on_dataset_item_changed)
 
         self.refresh_datasets()
 
@@ -164,21 +343,26 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._select_first_after_refresh = bool(select_first)
         self._last_repair_plan = None
         self._refresh_button.setEnabled(False)
-        self._set_dataset_selection_buttons_enabled(False)
-        self._set_execute_repair_enabled(False)
         self._start_future("list", self._bridge.list_historical_ohlcv_datasets())
         self.statusBar().showMessage("Loading OHLCV dataset list...")
 
-    def validate_selected(self) -> None:
-        """Request validation for checked datasets or the current row."""
-        targets = self._checked_datasets()
-        if not targets and self._selected_dataset is not None:
-            targets = (self._selected_dataset,)
-        if not targets:
+    def validate_current(self) -> None:
+        """Request validation for the current OHLCV dataset row."""
+        if self._selected_dataset is None:
             self.statusBar().showMessage("Select an OHLCV dataset before validating")
             return
         self._last_repair_plan = None
-        self._set_execute_repair_enabled(False)
+        self._update_action_state()
+        self._start_validation_batch((self._selected_dataset,))
+
+    def validate_selected(self) -> None:
+        """Request validation for checked OHLCV dataset rows."""
+        targets = self._checked_datasets()
+        if not targets:
+            self.statusBar().showMessage("Check one or more OHLCV datasets before validating checked rows")
+            return
+        self._last_repair_plan = None
+        self._update_action_state()
         self._start_validation_batch(targets)
 
     def select_all_datasets(self) -> None:
@@ -197,8 +381,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
             return
 
         self._last_repair_plan = None
-        self._set_execute_repair_enabled(False)
-        self._set_selected_actions_enabled(False)
+        self._update_action_state()
         self._validation.setPlainText("Planning repair ranges for the selected OHLCV dataset...")
         self._start_future(
             "repair_plan",
@@ -216,12 +399,20 @@ class OHLCVMaintenanceWindow(QMainWindow):
         if not bool(getattr(plan, "actionable", False)):
             self.statusBar().showMessage("Repair plan has no actionable ranges")
             return
+        if self._dataset_key(getattr(plan, "dataset", None)) != self._dataset_key(summary):
+            self.statusBar().showMessage("Repair plan belongs to a different dataset; plan repair again")
+            self._last_repair_plan = None
+            self._update_action_state()
+            return
         if not self._confirm_execute_repair(plan):
             self.statusBar().showMessage("Repair execution cancelled")
             return
 
-        self._set_selected_actions_enabled(False)
-        self._set_execute_repair_enabled(False)
+        progress = OhlcvRepairProgressDialog(parent=self)
+        progress.start(plan)
+        progress.show()
+        self._repair_progress_dialog = progress
+        self._update_action_state()
         self._validation.setPlainText("Executing OHLCV repair plan...")
         self._start_future(
             "execute_repair",
@@ -242,7 +433,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
             self.statusBar().showMessage("Metadata rebuild cancelled")
             return
 
-        self._set_selected_actions_enabled(False)
+        self._last_repair_plan = None
+        self._update_action_state()
         self._details.setPlainText("Rebuilding selected OHLCV metadata...")
         self._start_future(
             "rebuild_metadata",
@@ -260,7 +452,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
             self.statusBar().showMessage("Delete cancelled")
             return
 
-        self._set_selected_actions_enabled(False)
+        self._last_repair_plan = None
+        self._update_action_state()
         self._details.setPlainText("Deleting selected OHLCV dataset...")
         self._start_future("delete", self._bridge.delete_historical_ohlcv_dataset(**self._identity_kwargs(summary)))
         self.statusBar().showMessage("Deleting selected OHLCV dataset...")
@@ -269,10 +462,10 @@ class OHLCVMaintenanceWindow(QMainWindow):
         summary = self._current_dataset()
         self._selected_dataset = summary
         self._last_repair_plan = None
-        self._set_selected_actions_enabled(summary is not None)
+        self._update_action_state()
         if not self._validation_running:
             self._validation.setPlainText(
-                "Check one or more datasets, then run Analyze / Validate Selected."
+                "Select a dataset to analyze the current row, or check one or more datasets to analyze checked rows."
             )
         if summary is None:
             self._details.setPlainText("Select a dataset to inspect CSV and metadata state.")
@@ -283,6 +476,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
 
     def _start_future(self, name: str, future: Future[object]) -> None:
         self._pending[name] = future
+        self._update_action_state()
         if not self._watch.isActive():
             self._watch.start()
 
@@ -313,16 +507,14 @@ class OHLCVMaintenanceWindow(QMainWindow):
                     continue
                 self._last_repair_plan = result
                 self._validation.setPlainText(self._format_repair_plan(result))
-                self._set_selected_actions_enabled(self._selected_dataset is not None)
-                self._set_execute_repair_enabled(
-                    self._selected_dataset is not None and bool(getattr(result, "actionable", False))
-                )
+                self._update_action_state()
                 self.statusBar().showMessage("OHLCV repair plan ready")
             elif name == "execute_repair":
                 self._last_repair_plan = None
-                self._validation.setPlainText(self._format_repair_execution(result))
-                self._set_selected_actions_enabled(self._selected_dataset is not None)
-                self._set_execute_repair_enabled(False)
+                repair_text = self._format_repair_execution(result)
+                self._validation.setPlainText(repair_text)
+                if self._repair_progress_dialog is not None:
+                    self._repair_progress_dialog.finish(result, recap=repair_text)
                 dataset = getattr(result, "dataset", self._selected_dataset)
                 if dataset is not None:
                     self._set_dataset_validation_status(
@@ -336,9 +528,9 @@ class OHLCVMaintenanceWindow(QMainWindow):
                         "inspect",
                         self._bridge.inspect_historical_ohlcv_dataset(**self._identity_kwargs(self._selected_dataset)),
                     )
+                self._update_action_state()
             elif name == "rebuild_metadata":
                 self._validation.setPlainText(self._format_metadata_rebuild(result))
-                self._set_selected_actions_enabled(self._selected_dataset is not None)
                 self.statusBar().showMessage("OHLCV metadata rebuilt")
                 if self._selected_dataset is not None:
                     self._details.setPlainText("Refreshing selected dataset inspection...")
@@ -346,23 +538,24 @@ class OHLCVMaintenanceWindow(QMainWindow):
                         "inspect",
                         self._bridge.inspect_historical_ohlcv_dataset(**self._identity_kwargs(self._selected_dataset)),
                     )
+                self._update_action_state()
             elif name == "delete":
                 self._details.setPlainText(self._format_delete(result))
                 self._validation.setPlainText("Dataset list refreshed after delete.")
                 self._last_repair_plan = None
                 self._selected_dataset = None
-                self._set_selected_actions_enabled(False)
                 self.statusBar().showMessage("OHLCV dataset deleted")
                 self._request_dataset_list(select_first=False)
+                self._update_action_state()
 
         if not self._pending and self._watch.isActive():
             self._watch.stop()
+        self._update_action_state()
 
     def _handle_future_error(self, name: str, exc: BaseException) -> None:
         message = f"{type(exc).__name__}: {exc}"
         if name == "list":
             self._refresh_button.setEnabled(True)
-            self._set_dataset_selection_buttons_enabled(False)
             self._details.setPlainText(f"Dataset list failed:\n{message}")
         elif name == "inspect":
             self._details.setPlainText(f"Dataset inspection failed:\n{message}")
@@ -371,30 +564,25 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 self._set_dataset_validation_status(self._validation_batch_current, "Error")
             self._validation.setPlainText(f"Validation failed:\n{message}")
             self._finish_validation_batch(cancelled=True)
-            self._set_selected_actions_enabled(self._selected_dataset is not None)
         elif name == "repair_plan":
             self._validation.setPlainText(f"Repair planning failed:\n{message}")
             self._last_repair_plan = None
-            self._set_execute_repair_enabled(False)
-            self._set_selected_actions_enabled(self._selected_dataset is not None)
         elif name == "execute_repair":
             self._validation.setPlainText(f"Repair execution failed:\n{message}")
-            self._set_execute_repair_enabled(self._last_repair_plan is not None)
-            self._set_selected_actions_enabled(self._selected_dataset is not None)
+            if self._repair_progress_dialog is not None:
+                self._repair_progress_dialog.fail(message)
         elif name == "rebuild_metadata":
             self._details.setPlainText(f"Metadata rebuild failed:\n{message}")
-            self._set_selected_actions_enabled(self._selected_dataset is not None)
         elif name == "delete":
             self._details.setPlainText(f"Dataset delete failed:\n{message}")
-            self._set_selected_actions_enabled(self._selected_dataset is not None)
         self.statusBar().showMessage(f"OHLCV maintenance action failed: {message}")
+        self._update_action_state()
 
     def _render_dataset_list(self, result: object) -> None:
         datasets = tuple(result or ())  # type: ignore[arg-type]
         self._datasets = datasets
         self._last_repair_plan = None
         self._refresh_button.setEnabled(True)
-        self._set_dataset_selection_buttons_enabled(bool(datasets))
         select_first = self._select_first_after_refresh
         self._select_first_after_refresh = True
 
@@ -422,10 +610,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 item = QTableWidgetItem(value)
                 self._dataset_table.setItem(row, column + 1, item)
 
-            validation_status = self._validation_status_by_key.get(
-                self._dataset_key(summary),
-                self._display_validation_status(self._text(summary, "validation_status")),
-            )
+            validation_status = self._display_validation_status(self._text(summary, "validation_status"))
+            self._validation_status_by_key[self._dataset_key(summary)] = validation_status
             validation_item = QTableWidgetItem(validation_status)
             self._dataset_table.setItem(row, 6, validation_item)
             self._apply_row_validation_style(row, validation_status)
@@ -440,15 +626,13 @@ class OHLCVMaintenanceWindow(QMainWindow):
             self.statusBar().showMessage(f"Loaded {len(datasets)} OHLCV dataset(s)")
         elif datasets:
             self._selected_dataset = None
-            self._set_selected_actions_enabled(False)
             self.statusBar().showMessage(f"Loaded {len(datasets)} OHLCV dataset(s)")
         else:
             self._selected_dataset = None
-            self._set_selected_actions_enabled(False)
-            self._set_dataset_selection_buttons_enabled(False)
             self._details.setPlainText("No OHLCV datasets found.")
             self._validation.setPlainText("No dataset selected.")
             self.statusBar().showMessage("No OHLCV datasets found")
+        self._update_action_state()
 
     def _current_dataset(self) -> object | None:
         row = self._dataset_table.currentRow()
@@ -601,6 +785,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
                         f"    End UTC: {self._text(item, 'end_utc')}",
                         f"    Start Europe/Rome: {self._text(item, 'start_rome')}",
                         f"    End Europe/Rome: {self._text(item, 'end_rome')}",
+                        f"    Estimated bars: {self._text(item, 'estimated_bars') or 'unavailable'}",
                         f"    Rows: {rows or '-'}",
                         f"    Issue count: {self._text(item, 'issue_count')}",
                         f"    Reason: {self._text(item, 'reason')}",
@@ -632,6 +817,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
             f"  Ranges completed: {self._text(report, 'ranges_completed')}",
             f"  Final validation status: {self._text(report, 'validation_status')}",
             f"  Final validation row count: {self._text(report, 'validation_row_count')}",
+            f"  Final row count: {self._text(report, 'final_row_count')}",
             f"  Metadata updated: {self._yes_no(getattr(report, 'metadata_updated', False))}",
             f"  Cache invalidated: {self._yes_no(getattr(report, 'cache_invalidated', False))}",
             "",
@@ -654,6 +840,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
                         f"    End ts_ms: {self._text(item, 'end_ts_ms')}",
                         f"    Start UTC: {self._text(item, 'start_utc')}",
                         f"    End UTC: {self._text(item, 'end_utc')}",
+                        f"    Estimated bars: {self._text(item, 'estimated_bars') or 'unavailable'}",
+                        f"    Downloaded bars: {self._text(item, 'downloaded_bars') or 'unavailable'}",
                         f"    Rows after: {self._text(item, 'total_rows_after')}",
                         f"    Job ID: {self._text(item, 'job_id')}",
                     ]
@@ -742,45 +930,102 @@ class OHLCVMaintenanceWindow(QMainWindow):
         return dialog.clickedButton() is delete_button
 
     def _confirm_execute_repair(self, plan: object) -> bool:
+        dialog = OhlcvRepairConfirmDialog(summary=self._format_repair_confirmation(plan), parent=self)
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _format_repair_confirmation(self, plan: object) -> str:
         dataset = getattr(plan, "dataset", None)
         ranges = tuple(getattr(plan, "ranges", ()) or ())
-        range_lines = [
-            f"{index}. {self._text(item, 'start_utc')} -> {self._text(item, 'end_utc')}"
-            for index, item in enumerate(ranges, start=1)
+        lines = [
+            "Dataset",
+            f"  Exchange: {self._text(dataset, 'exchange')}",
+            f"  Market type: {self._text(dataset, 'market_type')}",
+            f"  Symbol: {self._text(dataset, 'symbol')}",
+            f"  Timeframe: {self._text(dataset, 'timeframe')}",
+            "",
+            "Files affected",
+            f"  CSV: {self._text(dataset, 'csv_path')}",
+            f"  Metadata: {self._text(dataset, 'metadata_path')}",
+            "",
+            "Repair plan summary",
+            f"  Ranges: {len(ranges)}",
+            f"  Actionable: {self._yes_no(getattr(plan, 'actionable', False))}",
+            f"  Issue count: {len(tuple(getattr(plan, 'issues', ()) or ()))}",
+            f"  Validation status at planning: {self._text(plan, 'status')}",
+            f"  Row count at planning: {self._text(plan, 'row_count')}",
+            f"  Message: {self._text(plan, 'message')}",
+            "",
+            "Planned redownload ranges",
         ]
+        if ranges:
+            for index, item in enumerate(ranges, start=1):
+                rows = ", ".join(str(row) for row in tuple(getattr(item, "rows", ()) or ()))
+                lines.extend(
+                    [
+                        f"  Range {index}",
+                        f"    Start UTC: {self._text(item, 'start_utc')}",
+                        f"    End UTC: {self._text(item, 'end_utc')}",
+                        f"    Estimated bars: {self._text(item, 'estimated_bars') or 'unavailable'}",
+                        f"    Reason: {self._text(item, 'reason')}",
+                        f"    Source rows: {rows or '-'}",
+                    ]
+                )
+        else:
+            lines.append("  -")
 
-        dialog = QMessageBox(self)
-        dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("Execute OHLCV Repair")
-        dialog.setText("Execute the reviewed OHLCV repair plan?")
-        dialog.setInformativeText(
-            f"Dataset: {self._dataset_label(dataset)}\n\n"
-            "The planned ranges will be redownloaded and merged into candles.csv.\n"
-            "Metadata and validation status will be updated after repair.\n\n"
-            "Planned ranges:\n"
-            + ("\n".join(range_lines) if range_lines else "-")
+        warnings = tuple(getattr(plan, "warnings", ()) or ())
+        if warnings:
+            lines.extend(["", "Plan warnings"])
+            lines.extend(f"  - {warning}" for warning in warnings)
+
+        lines.extend(
+            [
+                "",
+                "Execution warnings",
+                "  - This will redownload exchange data for the listed ranges.",
+                "  - candles.csv may be rewritten through the historical download/store pipeline.",
+                "  - candles.meta.json may be rewritten after validation metadata is stamped.",
+                "  - The operation should not be interrupted once started.",
+                "  - The operation cannot be undone except by backup or redownload.",
+            ]
         )
-        execute_button = dialog.addButton("Execute Repair", QMessageBox.ButtonRole.AcceptRole)
-        cancel_button = dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)
-        dialog.setDefaultButton(cancel_button)
-        dialog.exec()
-        return dialog.clickedButton() is execute_button
+        return "\n".join(lines)
 
     def _set_selected_actions_enabled(self, enabled: bool) -> None:
-        enabled = bool(enabled) and not self._validation_running
-        self._validate_button.setEnabled(enabled)
-        self._repair_plan_button.setEnabled(enabled)
-        self._rebuild_metadata_button.setEnabled(enabled)
-        self._delete_button.setEnabled(enabled)
-        self._set_execute_repair_enabled(enabled and self._last_repair_plan is not None)
+        self._update_action_state()
 
     def _set_execute_repair_enabled(self, enabled: bool) -> None:
-        self._execute_repair_button.setEnabled(
-            bool(enabled)
-            and not self._validation_running
-            and self._selected_dataset is not None
-            and self._last_repair_plan is not None
-            and bool(getattr(self._last_repair_plan, "actionable", False))
+        self._execute_repair_button.setEnabled(bool(enabled) and self._can_execute_current_repair_plan())
+
+    def _update_action_state(self) -> None:
+        busy = self._actions_busy()
+        has_current = self._selected_dataset is not None
+        checked = self._checked_datasets()
+        has_rows = bool(self._datasets)
+
+        self._refresh_button.setEnabled("list" not in self._pending and not self._validation_running)
+        self._validate_current_button.setEnabled(has_current and not busy)
+        self._validate_button.setEnabled(bool(checked) and not busy)
+        self._repair_plan_button.setEnabled(has_current and not busy)
+        self._rebuild_metadata_button.setEnabled(has_current and not busy)
+        self._delete_button.setEnabled(has_current and not busy)
+        self._execute_repair_button.setEnabled(self._can_execute_current_repair_plan() and not busy)
+        self._select_all_button.setEnabled(has_rows and not busy)
+        self._deselect_all_button.setEnabled(has_rows and bool(checked) and not busy)
+
+    def _actions_busy(self) -> bool:
+        return self._validation_running or any(
+            name in self._pending
+            for name in ("list", "repair_plan", "execute_repair", "rebuild_metadata", "delete")
+        )
+
+    def _can_execute_current_repair_plan(self) -> bool:
+        if self._selected_dataset is None or self._last_repair_plan is None:
+            return False
+        if not bool(getattr(self._last_repair_plan, "actionable", False)):
+            return False
+        return self._dataset_key(getattr(self._last_repair_plan, "dataset", None)) == self._dataset_key(
+            self._selected_dataset
         )
 
     def _checked_datasets(self) -> tuple[object, ...]:
@@ -912,13 +1157,17 @@ class OHLCVMaintenanceWindow(QMainWindow):
     def _apply_row_validation_style(self, row: int, status: str) -> None:
         background = QBrush()
         foreground = QBrush()
+        bold = False
         if status == "OK":
-            background = QBrush(QColor(232, 246, 239))
+            background = QBrush(QColor(198, 239, 206))
+            foreground = QBrush(QColor(0, 0, 0))
         elif status == "Warning":
-            background = QBrush(QColor(255, 248, 214))
+            background = QBrush(QColor(255, 235, 156))
+            foreground = QBrush(QColor(45, 45, 0))
         elif status == "Error":
-            background = QBrush(QColor(255, 232, 232))
-            foreground = QBrush(QColor(122, 24, 24))
+            background = QBrush(QColor(156, 0, 6))
+            foreground = QBrush(QColor(255, 242, 128))
+            bold = True
 
         for column in range(self._dataset_table.columnCount()):
             item = self._dataset_table.item(row, column)
@@ -926,6 +1175,9 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 continue
             item.setBackground(background)
             item.setForeground(foreground)
+            font = QFont(item.font())
+            font.setBold(bold)
+            item.setFont(font)
 
     def _dataset_key(self, summary: object) -> tuple[str, str, str, str]:
         return (
@@ -940,11 +1192,14 @@ class OHLCVMaintenanceWindow(QMainWindow):
             item = self._dataset_table.item(row, 0)
             if item is not None:
                 item.setCheckState(state)
+        self._update_action_state()
+
+    def _on_dataset_item_changed(self, item: QTableWidgetItem) -> None:
+        if item.column() == 0:
+            self._update_action_state()
 
     def _set_dataset_selection_buttons_enabled(self, enabled: bool) -> None:
-        enabled = bool(enabled) and not self._validation_running
-        self._select_all_button.setEnabled(enabled)
-        self._deselect_all_button.setEnabled(enabled)
+        self._update_action_state()
 
     def _dataset_label(self, dataset: object) -> str:
         if dataset is None:

@@ -32,10 +32,14 @@ def test_ohlcv_maintenance_window_exposes_checked_batch_validation_status() -> N
     assert '"Select", "Exchange", "Market", "Symbol", "Timeframe", "Storage", "Validation"' in source
     assert 'QPushButton("Select All"' in source
     assert 'QPushButton("Deselect All"' in source
+    assert 'QPushButton("Analyze Current"' in source
+    assert 'QPushButton("Analyze Checked"' in source
     assert "def select_all_datasets" in source
     assert "def deselect_all_datasets" in source
+    assert "def validate_current" in source
     assert "Qt.ItemFlag.ItemIsUserCheckable" in source
     assert "Qt.CheckState.Unchecked" in source
+    assert "itemChanged.connect(self._on_dataset_item_changed)" in source
     assert "def _checked_datasets" in source
     assert "def _start_validation_batch" in source
     assert "QProgressDialog" in source
@@ -67,12 +71,37 @@ def test_ohlcv_maintenance_window_exposes_confirmed_repair_execution() -> None:
 
     assert 'QPushButton("Execute Repair..."' in source
     assert "def execute_repair_selected" in source
+    assert "class OhlcvRepairConfirmDialog" in source
+    assert "class OhlcvRepairProgressDialog" in source
     assert "def _confirm_execute_repair" in source
+    assert "Confirm OHLCV Repair" in source
+    assert "OHLCV Repair Progress" in source
     assert "execute_historical_ohlcv_repair" in source
     assert "def _format_repair_execution" in source
+    assert "def _format_repair_confirmation" in source
     assert "Repair Execution Complete" in source
     assert "self._last_repair_plan" in source
     assert "Execute Repair" in source
+    assert "candles.csv may be rewritten" in source
+    assert "candles.meta.json may be rewritten" in source
+    assert "Final validation status" in source
+    assert "Cache invalidated" in source
+
+
+def test_ohlcv_maintenance_window_centralizes_action_state_and_row_styling() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert "def _update_action_state" in source
+    assert "def _actions_busy" in source
+    assert "def _can_execute_current_repair_plan" in source
+    assert "self._validate_current_button.setEnabled(has_current and not busy)" in source
+    assert "self._validate_button.setEnabled(bool(checked) and not busy)" in source
+    assert "self._execute_repair_button.setEnabled(self._can_execute_current_repair_plan() and not busy)" in source
+    assert "QColor(198, 239, 206)" in source
+    assert "QColor(0, 0, 0)" in source
+    assert "QColor(156, 0, 6)" in source
+    assert "QColor(255, 242, 128)" in source
+    assert "font.setBold(bold)" in source
 
 
 def test_ohlcv_validation_uses_same_validator_path_as_downloads() -> None:

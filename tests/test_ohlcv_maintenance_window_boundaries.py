@@ -32,11 +32,11 @@ def test_ohlcv_maintenance_window_exposes_checked_batch_validation_status() -> N
     assert '"Select", "Exchange", "Market", "Symbol", "Timeframe", "Storage", "Validation"' in source
     assert 'QPushButton("Select All"' in source
     assert 'QPushButton("Deselect All"' in source
-    assert 'QPushButton("Analyze Current"' in source
     assert 'QPushButton("Analyze Checked"' in source
+    assert "Analyze Current" not in source
     assert "def select_all_datasets" in source
     assert "def deselect_all_datasets" in source
-    assert "def validate_current" in source
+    assert "def validate_current" not in source
     assert "Qt.ItemFlag.ItemIsUserCheckable" in source
     assert "Qt.CheckState.Unchecked" in source
     assert "itemChanged.connect(self._on_dataset_item_changed)" in source
@@ -93,15 +93,32 @@ def test_ohlcv_maintenance_window_centralizes_action_state_and_row_styling() -> 
 
     assert "def _update_action_state" in source
     assert "def _actions_busy" in source
-    assert "def _can_execute_current_repair_plan" in source
-    assert "self._validate_current_button.setEnabled(has_current and not busy)" in source
+    assert "def _can_execute_checked_repair_plan" in source
+    assert "def _sole_checked_dataset" in source
+    assert "def _clear_repair_plan" in source
+    assert "def _restyle_dataset_row" in source
     assert "self._validate_button.setEnabled(bool(checked) and not busy)" in source
-    assert "self._execute_repair_button.setEnabled(self._can_execute_current_repair_plan() and not busy)" in source
+    assert "self._repair_plan_button.setEnabled(checked_count == 1 and not busy)" in source
+    assert "self._rebuild_metadata_button.setEnabled(checked_count == 1 and not busy)" in source
+    assert "self._delete_button.setEnabled(checked_count == 1 and not busy)" in source
+    assert "self._execute_repair_button.setEnabled(self._can_execute_checked_repair_plan() and not busy)" in source
     assert "QColor(198, 239, 206)" in source
     assert "QColor(0, 0, 0)" in source
     assert "QColor(156, 0, 6)" in source
     assert "QColor(255, 242, 128)" in source
+    assert "QColor(224, 224, 224)" in source
     assert "font.setBold(bold)" in source
+
+
+def test_ohlcv_maintenance_window_uses_checked_rows_for_single_dataset_actions() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert "summary = self._sole_checked_dataset()" in source
+    assert "Check exactly one OHLCV dataset before planning repair" in source
+    assert "Check exactly one OHLCV dataset before rebuilding metadata" in source
+    assert "Check exactly one OHLCV dataset before deleting" in source
+    assert "self._start_validation_batch((dataset,))" in source
+    assert "Repair plan cleared because checked dataset selection changed." in source
 
 
 def test_ohlcv_validation_uses_same_validator_path_as_downloads() -> None:

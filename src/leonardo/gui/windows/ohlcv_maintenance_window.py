@@ -6,6 +6,7 @@ from concurrent.futures import Future
 from typing import Optional
 
 from PySide6.QtCore import QTimer, Qt
+from PySide6.QtGui import QBrush, QColor
 from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QProgressDialog,
     QPushButton,
     QSplitter,
     QTableWidget,
@@ -26,11 +28,11 @@ from leonardo.gui.core_bridge import CoreBridge
 
 class OHLCVMaintenanceWindow(QMainWindow):
     """
-    Inspector and explicit delete workflow for persisted OHLCV datasets.
+    Inspector and explicit maintenance workflow for persisted OHLCV datasets.
 
     The window owns presentation and user interaction only. Dataset catalog
-    inspection, validation, and deletion are requested through CoreBridge so
-    persistence contracts remain in the data layer.
+    inspection, validation, deletion, and metadata rebuild are requested through
+    CoreBridge so persistence contracts remain in the data layer.
     """
 
     def __init__(self, *, core_bridge: CoreBridge, parent: Optional[QWidget] = None) -> None:
@@ -40,6 +42,15 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._selected_dataset: object | None = None
         self._pending: dict[str, Future[object]] = {}
         self._select_first_after_refresh = True
+        self._validation_status_by_key: dict[tuple[str, str, str, str], str] = {}
+        self._validation_running = False
+        self._validation_batch_targets: tuple[object, ...] = ()
+        self._validation_batch_queue: list[object] = []
+        self._validation_batch_current: object | None = None
+        self._validation_batch_total = 0
+        self._validation_batch_done = 0
+        self._validation_batch_cancel_requested = False
+        self._validation_progress: QProgressDialog | None = None
 
         self.setWindowTitle("OHLCV Maintenance")
         self.resize(1160, 720)
@@ -77,8 +88,10 @@ class OHLCVMaintenanceWindow(QMainWindow):
 
         dataset_group = QGroupBox("OHLCV Datasets", splitter)
         dataset_layout = QVBoxLayout(dataset_group)
-        self._dataset_table = QTableWidget(0, 5, dataset_group)
-        self._dataset_table.setHorizontalHeaderLabels(["Exchange", "Market", "Symbol", "Timeframe", "Storage"])
+        self._dataset_table = QTableWidget(0, 7, dataset_group)
+        self._dataset_table.setHorizontalHeaderLabels(
+            ["Select", "Exchange", "Market", "Symbol", "Timeframe", "Storage", "Validation"]
+        )
         self._dataset_table.horizontalHeader().setStretchLastSection(True)
         self._dataset_table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._dataset_table.setSelectionBehavior(QTableWidget.SelectRows)
@@ -103,7 +116,9 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._validation.setReadOnly(True)
         self._validation.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
         self._validation.setMinimumHeight(160)
-        self._validation.setPlainText("Run Analyze / Validate Selected to inspect the selected dataset.")
+        self._validation.setPlainText(
+            "Check one or more datasets, then run Analyze / Validate Selected."
+        )
         validation_layout.addWidget(self._validation, 1)
         layout.addWidget(validation_group, 2)
 
@@ -131,15 +146,14 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self.statusBar().showMessage("Loading OHLCV dataset list...")
 
     def validate_selected(self) -> None:
-        """Request validation for the currently selected dataset."""
-        summary = self._selected_dataset
-        if summary is None:
+        """Request validation for checked datasets or the current row."""
+        targets = self._checked_datasets()
+        if not targets and self._selected_dataset is not None:
+            targets = (self._selected_dataset,)
+        if not targets:
             self.statusBar().showMessage("Select an OHLCV dataset before validating")
             return
-        self._set_selected_actions_enabled(False)
-        self._validation.setPlainText("Validation running...")
-        self._start_future("validate", self._bridge.validate_historical_ohlcv_dataset(**self._identity_kwargs(summary)))
-        self.statusBar().showMessage("Validating selected OHLCV dataset...")
+        self._start_validation_batch(targets)
 
     def rebuild_metadata_selected(self) -> None:
         """Confirm and request metadata rebuild for the selected OHLCV dataset."""
@@ -178,7 +192,10 @@ class OHLCVMaintenanceWindow(QMainWindow):
         summary = self._current_dataset()
         self._selected_dataset = summary
         self._set_selected_actions_enabled(summary is not None)
-        self._validation.setPlainText("Run Analyze / Validate Selected to inspect the selected dataset.")
+        if not self._validation_running:
+            self._validation.setPlainText(
+                "Check one or more datasets, then run Analyze / Validate Selected."
+            )
         if summary is None:
             self._details.setPlainText("Select a dataset to inspect CSV and metadata state.")
             return
@@ -207,10 +224,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
             elif name == "inspect":
                 self._details.setPlainText(self._format_inspection(result))
                 self.statusBar().showMessage("Dataset inspection complete")
-            elif name == "validate":
-                self._validation.setPlainText(self._format_validation(result))
-                self._set_selected_actions_enabled(self._selected_dataset is not None)
-                self.statusBar().showMessage("Validation complete")
+            elif name == "validate_batch":
+                self._handle_validation_batch_result(result)
             elif name == "rebuild_metadata":
                 self._validation.setPlainText(self._format_metadata_rebuild(result))
                 self._set_selected_actions_enabled(self._selected_dataset is not None)
@@ -239,8 +254,11 @@ class OHLCVMaintenanceWindow(QMainWindow):
             self._details.setPlainText(f"Dataset list failed:\n{message}")
         elif name == "inspect":
             self._details.setPlainText(f"Dataset inspection failed:\n{message}")
-        elif name == "validate":
+        elif name == "validate_batch":
+            if self._validation_batch_current is not None:
+                self._set_dataset_validation_status(self._validation_batch_current, "Error")
             self._validation.setPlainText(f"Validation failed:\n{message}")
+            self._finish_validation_batch(cancelled=True)
             self._set_selected_actions_enabled(self._selected_dataset is not None)
         elif name == "rebuild_metadata":
             self._details.setPlainText(f"Metadata rebuild failed:\n{message}")
@@ -261,6 +279,15 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._dataset_table.setRowCount(0)
         for row, summary in enumerate(datasets):
             self._dataset_table.insertRow(row)
+            check_item = QTableWidgetItem("")
+            check_item.setFlags(
+                (check_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+                & ~Qt.ItemFlag.ItemIsEditable
+            )
+            check_item.setCheckState(Qt.CheckState.Unchecked)
+            check_item.setData(Qt.ItemDataRole.UserRole, summary)
+            self._dataset_table.setItem(row, 0, check_item)
+
             values = [
                 self._text(summary, "exchange"),
                 self._text(summary, "market_type"),
@@ -270,9 +297,15 @@ class OHLCVMaintenanceWindow(QMainWindow):
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
-                if column == 0:
-                    item.setData(Qt.ItemDataRole.UserRole, summary)
-                self._dataset_table.setItem(row, column, item)
+                self._dataset_table.setItem(row, column + 1, item)
+
+            validation_status = self._validation_status_by_key.get(
+                self._dataset_key(summary),
+                "Unknown",
+            )
+            validation_item = QTableWidgetItem(validation_status)
+            self._dataset_table.setItem(row, 6, validation_item)
+            self._apply_row_validation_style(row, validation_status)
         self._dataset_table.resizeColumnsToContents()
 
         if datasets and select_first:
@@ -394,6 +427,19 @@ class OHLCVMaintenanceWindow(QMainWindow):
             lines.extend(["", "No validation issues detected."])
         return "\n".join(lines)
 
+    def _format_batch_validation(self, latest_report: object) -> str:
+        lines = [
+            "Batch Validation",
+            f"  Completed: {self._validation_batch_done} / {self._validation_batch_total}",
+            "",
+            "Dataset Status",
+        ]
+        for summary in self._validation_batch_targets:
+            status = self._validation_status_by_key.get(self._dataset_key(summary), "Unknown")
+            lines.append(f"  {self._dataset_label(summary)}: {status}")
+        lines.extend(["", "Latest Result", self._format_validation(latest_report)])
+        return "\n".join(lines)
+
     def _format_delete(self, report: object) -> str:
         dataset = getattr(report, "dataset", None)
         return "\n".join(
@@ -464,9 +510,157 @@ class OHLCVMaintenanceWindow(QMainWindow):
         return dialog.clickedButton() is delete_button
 
     def _set_selected_actions_enabled(self, enabled: bool) -> None:
+        enabled = bool(enabled) and not self._validation_running
         self._validate_button.setEnabled(enabled)
         self._rebuild_metadata_button.setEnabled(enabled)
         self._delete_button.setEnabled(enabled)
+
+    def _checked_datasets(self) -> tuple[object, ...]:
+        datasets: list[object] = []
+        for row in range(self._dataset_table.rowCount()):
+            item = self._dataset_table.item(row, 0)
+            if item is None or item.checkState() != Qt.CheckState.Checked:
+                continue
+            summary = item.data(Qt.ItemDataRole.UserRole)
+            if summary is not None:
+                datasets.append(summary)
+        return tuple(datasets)
+
+    def _start_validation_batch(self, summaries: tuple[object, ...]) -> None:
+        self._validation_running = True
+        self._validation_batch_targets = summaries
+        self._validation_batch_queue = list(summaries)
+        self._validation_batch_current = None
+        self._validation_batch_total = len(summaries)
+        self._validation_batch_done = 0
+        self._validation_batch_cancel_requested = False
+        self._refresh_button.setEnabled(False)
+        self._set_selected_actions_enabled(False)
+
+        if len(summaries) > 1:
+            progress = QProgressDialog(
+                "Validating selected OHLCV datasets...",
+                "Cancel",
+                0,
+                len(summaries),
+                self,
+            )
+            progress.setWindowTitle("OHLCV Validation")
+            progress.setMinimumDuration(0)
+            progress.setValue(0)
+            progress.canceled.connect(self._cancel_validation_batch)
+            self._validation_progress = progress
+            progress.show()
+
+        self._validation.setPlainText(
+            f"Validation running for {len(summaries)} OHLCV dataset(s)..."
+        )
+        self.statusBar().showMessage(
+            f"Validating {len(summaries)} selected OHLCV dataset(s)..."
+        )
+        self._start_next_validation_in_batch()
+
+    def _start_next_validation_in_batch(self) -> None:
+        if self._validation_batch_cancel_requested:
+            self._finish_validation_batch(cancelled=True)
+            return
+        if not self._validation_batch_queue:
+            self._finish_validation_batch(cancelled=False)
+            return
+
+        summary = self._validation_batch_queue.pop(0)
+        self._validation_batch_current = summary
+        self._start_future(
+            "validate_batch",
+            self._bridge.validate_historical_ohlcv_dataset(**self._identity_kwargs(summary)),
+        )
+
+    def _handle_validation_batch_result(self, report: object) -> None:
+        summary = self._validation_batch_current
+        if summary is not None:
+            self._set_dataset_validation_status(summary, self._validation_status_for_report(report))
+        self._validation_batch_done += 1
+
+        if self._validation_progress is not None:
+            self._validation_progress.setValue(self._validation_batch_done)
+
+        if self._validation_batch_total > 1:
+            self._validation.setPlainText(self._format_batch_validation(report))
+        else:
+            self._validation.setPlainText(self._format_validation(report))
+
+        self._start_next_validation_in_batch()
+
+    def _cancel_validation_batch(self) -> None:
+        self._validation_batch_cancel_requested = True
+        self.statusBar().showMessage("Validation cancellation requested")
+
+    def _finish_validation_batch(self, *, cancelled: bool) -> None:
+        self._validation_running = False
+        self._validation_batch_queue = []
+        self._validation_batch_current = None
+        self._refresh_button.setEnabled(True)
+        self._set_selected_actions_enabled(self._selected_dataset is not None)
+
+        if self._validation_progress is not None:
+            self._validation_progress.close()
+            self._validation_progress = None
+
+        if cancelled:
+            self.statusBar().showMessage("Validation cancelled")
+        else:
+            self.statusBar().showMessage(
+                f"Validation complete for {self._validation_batch_done} OHLCV dataset(s)"
+            )
+
+    def _set_dataset_validation_status(self, summary: object, status: str) -> None:
+        self._validation_status_by_key[self._dataset_key(summary)] = status
+        for row in range(self._dataset_table.rowCount()):
+            item = self._dataset_table.item(row, 0)
+            row_summary = None if item is None else item.data(Qt.ItemDataRole.UserRole)
+            if row_summary is None or self._dataset_key(row_summary) != self._dataset_key(summary):
+                continue
+            status_item = self._dataset_table.item(row, 6)
+            if status_item is not None:
+                status_item.setText(status)
+            self._apply_row_validation_style(row, status)
+            break
+
+    def _validation_status_for_report(self, report: object) -> str:
+        status = self._text(report, "status").strip().lower()
+        if status == "ok":
+            return "OK"
+        if status == "warning":
+            return "Warning"
+        if status == "error":
+            return "Error"
+        return "Unknown"
+
+    def _apply_row_validation_style(self, row: int, status: str) -> None:
+        background = QBrush()
+        foreground = QBrush()
+        if status == "OK":
+            background = QBrush(QColor(232, 246, 239))
+        elif status == "Warning":
+            background = QBrush(QColor(255, 248, 214))
+        elif status == "Error":
+            background = QBrush(QColor(255, 232, 232))
+            foreground = QBrush(QColor(122, 24, 24))
+
+        for column in range(self._dataset_table.columnCount()):
+            item = self._dataset_table.item(row, column)
+            if item is None:
+                continue
+            item.setBackground(background)
+            item.setForeground(foreground)
+
+    def _dataset_key(self, summary: object) -> tuple[str, str, str, str]:
+        return (
+            self._text(summary, "exchange"),
+            self._text(summary, "market_type"),
+            self._text(summary, "symbol"),
+            self._text(summary, "timeframe"),
+        )
 
     def _dataset_label(self, dataset: object) -> str:
         if dataset is None:

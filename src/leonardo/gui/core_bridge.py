@@ -238,6 +238,42 @@ class CoreBridge(QObject):
 
         return self.submit(_validate())
 
+    def plan_historical_ohlcv_repair(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> Future[object]:
+        """Plan OHLCV repair ranges through the Core/data maintenance boundary."""
+        service = self._historical_ohlcv_maintenance_service()
+        dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
+
+        async def _plan() -> object:
+            return await asyncio.to_thread(service.plan_ohlcv_repair, dataset_id)
+
+        return self.submit(_plan())
+
+    def execute_historical_ohlcv_repair(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+        plan: object,
+    ) -> Future[object]:
+        """Execute a reviewed OHLCV repair plan through the Core/data boundary."""
+        ctx = self.context
+        service = self._historical_ohlcv_maintenance_service()
+        dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
+
+        async def _execute() -> object:
+            return await service.execute_ohlcv_repair(ctx, dataset_id, plan)  # type: ignore[arg-type]
+
+        return self.submit(_execute())
+
     def delete_historical_ohlcv_dataset(
         self,
         *,

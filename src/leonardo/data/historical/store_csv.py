@@ -5,7 +5,7 @@ import json
 import os
 import tempfile
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Iterable, List, Dict
@@ -23,6 +23,7 @@ from .artifact_metadata_contracts import (
     ArtifactQuality,
     ArtifactShape,
     ArtifactTimeRange,
+    ArtifactValidationMetadata,
     HistoricalCsvArtifactManifest,
     metadata_files_from_csv,
 )
@@ -226,6 +227,24 @@ class CsvOHLCVStore:
         out.sort(key=lambda c: c.ts_ms)
         return out
 
+    def read_ts_ms_by_row(self, file_path: Path) -> tuple[int | None, ...]:
+        """Return CSV-order ``ts_ms`` values without parsing OHLCV values."""
+        csv_path = Path(file_path)
+        if not csv_path.exists():
+            return ()
+
+        values: list[int | None] = []
+        with csv_path.open("r", newline="") as f:
+            reader = csv.DictReader(f)
+            if reader.fieldnames is None or "ts_ms" not in reader.fieldnames:
+                return ()
+            for row in reader:
+                try:
+                    values.append(int(row["ts_ms"]))
+                except Exception:
+                    values.append(None)
+        return tuple(values)
+
     def write_atomic(
         self,
         file_path: Path,
@@ -277,6 +296,65 @@ class CsvOHLCVStore:
             raise ValueError(f"Cannot rebuild OHLCV metadata for empty CSV: {csv_path}")
         self._write_metadata_sidecar(file_path=csv_path, candles=list(candles), market=market)
         return self.inspect(csv_path, market=market, repair_metadata=False)
+
+    def record_validation_result(
+        self,
+        file_path: Path,
+        *,
+        market: MarketId | None,
+        status: str,
+        row_count: int,
+        issues: Iterable[tuple[str, str]],
+        validator: str,
+    ) -> bool:
+        """Persist an explicit validation result in the adjacent metadata sidecar."""
+        csv_path = Path(file_path)
+        if not csv_path.is_file():
+            raise FileNotFoundError(f"OHLCV CSV not found: {csv_path}")
+
+        metadata_path = metadata_path_for_csv(csv_path)
+        manifest = self._load_existing_manifest(metadata_path)
+        if manifest is not None and self._manifest_issue_for_csv(
+            manifest=manifest,
+            file_path=csv_path,
+            market=market,
+        ) is not None:
+            manifest = None
+        if manifest is None:
+            self.rebuild_metadata_sidecar(csv_path, market=market)
+            manifest = self._load_existing_manifest(metadata_path)
+        if manifest is None:
+            raise RuntimeError(f"Cannot update OHLCV validation metadata: {metadata_path}")
+
+        issue_pairs = tuple((str(severity), str(message)) for severity, message in issues)
+        warning_count = sum(1 for severity, _message in issue_pairs if severity == "warning")
+        error_count = sum(1 for severity, _message in issue_pairs if severity == "error")
+        canonical_status = self._canonical_validation_status(status)
+        fingerprint = self._fingerprint_for_file(csv_path)
+        validation = ArtifactValidationMetadata(
+            status=canonical_status,  # type: ignore[arg-type]
+            validated_at_ms=int(time.time() * 1000),
+            validator=str(validator),
+            row_count=int(row_count),
+            issue_count=len(issue_pairs),
+            warning_count=warning_count,
+            error_count=error_count,
+            csv_fingerprint=fingerprint,
+            message=self._validation_message(issue_pairs),
+        )
+        quality_status = "not_validated" if canonical_status == "unknown" else canonical_status
+        updated_manifest = replace(
+            manifest,
+            fingerprint=fingerprint,
+            quality=replace(
+                manifest.quality,
+                validation_status=quality_status,  # type: ignore[arg-type]
+                validation_notes=tuple(f"{severity}: {message}" for severity, message in issue_pairs),
+            ),
+            validation=validation,
+        )
+        self._atomic_write_json(updated_manifest.to_dict(), metadata_path)
+        return True
 
     def _write_metadata_sidecar(
         self,
@@ -382,6 +460,24 @@ class CsvOHLCVStore:
                 return HistoricalCsvArtifactManifest.from_dict(json.load(handle))
         except Exception:
             return None
+
+    def file_fingerprint(self, file_path: Path) -> ArtifactFingerprint:
+        """Return the fingerprint fields used by OHLCV metadata sidecars."""
+        return self._fingerprint_for_file(file_path)
+
+    def _canonical_validation_status(self, status: str) -> str:
+        value = str(status or "").strip().lower()
+        if value in {"ok", "warning", "error"}:
+            return value
+        return "unknown"
+
+    def _validation_message(self, issues: tuple[tuple[str, str], ...]) -> str:
+        if not issues:
+            return "No validation issues detected."
+        severity, message = issues[0]
+        if len(issues) == 1:
+            return f"{severity}: {message}"
+        return f"{len(issues)} validation issues detected; first: {severity}: {message}"
 
     def _fingerprint_for_file(self, file_path: Path) -> ArtifactFingerprint:
         try:

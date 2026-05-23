@@ -10,6 +10,8 @@ def test_ohlcv_maintenance_window_uses_core_bridge_not_data_layer_files() -> Non
     assert "from leonardo.data.historical" not in source
     assert "delete_historical_ohlcv_dataset" in source
     assert "rebuild_historical_ohlcv_metadata" in source
+    assert "plan_historical_ohlcv_repair" in source
+    assert "execute_historical_ohlcv_repair" in source
     assert "QMessageBox" in source
     assert "CsvOHLCVStore" not in source
     assert "HistoricalDatasetValidator" not in source
@@ -28,6 +30,10 @@ def test_ohlcv_maintenance_window_exposes_checked_batch_validation_status() -> N
 
     assert "QTableWidget(0, 7" in source
     assert '"Select", "Exchange", "Market", "Symbol", "Timeframe", "Storage", "Validation"' in source
+    assert 'QPushButton("Select All"' in source
+    assert 'QPushButton("Deselect All"' in source
+    assert "def select_all_datasets" in source
+    assert "def deselect_all_datasets" in source
     assert "Qt.ItemFlag.ItemIsUserCheckable" in source
     assert "Qt.CheckState.Unchecked" in source
     assert "def _checked_datasets" in source
@@ -37,7 +43,36 @@ def test_ohlcv_maintenance_window_exposes_checked_batch_validation_status() -> N
     assert 'if status == "warning":\n            return "Warning"' in source
     assert 'if status == "error":\n            return "Error"' in source
     assert "def _apply_row_validation_style" in source
+    assert "metadata_updated" in source
     assert "validate_historical_ohlcv_dataset" in source
+
+
+def test_ohlcv_maintenance_window_exposes_single_dataset_repair_planning() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert 'QPushButton("Plan Repair"' in source
+    assert "def plan_repair_selected" in source
+    assert "plan_historical_ohlcv_repair" in source
+    assert "def _format_repair_plan" in source
+    assert "Repair Plan" in source
+    assert "def _checked_datasets" in source
+    assert "plan_repair_selected" in source
+    assert "fetch_ohlcv" not in source
+    assert "HistoricalDownloader" not in source
+    assert "DownloadRequest" not in source
+
+
+def test_ohlcv_maintenance_window_exposes_confirmed_repair_execution() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert 'QPushButton("Execute Repair..."' in source
+    assert "def execute_repair_selected" in source
+    assert "def _confirm_execute_repair" in source
+    assert "execute_historical_ohlcv_repair" in source
+    assert "def _format_repair_execution" in source
+    assert "Repair Execution Complete" in source
+    assert "self._last_repair_plan" in source
+    assert "Execute Repair" in source
 
 
 def test_ohlcv_validation_uses_same_validator_path_as_downloads() -> None:

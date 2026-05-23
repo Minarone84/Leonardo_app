@@ -32,6 +32,7 @@ ArtifactToolIdentityStatus = Literal["explicit", "inferred", "unknown"]
 ArtifactSha256Status = Literal["computed", "not_computed", "unknown", "error"]
 ArtifactTimelineStatus = Literal["verified", "assumed_sorted", "unverified", "error"]
 ArtifactValidationStatus = Literal["not_validated", "ok", "warning", "error"]
+ArtifactValidationResultStatus = Literal["unknown", "ok", "warning", "error"]
 JsonValue = Any
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -674,6 +675,59 @@ class ArtifactQuality:
 
 
 @dataclass(frozen=True)
+class ArtifactValidationMetadata:
+    status: ArtifactValidationResultStatus = "unknown"
+    validated_at_ms: int | None = None
+    validated_at: str = ""
+    validated_at_rome: str = ""
+    validator: str = ""
+    row_count: int | None = None
+    issue_count: int = 0
+    warning_count: int = 0
+    error_count: int = 0
+    csv_fingerprint: ArtifactFingerprint = field(default_factory=ArtifactFingerprint)
+    message: str = ""
+
+    def __post_init__(self) -> None:
+        if self.status not in {"unknown", "ok", "warning", "error"}:
+            raise ValueError(f"Unsupported validation status: {self.status!r}")
+        object.__setattr__(self, "validated_at", self.validated_at or format_ts_ms_utc(self.validated_at_ms))
+        object.__setattr__(self, "validated_at_rome", self.validated_at_rome or format_ts_ms_rome(self.validated_at_ms))
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "status": self.status,
+            "validated_at_ms": self.validated_at_ms,
+            "validated_at": self.validated_at,
+            "validated_at_rome": self.validated_at_rome,
+            "validator": self.validator,
+            "row_count": self.row_count,
+            "issue_count": int(self.issue_count),
+            "warning_count": int(self.warning_count),
+            "error_count": int(self.error_count),
+            "csv_fingerprint": self.csv_fingerprint.to_dict(),
+            "message": self.message,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict[str, object]) -> "ArtifactValidationMetadata":
+        fingerprint_raw = data.get("csv_fingerprint", {}) or {}
+        return cls(
+            status=str(data.get("status", "unknown")),  # type: ignore[arg-type]
+            validated_at_ms=None if data.get("validated_at_ms") is None else int(data.get("validated_at_ms")),
+            validated_at=str(data.get("validated_at", "")),
+            validated_at_rome=str(data.get("validated_at_rome", "")),
+            validator=str(data.get("validator", "")),
+            row_count=None if data.get("row_count") is None else int(data.get("row_count")),
+            issue_count=int(data.get("issue_count", 0)),
+            warning_count=int(data.get("warning_count", 0)),
+            error_count=int(data.get("error_count", 0)),
+            csv_fingerprint=ArtifactFingerprint.from_dict(dict(fingerprint_raw)),
+            message=str(data.get("message", "")),
+        )
+
+
+@dataclass(frozen=True)
 class HistoricalCsvArtifactManifest:
     schema_version: int
     artifact_type: Literal["historical_csv_artifact"]
@@ -687,6 +741,7 @@ class HistoricalCsvArtifactManifest:
     lineage: ArtifactLineage = field(default_factory=ArtifactLineage)
     fingerprint: ArtifactFingerprint = field(default_factory=ArtifactFingerprint)
     quality: ArtifactQuality = field(default_factory=ArtifactQuality)
+    validation: ArtifactValidationMetadata = field(default_factory=ArtifactValidationMetadata)
     metadata: tuple[ArtifactMetadataEntry, ...] = ()
 
     def __post_init__(self) -> None:
@@ -710,12 +765,12 @@ class HistoricalCsvArtifactManifest:
             raise ValueError("Analysis databases use manifest.json, not HistoricalCsvArtifactManifest")
 
     def to_dict(self) -> dict[str, object]:
-        return {"schema_version": self.schema_version, "artifact_type": self.artifact_type, "identity": self.identity.to_dict(), "market": market_to_dict(self.market), "files": self.files.to_dict(), "time_range": self.time_range.to_dict(), "shape": self.shape.to_dict(), "columns": [column.to_dict() for column in self.columns], "tool": None if self.tool is None else self.tool.to_dict(), "lineage": self.lineage.to_dict(), "fingerprint": self.fingerprint.to_dict(), "quality": self.quality.to_dict(), "metadata": [entry.to_dict() for entry in self.metadata]}
+        return {"schema_version": self.schema_version, "artifact_type": self.artifact_type, "identity": self.identity.to_dict(), "market": market_to_dict(self.market), "files": self.files.to_dict(), "time_range": self.time_range.to_dict(), "shape": self.shape.to_dict(), "columns": [column.to_dict() for column in self.columns], "tool": None if self.tool is None else self.tool.to_dict(), "lineage": self.lineage.to_dict(), "fingerprint": self.fingerprint.to_dict(), "quality": self.quality.to_dict(), "validation": self.validation.to_dict(), "metadata": [entry.to_dict() for entry in self.metadata]}
 
     @classmethod
     def from_dict(cls, data: dict[str, object]) -> "HistoricalCsvArtifactManifest":
         tool_raw = data.get("tool")
-        return cls(schema_version=int(data.get("schema_version", 0)), artifact_type=str(data.get("artifact_type", "")), identity=ArtifactIdentity.from_dict(dict(data.get("identity", {}) or {})), market=market_from_dict(dict(data.get("market", {}) or {})), files=ArtifactFiles.from_dict(dict(data.get("files", {}) or {})), time_range=ArtifactTimeRange.from_dict(dict(data.get("time_range", {}) or {})), shape=ArtifactShape.from_dict(dict(data.get("shape", {}) or {})), columns=tuple(ArtifactColumnMetadata.from_dict(dict(item)) for item in data.get("columns", ()) or ()), tool=None if tool_raw is None else ArtifactToolMetadata.from_dict(dict(tool_raw)), lineage=ArtifactLineage.from_dict(dict(data.get("lineage", {}) or {})), fingerprint=ArtifactFingerprint.from_dict(dict(data.get("fingerprint", {}) or {})), quality=ArtifactQuality.from_dict(dict(data.get("quality", {}) or {})), metadata=tuple(ArtifactMetadataEntry.from_dict(dict(item)) for item in data.get("metadata", ()) or ()))  # type: ignore[arg-type]
+        return cls(schema_version=int(data.get("schema_version", 0)), artifact_type=str(data.get("artifact_type", "")), identity=ArtifactIdentity.from_dict(dict(data.get("identity", {}) or {})), market=market_from_dict(dict(data.get("market", {}) or {})), files=ArtifactFiles.from_dict(dict(data.get("files", {}) or {})), time_range=ArtifactTimeRange.from_dict(dict(data.get("time_range", {}) or {})), shape=ArtifactShape.from_dict(dict(data.get("shape", {}) or {})), columns=tuple(ArtifactColumnMetadata.from_dict(dict(item)) for item in data.get("columns", ()) or ()), tool=None if tool_raw is None else ArtifactToolMetadata.from_dict(dict(tool_raw)), lineage=ArtifactLineage.from_dict(dict(data.get("lineage", {}) or {})), fingerprint=ArtifactFingerprint.from_dict(dict(data.get("fingerprint", {}) or {})), quality=ArtifactQuality.from_dict(dict(data.get("quality", {}) or {})), validation=ArtifactValidationMetadata.from_dict(dict(data.get("validation", {}) or {})), metadata=tuple(ArtifactMetadataEntry.from_dict(dict(item)) for item in data.get("metadata", ()) or ()))  # type: ignore[arg-type]
 
 
 @dataclass(frozen=True)

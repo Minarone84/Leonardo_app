@@ -12,6 +12,7 @@ from leonardo.data.historical.artifact_metadata_contracts import (
     ArtifactShape,
     ArtifactTimeRange,
     ArtifactToolMetadata,
+    ArtifactValidationMetadata,
     HistoricalArtifactSummary,
     HistoricalCsvArtifactManifest,
 )
@@ -107,6 +108,18 @@ def test_historical_csv_artifact_manifest_roundtrip_with_tool_contract():
             duplicate_ts_ms=False,
             validation_status="ok",
         ),
+        validation=ArtifactValidationMetadata(
+            status="ok",
+            validated_at_ms=1_609_459_200_000,
+            validator="HistoricalDatasetValidator",
+            row_count=25,
+            issue_count=0,
+            csv_fingerprint=ArtifactFingerprint.from_file_stat(
+                size_bytes=1234,
+                modified_at_ms=1_609_459_200_000,
+            ),
+            message="No validation issues detected.",
+        ),
     )
 
     payload = manifest.to_dict()
@@ -125,6 +138,10 @@ def test_historical_csv_artifact_manifest_roundtrip_with_tool_contract():
     assert loaded.tool.output.naming_resolver == "oscillator:rsi"
     assert loaded.tool.oscillator_visual is not None
     assert loaded.quality.timeline_status == "verified"
+    assert loaded.validation.status == "ok"
+    assert loaded.validation.validator == "HistoricalDatasetValidator"
+    assert loaded.validation.row_count == 25
+    assert loaded.validation.validated_at == "2021-01-01 00:00:00 UTC"
 
     summary = HistoricalArtifactSummary.from_manifest(loaded)
     assert summary.unique_id == manifest.identity.unique_id
@@ -173,3 +190,4 @@ def test_ohlcv_manifest_can_have_no_tool_section():
     loaded = HistoricalCsvArtifactManifest.from_dict(manifest.to_dict())
     assert loaded.tool is None
     assert loaded.identity.artifact_id == "ohlcv__candles"
+    assert loaded.validation.status == "unknown"

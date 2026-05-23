@@ -49,6 +49,7 @@ def test_ohlcv_write_atomic_creates_metadata_sidecar(tmp_path: Path):
     assert manifest.quality.timeline_status == "verified"
     assert manifest.quality.monotonic_ts_ms is True
     assert manifest.quality.duplicate_ts_ms is False
+    assert manifest.validation.status == "unknown"
     assert [column.name for column in manifest.columns] == list(CsvOHLCVStore.HEADER)
 
 
@@ -97,3 +98,16 @@ def test_ohlcv_rebuild_metadata_sidecar_does_not_rewrite_csv(tmp_path: Path):
     )
     assert manifest.market.timeframe == "1M"
     assert manifest.identity.artifact_uid == "ohlcv:bybit:linear:LINKUSDT:1M:ohlcv__candles"
+
+
+def test_ohlcv_store_reads_csv_order_timestamps_without_ohlcv_parsing(tmp_path: Path):
+    csv_path = tmp_path / "candles.csv"
+    csv_path.write_text(
+        "ts_ms,open,high,low,close,volume\n"
+        "3000,10,5,1,2,100\n"
+        "bad,1,2,0.5,1.5,10\n"
+        "1000,1,2,0.5,1.5,10\n",
+        encoding="utf-8",
+    )
+
+    assert CsvOHLCVStore().read_ts_ms_by_row(csv_path) == (3000, None, 1000)

@@ -3,16 +3,27 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+import re
+import uuid
+from dataclasses import dataclass, replace
 from pathlib import Path
+from typing import Any
 
 from leonardo.data.historical.artifact_metadata_contracts import HistoricalCsvArtifactManifest
-from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
+from leonardo.data.historical.artifact_metadata_naming import (
+    format_ts_ms_rome,
+    format_ts_ms_utc,
+    metadata_path_for_csv,
+)
 from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService
+from leonardo.data.historical.downloader import DownloadRequest, HistoricalDownloader
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.store_csv import CsvOHLCVStore
 from leonardo.data.historical.validator import HistoricalDatasetValidator
 from leonardo.data.naming import MarketId, canonicalize
+
+
+_VALIDATION_ROW_RE = re.compile(r"\brow\s+(\d+)\b")
 
 
 @dataclass(frozen=True)
@@ -28,6 +39,7 @@ class OhlcvDatasetSummary:
     partition_path: Path
     csv_path: Path
     metadata_path: Path
+    validation_status: str = "unknown"
 
 
 @dataclass(frozen=True)
@@ -56,6 +68,14 @@ class OhlcvManifestSummary:
     timeline_status: str
     validation_status: str
     validation_notes: tuple[str, ...]
+    explicit_validation_status: str
+    validated_at: str
+    validation_validator: str
+    validation_row_count: int | None
+    validation_issue_count: int
+    validation_warning_count: int
+    validation_error_count: int
+    validation_message: str
     fingerprint_size_bytes: int | None
     fingerprint_modified_at_ms: int | None
 
@@ -88,12 +108,76 @@ class OhlcvValidationIssue:
 
 @dataclass(frozen=True)
 class OhlcvValidationReport:
-    """Read-only validation result for one OHLCV dataset."""
+    """Validation result for one OHLCV dataset and sidecar update status."""
 
     dataset: OhlcvDatasetSummary
     status: str
     row_count: int
     issues: tuple[OhlcvValidationIssue, ...]
+    metadata_updated: bool = False
+    metadata_update_error: str = ""
+
+
+@dataclass(frozen=True)
+class OhlcvRepairRange:
+    """One proposed read-only OHLCV repair range."""
+
+    start_ts_ms: int
+    end_ts_ms: int
+    start_utc: str
+    end_utc: str
+    start_rome: str
+    end_rome: str
+    reason: str
+    issue_count: int
+    rows: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class OhlcvRepairPlan:
+    """Read-only OHLCV repair proposal derived from validation output."""
+
+    dataset: OhlcvDatasetSummary
+    status: str
+    actionable: bool
+    message: str
+    row_count: int
+    ranges: tuple[OhlcvRepairRange, ...]
+    issues: tuple[OhlcvValidationIssue, ...]
+    warnings: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class OhlcvRepairExecutionRange:
+    """Execution result for one planned OHLCV repair range."""
+
+    start_ts_ms: int
+    end_ts_ms: int
+    start_utc: str
+    end_utc: str
+    total_rows_after: int
+    job_id: str
+    file_path: Path
+
+
+@dataclass(frozen=True)
+class OhlcvRepairExecutionReport:
+    """Structured result for explicit OHLCV repair execution."""
+
+    dataset: OhlcvDatasetSummary
+    action: str
+    csv_path: Path
+    metadata_path: Path
+    message: str
+    ranges_requested: int
+    ranges_completed: int
+    range_results: tuple[OhlcvRepairExecutionRange, ...]
+    validation_status: str
+    validation_row_count: int
+    validation_issues: tuple[OhlcvValidationIssue, ...]
+    metadata_updated: bool = False
+    metadata_update_error: str = ""
+    cache_invalidated: bool = False
 
 
 @dataclass(frozen=True)
@@ -114,11 +198,12 @@ class OhlcvMutationReport:
 
 class HistoricalOhlcvMaintenanceService:
     """
-    Provide OHLCV maintenance reports and narrow dataset deletion.
+    Provide OHLCV maintenance reports and narrow dataset actions.
 
     The service owns historical OHLCV inspection, validation, exact dataset
-    deletion, and explicit metadata rebuild. It does not repair data, download
-    candles, delete derived artifacts, or import GUI code.
+    deletion, explicit metadata rebuild, and read-only repair planning. It does
+    not delete derived artifacts or import GUI code. Repair execution delegates
+    range downloads to the existing historical downloader.
     """
 
     def __init__(
@@ -171,9 +256,22 @@ class HistoricalOhlcvMaintenanceService:
         )
 
     def validate_ohlcv(self, dataset_id: DatasetId) -> OhlcvValidationReport:
-        """Validate one OHLCV dataset without mutating storage."""
+        """Validate one OHLCV dataset and persist explicit validation metadata."""
         summary = self._summary_for_dataset(dataset_id)
         report = HistoricalDatasetValidator(summary.timeframe).validate(summary.csv_path)
+        metadata_updated = False
+        metadata_update_error = ""
+        try:
+            metadata_updated = self._store.record_validation_result(
+                summary.csv_path,
+                market=self._market_for_dataset(dataset_id),
+                status=report.status,
+                row_count=report.row_count,
+                issues=tuple((issue.severity, issue.message) for issue in report.issues),
+                validator="HistoricalDatasetValidator",
+            )
+        except Exception as exc:
+            metadata_update_error = f"{type(exc).__name__}: {exc}"
         return OhlcvValidationReport(
             dataset=summary,
             status=report.status,
@@ -182,6 +280,113 @@ class HistoricalOhlcvMaintenanceService:
                 OhlcvValidationIssue(severity=issue.severity, message=issue.message)
                 for issue in report.issues
             ),
+            metadata_updated=metadata_updated,
+            metadata_update_error=metadata_update_error,
+        )
+
+    def plan_ohlcv_repair(self, dataset_id: DatasetId) -> OhlcvRepairPlan:
+        """Build a read-only repair proposal from validation issues."""
+        summary = self._summary_for_dataset(dataset_id)
+        self._validate_ohlcv_targets(summary)
+        if not summary.csv_path.is_file():
+            raise FileNotFoundError(f"OHLCV CSV not found: {summary.csv_path}")
+
+        validator = HistoricalDatasetValidator(summary.timeframe)
+        report = validator.validate(summary.csv_path)
+        row_timestamps = self._store.read_ts_ms_by_row(summary.csv_path)
+        issues = tuple(
+            OhlcvValidationIssue(severity=issue.severity, message=issue.message)
+            for issue in report.issues
+        )
+        ranges, warnings = self._repair_ranges_from_validation(
+            issues=issues,
+            row_timestamps=row_timestamps,
+            step_ms=validator.step_ms,
+            timeframe=summary.timeframe,
+        )
+
+        if report.status == "ok":
+            message = "No validation issues detected; no repair plan is needed."
+        elif ranges:
+            message = (
+                f"{len(ranges)} proposed redownload range(s) were derived from "
+                "timestamp-addressable validation issues."
+            )
+        else:
+            message = "No timestamp-addressable repair range could be derived from the validation issues."
+
+        return OhlcvRepairPlan(
+            dataset=summary,
+            status=report.status,
+            actionable=bool(ranges),
+            message=message,
+            row_count=report.row_count,
+            ranges=ranges,
+            issues=issues,
+            warnings=warnings,
+        )
+
+    async def execute_ohlcv_repair(
+        self,
+        ctx: Any,
+        dataset_id: DatasetId,
+        plan: OhlcvRepairPlan,
+    ) -> OhlcvRepairExecutionReport:
+        """Execute a reviewed OHLCV repair plan through the historical downloader."""
+        summary = self._summary_for_dataset(dataset_id)
+        self._validate_ohlcv_targets(summary)
+        if not summary.csv_path.is_file():
+            raise FileNotFoundError(f"OHLCV CSV not found: {summary.csv_path}")
+        self._validate_repair_plan_for_dataset(plan, summary)
+
+        downloader = HistoricalDownloader(root=self._historical_root)
+        range_results: list[OhlcvRepairExecutionRange] = []
+        for repair_range in plan.ranges:
+            job_id = f"ohlcv_repair_{uuid.uuid4().hex[:12]}"
+            result = await downloader.run_with_job_id(
+                ctx,
+                DownloadRequest(
+                    exchange=summary.exchange,
+                    market_type=summary.market_type,
+                    symbol=summary.symbol,
+                    timeframe=summary.timeframe,
+                    start_ms=int(repair_range.start_ts_ms),
+                    end_ms=int(repair_range.end_ts_ms),
+                ),
+                job_id,
+            )
+            range_results.append(
+                OhlcvRepairExecutionRange(
+                    start_ts_ms=int(repair_range.start_ts_ms),
+                    end_ts_ms=int(repair_range.end_ts_ms),
+                    start_utc=repair_range.start_utc,
+                    end_utc=repair_range.end_utc,
+                    total_rows_after=int(result.total_rows),
+                    job_id=job_id,
+                    file_path=result.file_path,
+                )
+            )
+
+        final_validation = self.validate_ohlcv(summary.dataset_id)
+        cache_invalidated = self._dataset_service.invalidate_dataset_cache(summary.dataset_id)
+        return OhlcvRepairExecutionReport(
+            dataset=summary,
+            action="execute_ohlcv_repair",
+            csv_path=summary.csv_path,
+            metadata_path=summary.metadata_path,
+            message=(
+                f"Executed OHLCV repair for {summary.exchange} / {summary.market_type} / "
+                f"{summary.symbol} / {summary.timeframe}."
+            ),
+            ranges_requested=len(plan.ranges),
+            ranges_completed=len(range_results),
+            range_results=tuple(range_results),
+            validation_status=final_validation.status,
+            validation_row_count=final_validation.row_count,
+            validation_issues=final_validation.issues,
+            metadata_updated=final_validation.metadata_updated,
+            metadata_update_error=final_validation.metadata_update_error,
+            cache_invalidated=bool(cache_invalidated),
         )
 
     def delete_ohlcv(self, dataset_id: DatasetId) -> OhlcvMutationReport:
@@ -243,7 +448,8 @@ class HistoricalOhlcvMaintenanceService:
         market = self._market_for_dataset(dataset_id)
         partition_path = self._paths.partition_dir(market)
         csv_path = self._store.file_path(self._paths.ohlcv_dir(market))
-        return OhlcvDatasetSummary(
+        metadata_path = metadata_path_for_csv(csv_path)
+        summary = OhlcvDatasetSummary(
             dataset_id=DatasetId(
                 exchange=market.exchange,
                 market_type=market.market_type,
@@ -257,8 +463,9 @@ class HistoricalOhlcvMaintenanceService:
             storage_segment=partition_path.name,
             partition_path=partition_path,
             csv_path=csv_path,
-            metadata_path=metadata_path_for_csv(csv_path),
+            metadata_path=metadata_path,
         )
+        return replace(summary, validation_status=self._stored_validation_status(summary))
 
     def _validate_ohlcv_targets(self, summary: OhlcvDatasetSummary) -> None:
         if summary.csv_path.name != self._store.FILENAME:
@@ -293,9 +500,147 @@ class HistoricalOhlcvMaintenanceService:
         except Exception as exc:
             return None, f"{type(exc).__name__}: {exc}"
 
+    def _validate_repair_plan_for_dataset(self, plan: OhlcvRepairPlan, summary: OhlcvDatasetSummary) -> None:
+        if self._dataset_key(plan.dataset) != self._dataset_key(summary):
+            raise ValueError("Repair plan dataset does not match the selected OHLCV dataset")
+        if not plan.actionable or not plan.ranges:
+            raise ValueError("Repair plan has no actionable ranges")
+        for repair_range in plan.ranges:
+            start_ts_ms = int(repair_range.start_ts_ms)
+            end_ts_ms = int(repair_range.end_ts_ms)
+            if start_ts_ms < 0:
+                raise ValueError(f"Repair range start must be non-negative: {start_ts_ms}")
+            if end_ts_ms < start_ts_ms:
+                raise ValueError(
+                    f"Repair range end must be greater than or equal to start: {start_ts_ms} > {end_ts_ms}"
+                )
+
+    def _repair_ranges_from_validation(
+        self,
+        *,
+        issues: tuple[OhlcvValidationIssue, ...],
+        row_timestamps: tuple[int | None, ...],
+        step_ms: int | None,
+        timeframe: str,
+    ) -> tuple[tuple[OhlcvRepairRange, ...], tuple[str, ...]]:
+        candidates: list[tuple[int, int, tuple[int, ...], tuple[str, ...]]] = []
+        warnings: list[str] = []
+        variable_timeframe_warning_added = False
+
+        for issue in issues:
+            row_index = self._row_index_for_issue(issue)
+            if row_index is None:
+                warnings.append(f"Issue has no row timestamp anchor: {issue.message}")
+                continue
+            if row_index < 0 or row_index >= len(row_timestamps):
+                warnings.append(f"Issue row is outside the CSV timestamp map: {issue.message}")
+                continue
+
+            ts_ms = row_timestamps[row_index]
+            if ts_ms is None:
+                warnings.append(f"Issue row has an unreadable ts_ms value: {issue.message}")
+                continue
+
+            if step_ms is None:
+                start_ts_ms = ts_ms
+                end_ts_ms = ts_ms
+                if not variable_timeframe_warning_added:
+                    warnings.append(
+                        f"{timeframe} is variable-length; repair ranges are anchored to affected timestamps."
+                    )
+                    variable_timeframe_warning_added = True
+            else:
+                padding_ms = max(step_ms * 2, 60_000)
+                start_ts_ms = max(0, ts_ms - padding_ms)
+                end_ts_ms = ts_ms + padding_ms
+
+            candidates.append(
+                (
+                    start_ts_ms,
+                    end_ts_ms,
+                    (row_index,),
+                    (f"{issue.severity}: {issue.message}",),
+                )
+            )
+
+        return self._merge_repair_candidates(candidates, step_ms=step_ms), tuple(warnings)
+
+    def _merge_repair_candidates(
+        self,
+        candidates: list[tuple[int, int, tuple[int, ...], tuple[str, ...]]],
+        *,
+        step_ms: int | None,
+    ) -> tuple[OhlcvRepairRange, ...]:
+        if not candidates:
+            return ()
+
+        merged: list[tuple[int, int, tuple[int, ...], tuple[str, ...]]] = []
+        merge_gap_ms = 0 if step_ms is None else step_ms
+        for start_ts_ms, end_ts_ms, rows, reasons in sorted(candidates, key=lambda item: item[0]):
+            if not merged:
+                merged.append((start_ts_ms, end_ts_ms, rows, reasons))
+                continue
+
+            prev_start, prev_end, prev_rows, prev_reasons = merged[-1]
+            if start_ts_ms <= prev_end + merge_gap_ms:
+                merged[-1] = (
+                    prev_start,
+                    max(prev_end, end_ts_ms),
+                    self._dedupe_ints(prev_rows + rows),
+                    self._dedupe_strings(prev_reasons + reasons),
+                )
+                continue
+
+            merged.append((start_ts_ms, end_ts_ms, rows, reasons))
+
+        return tuple(
+            OhlcvRepairRange(
+                start_ts_ms=start_ts_ms,
+                end_ts_ms=end_ts_ms,
+                start_utc=format_ts_ms_utc(start_ts_ms),
+                end_utc=format_ts_ms_utc(end_ts_ms),
+                start_rome=format_ts_ms_rome(start_ts_ms),
+                end_rome=format_ts_ms_rome(end_ts_ms),
+                reason="; ".join(reasons),
+                issue_count=len(reasons),
+                rows=rows,
+            )
+            for start_ts_ms, end_ts_ms, rows, reasons in merged
+        )
+
+    def _row_index_for_issue(self, issue: OhlcvValidationIssue) -> int | None:
+        match = _VALIDATION_ROW_RE.search(issue.message)
+        if match is None:
+            return None
+        return int(match.group(1))
+
+    def _dataset_key(self, summary: OhlcvDatasetSummary) -> tuple[str, str, str, str]:
+        return (summary.exchange, summary.market_type, summary.symbol, summary.timeframe)
+
+    def _dedupe_ints(self, values: tuple[int, ...]) -> tuple[int, ...]:
+        return tuple(sorted(set(values)))
+
+    def _dedupe_strings(self, values: tuple[str, ...]) -> tuple[str, ...]:
+        return tuple(dict.fromkeys(values))
+
+    def _stored_validation_status(self, summary: OhlcvDatasetSummary) -> str:
+        manifest, _error = self._load_manifest(summary.metadata_path)
+        if manifest is None:
+            return "unknown"
+        validation = manifest.validation
+        if validation.status not in {"ok", "warning", "error"}:
+            return "unknown"
+        current = self._store.file_fingerprint(summary.csv_path)
+        if validation.csv_fingerprint.size_bytes != current.size_bytes:
+            return "unknown"
+        if validation.csv_fingerprint.modified_at_ms != current.modified_at_ms:
+            return "unknown"
+        return validation.status
+
     def _manifest_summary(self, manifest: HistoricalCsvArtifactManifest) -> OhlcvManifestSummary:
         fingerprint = manifest.fingerprint
         quality = manifest.quality
+        validation = manifest.validation
         return OhlcvManifestSummary(
             unique_id=manifest.identity.unique_id,
             artifact_uid=manifest.identity.artifact_uid,
@@ -319,6 +664,14 @@ class HistoricalOhlcvMaintenanceService:
             timeline_status=quality.timeline_status,
             validation_status=quality.validation_status,
             validation_notes=tuple(quality.validation_notes),
+            explicit_validation_status=validation.status,
+            validated_at=validation.validated_at,
+            validation_validator=validation.validator,
+            validation_row_count=validation.row_count,
+            validation_issue_count=validation.issue_count,
+            validation_warning_count=validation.warning_count,
+            validation_error_count=validation.error_count,
+            validation_message=validation.message,
             fingerprint_size_bytes=fingerprint.size_bytes,
             fingerprint_modified_at_ms=fingerprint.modified_at_ms,
         )

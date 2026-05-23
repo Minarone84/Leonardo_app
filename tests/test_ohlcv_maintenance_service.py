@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService
@@ -112,7 +114,208 @@ def test_maintenance_service_validates_ohlcv_bounds(tmp_path: Path) -> None:
 
     assert report.status == "error"
     assert report.row_count == 1
+    assert report.metadata_updated is True
     assert any(issue.message == "open out of bounds at row 0" for issue in report.issues)
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    assert payload["validation"]["status"] == "error"
+    assert payload["validation"]["validator"] == "HistoricalDatasetValidator"
+    assert payload["validation"]["row_count"] == 1
+    assert payload["validation"]["issue_count"] == 1
+    assert payload["validation"]["error_count"] == 1
+    assert "open out of bounds" in payload["validation"]["message"]
+
+
+def test_maintenance_service_plans_timestamp_anchored_repair_without_metadata_mutation(tmp_path: Path) -> None:
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    CsvOHLCVStore().write_atomic(
+        csv_path,
+        [
+            Candle(60_000, 1.0, 2.0, 0.5, 1.5, 10.0),
+            Candle(120_000, 10.0, 5.0, 1.0, 2.0, 11.0),
+        ],
+        market=market,
+    )
+    metadata_path = metadata_path_for_csv(csv_path)
+    before_metadata = metadata_path.read_text(encoding="utf-8")
+
+    plan = _service(tmp_path).plan_ohlcv_repair(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    assert plan.status == "error"
+    assert plan.actionable is True
+    assert plan.row_count == 2
+    assert len(plan.ranges) == 1
+    repair_range = plan.ranges[0]
+    assert repair_range.start_ts_ms == 0
+    assert repair_range.end_ts_ms == 240_000
+    assert repair_range.rows == (1,)
+    assert repair_range.issue_count == 1
+    assert "open out of bounds at row 1" in repair_range.reason
+    assert metadata_path.read_text(encoding="utf-8") == before_metadata
+
+
+def test_maintenance_service_repair_plan_keeps_unanchored_issues_read_only(tmp_path: Path) -> None:
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.write_text("ts_ms,open\n60000,1\n", encoding="utf-8")
+
+    plan = _service(tmp_path).plan_ohlcv_repair(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    assert plan.status == "error"
+    assert plan.actionable is False
+    assert plan.ranges == ()
+    assert any("missing column: high" in issue.message for issue in plan.issues)
+    assert any("no row timestamp anchor" in warning for warning in plan.warnings)
+    assert not metadata_path_for_csv(csv_path).exists()
+
+
+def test_maintenance_service_executes_repair_plan_through_downloader_and_stamps_validation(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    CsvOHLCVStore().write_atomic(
+        csv_path,
+        [
+            Candle(60_000, 1.0, 2.0, 0.5, 1.5, 10.0),
+            Candle(120_000, 10.0, 5.0, 1.0, 2.0, 11.0),
+        ],
+        market=market,
+    )
+    dataset_service = _InvalidateTrackingDatasetService()
+    service = HistoricalOhlcvMaintenanceService(
+        historical_root=tmp_path / "historical",
+        dataset_service=dataset_service,  # type: ignore[arg-type]
+    )
+    plan = service.plan_ohlcv_repair(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+    requests: list[tuple[int | None, int | None]] = []
+
+    class _FakeDownloader:
+        def __init__(self, root: Path) -> None:
+            assert root == tmp_path / "historical"
+
+        async def run_with_job_id(self, _ctx, req, job_id: str):
+            requests.append((req.start_ms, req.end_ms))
+            CsvOHLCVStore().write_atomic(
+                csv_path,
+                [
+                    Candle(60_000, 1.0, 2.0, 0.5, 1.5, 10.0),
+                    Candle(120_000, 2.0, 5.0, 1.0, 2.5, 11.0),
+                ],
+                market=market,
+            )
+            return SimpleNamespace(total_rows=2, file_path=csv_path, job_id=job_id)
+
+    monkeypatch.setattr("leonardo.data.historical.ohlcv_maintenance.HistoricalDownloader", _FakeDownloader)
+
+    report = asyncio.run(
+        service.execute_ohlcv_repair(
+            object(),
+            DatasetId("bybit", "linear", "LINKUSDT", "1m"),
+            plan,
+        )
+    )
+
+    assert requests == [(plan.ranges[0].start_ts_ms, plan.ranges[0].end_ts_ms)]
+    assert report.action == "execute_ohlcv_repair"
+    assert report.ranges_requested == 1
+    assert report.ranges_completed == 1
+    assert report.validation_status == "ok"
+    assert report.metadata_updated is True
+    assert report.cache_invalidated is True
+    assert dataset_service.invalidated[-1] == DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    assert payload["validation"]["status"] == "ok"
+
+
+def test_maintenance_service_execute_repair_rejects_mismatched_plan(tmp_path: Path) -> None:
+    _write_ohlcv(tmp_path, timeframe="1h")
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_repair(DatasetId("bybit", "linear", "LINKUSDT", "1h"))
+    mismatched_plan = plan.__class__(
+        dataset=plan.dataset.__class__(
+            dataset_id=DatasetId("bybit", "linear", "LINKUSDT", "1m"),
+            exchange=plan.dataset.exchange,
+            market_type=plan.dataset.market_type,
+            symbol=plan.dataset.symbol,
+            timeframe="1m",
+            storage_segment="1m",
+            partition_path=plan.dataset.partition_path,
+            csv_path=plan.dataset.csv_path,
+            metadata_path=plan.dataset.metadata_path,
+            validation_status=plan.dataset.validation_status,
+        ),
+        status=plan.status,
+        actionable=True,
+        message=plan.message,
+        row_count=plan.row_count,
+        ranges=(),
+        issues=plan.issues,
+        warnings=plan.warnings,
+    )
+
+    try:
+        asyncio.run(
+            service.execute_ohlcv_repair(
+                object(),
+                DatasetId("bybit", "linear", "LINKUSDT", "1h"),
+                mismatched_plan,  # type: ignore[arg-type]
+            )
+        )
+    except ValueError as exc:
+        assert "does not match" in str(exc)
+    else:
+        raise AssertionError("execute_ohlcv_repair should reject a plan for a different dataset")
+
+
+def test_maintenance_service_persists_ok_validation_and_lists_cached_status(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv(tmp_path, timeframe="1h")
+    service = _service(tmp_path)
+
+    report = service.validate_ohlcv(DatasetId("bybit", "linear", "LINKUSDT", "1h"))
+
+    assert report.status == "ok"
+    assert report.metadata_updated is True
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    assert payload["validation"]["status"] == "ok"
+    assert payload["validation"]["validator"] == "HistoricalDatasetValidator"
+    assert payload["validation"]["row_count"] == 2
+    assert payload["validation"]["issue_count"] == 0
+    assert payload["validation"]["csv_fingerprint"]["size_bytes"] is not None
+    assert service.list_ohlcv_datasets()[0].validation_status == "ok"
+
+
+def test_maintenance_service_validation_rebuilds_mismatched_metadata_identity(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv(tmp_path, timeframe="1m")
+    metadata_path = metadata_path_for_csv(csv_path)
+    payload = json.loads(metadata_path.read_text(encoding="utf-8"))
+    payload["market"]["timeframe"] = "1M"
+    payload["identity"]["artifact_uid"] = "ohlcv:bybit:linear:LINKUSDT:1M:ohlcv__candles"
+    metadata_path.write_text(json.dumps(payload), encoding="utf-8")
+    service = _service(tmp_path)
+
+    report = service.validate_ohlcv(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    assert report.metadata_updated is True
+    updated = json.loads(metadata_path.read_text(encoding="utf-8"))
+    assert updated["market"]["timeframe"] == "1m"
+    assert updated["validation"]["status"] == "warning"
+
+
+def test_maintenance_service_treats_stale_validation_metadata_as_unknown(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv(tmp_path, timeframe="1h")
+    service = _service(tmp_path)
+    service.validate_ohlcv(DatasetId("bybit", "linear", "LINKUSDT", "1h"))
+
+    with csv_path.open("a", encoding="utf-8") as handle:
+        handle.write("1609466400000,2,3,1,2.5,12\n")
+
+    assert service.list_ohlcv_datasets()[0].validation_status == "unknown"
 
 
 def test_maintenance_service_deletes_only_selected_ohlcv_csv_and_metadata(tmp_path: Path) -> None:

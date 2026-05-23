@@ -166,6 +166,8 @@ class OhlcvRepairProgressDialog(QDialog):
         self.append_log("validating", f"Final validation status: {validation_status}")
         self.append_log("metadata", f"Metadata updated: {self._yes_no(getattr(report, 'metadata_updated', False))}")
         self.append_log("cache", f"Cache invalidated: {self._yes_no(getattr(report, 'cache_invalidated', False))}")
+        for warning in tuple(getattr(report, "warnings", ()) or ()):
+            self.append_log("warning", str(warning))
         self.recap_box.setPlainText(recap)
         self.close_button.setEnabled(True)
 
@@ -828,10 +830,17 @@ class OHLCVMaintenanceWindow(QMainWindow):
                         f"    End UTC: {self._text(item, 'end_utc')}",
                         f"    Estimated bars: {self._text(item, 'estimated_bars') or 'unavailable'}",
                         f"    Downloaded bars: {self._text(item, 'downloaded_bars') or 'unavailable'}",
+                        f"    Downloaded first ts_ms: {self._text(item, 'downloaded_first_ts_ms') or 'unavailable'}",
+                        f"    Downloaded last ts_ms: {self._text(item, 'downloaded_last_ts_ms') or 'unavailable'}",
                         f"    Rows after: {self._text(item, 'total_rows_after')}",
                         f"    Job ID: {self._text(item, 'job_id')}",
                     ]
                 )
+
+        warnings = tuple(getattr(report, "warnings", ()) or ())
+        if warnings:
+            lines.extend(["", "Repair Warnings"])
+            lines.extend(f"  - {warning}" for warning in warnings)
 
         issues = tuple(getattr(report, "validation_issues", ()) or ())
         if issues:

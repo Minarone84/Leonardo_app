@@ -22,6 +22,9 @@ bybit_module.BybitExchange = _BybitExchange
 sys.modules.setdefault("leonardo.connection.exchange.adapters.bybit", bybit_module)
 
 from leonardo.data.historical.downloader import DownloadRequest, HistoricalDownloader
+from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.store_csv import CsvOHLCVStore
+from leonardo.data.naming import canonicalize
 
 
 class _DatasetServiceProbe:
@@ -125,3 +128,54 @@ def test_downloader_does_not_invalidate_dataset_cache_when_write_fails(tmp_path,
 
     assert probe.invalidated == []
     assert exchange.closed is True
+
+
+def test_downloader_repair_range_replaces_existing_rows_inside_range(tmp_path) -> None:
+    probe = _DatasetServiceProbe()
+    ctx = _Context(probe)
+    market = canonicalize("bybit", "linear", "BTCUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    store = CsvOHLCVStore()
+    csv_path = store.file_path(paths.ensure_ohlcv_dir(market))
+    store.write_atomic(
+        csv_path,
+        [
+            Candle(ts_ms=0, open=1.0, high=1.0, low=1.0, close=1.0, volume=10.0),
+            Candle(ts_ms=60_000, open=10.0, high=5.0, low=1.0, close=2.0, volume=11.0),
+            Candle(ts_ms=120_000, open=3.0, high=3.0, low=3.0, close=3.0, volume=12.0),
+            Candle(ts_ms=180_000, open=4.0, high=4.0, low=4.0, close=4.0, volume=13.0),
+        ],
+        market=market,
+    )
+    exchange = _FakeExchange([
+        [
+            Candle(ts_ms=60_000, open=2.0, high=5.0, low=1.0, close=2.5, volume=21.0),
+            Candle(ts_ms=120_000, open=3.5, high=4.0, low=3.0, close=3.5, volume=22.0),
+        ]
+    ])
+    downloader = _Downloader(tmp_path / "historical", exchange)
+    request = DownloadRequest(
+        exchange="bybit",
+        market_type="linear",
+        symbol="BTCUSDT",
+        timeframe="1m",
+        start_ms=60_000,
+        end_ms=120_000,
+        limit=2,
+    )
+
+    async def scenario() -> None:
+        result = await downloader.run_repair_range_with_job_id(ctx, request, "job-1")
+        assert result.total_rows == 4
+        assert result.fetched_rows == 2
+        assert result.downloaded_first_ts_ms == 60_000
+        assert result.downloaded_last_ts_ms == 120_000
+
+    asyncio.run(scenario())
+
+    repaired = {candle.ts_ms: candle for candle in store.read(csv_path)}
+    assert repaired[60_000].open == 2.0
+    assert repaired[120_000].open == 3.5
+    assert repaired[0].open == 1.0
+    assert repaired[180_000].open == 4.0
+    assert probe.invalidated == [DatasetId("bybit", "linear", "BTCUSDT", "1m")]

@@ -18,7 +18,7 @@ from leonardo.data.historical.artifact_metadata_naming import (
 from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService
 from leonardo.data.historical.downloader import DownloadRequest, HistoricalDownloader
 from leonardo.data.historical.paths import HistoricalPaths
-from leonardo.data.historical.store_csv import CsvOHLCVStore
+from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.historical.validator import HistoricalDatasetValidator
 from leonardo.data.naming import MarketId, canonicalize
 
@@ -131,6 +131,7 @@ class OhlcvRepairRange:
     reason: str
     issue_count: int
     rows: tuple[int, ...]
+    anchor_ts_ms: tuple[int, ...] = ()
     estimated_bars: int | None = None
 
 
@@ -163,6 +164,8 @@ class OhlcvRepairExecutionRange:
     file_path: Path
     estimated_bars: int | None = None
     downloaded_bars: int | None = None
+    downloaded_first_ts_ms: int | None = None
+    downloaded_last_ts_ms: int | None = None
 
 
 @dataclass(frozen=True)
@@ -184,6 +187,7 @@ class OhlcvRepairExecutionReport:
     metadata_updated: bool = False
     metadata_update_error: str = ""
     cache_invalidated: bool = False
+    warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -349,10 +353,11 @@ class HistoricalOhlcvMaintenanceService:
         self._validate_repair_plan_for_dataset(plan, summary)
 
         downloader = HistoricalDownloader(root=self._historical_root)
+        before_by_ts = {candle.ts_ms: candle for candle in self._store.read(summary.csv_path)}
         range_results: list[OhlcvRepairExecutionRange] = []
         for repair_range in plan.ranges:
             job_id = f"ohlcv_repair_{uuid.uuid4().hex[:12]}"
-            result = await downloader.run_with_job_id(
+            result = await downloader.run_repair_range_with_job_id(
                 ctx,
                 DownloadRequest(
                     exchange=summary.exchange,
@@ -364,6 +369,7 @@ class HistoricalOhlcvMaintenanceService:
                 ),
                 job_id,
             )
+            fetched_rows = getattr(result, "fetched_rows", None)
             range_results.append(
                 OhlcvRepairExecutionRange(
                     start_ts_ms=int(repair_range.start_ts_ms),
@@ -371,7 +377,9 @@ class HistoricalOhlcvMaintenanceService:
                     start_utc=repair_range.start_utc,
                     end_utc=repair_range.end_utc,
                     estimated_bars=repair_range.estimated_bars,
-                    downloaded_bars=None,
+                    downloaded_bars=None if fetched_rows is None else int(fetched_rows),
+                    downloaded_first_ts_ms=getattr(result, "downloaded_first_ts_ms", None),
+                    downloaded_last_ts_ms=getattr(result, "downloaded_last_ts_ms", None),
                     total_rows_after=int(result.total_rows),
                     job_id=job_id,
                     file_path=result.file_path,
@@ -380,6 +388,12 @@ class HistoricalOhlcvMaintenanceService:
 
         final_validation = self.validate_ohlcv(summary.dataset_id)
         cache_invalidated = self._dataset_service.invalidate_dataset_cache(summary.dataset_id)
+        warnings = self._repair_execution_warnings(
+            ranges=plan.ranges,
+            range_results=tuple(range_results),
+            before_by_ts=before_by_ts,
+            final_candles=self._store.read(summary.csv_path),
+        )
         return OhlcvRepairExecutionReport(
             dataset=summary,
             action="execute_ohlcv_repair",
@@ -399,6 +413,7 @@ class HistoricalOhlcvMaintenanceService:
             metadata_updated=final_validation.metadata_updated,
             metadata_update_error=final_validation.metadata_update_error,
             cache_invalidated=bool(cache_invalidated),
+            warnings=warnings,
         )
 
     def delete_ohlcv(self, dataset_id: DatasetId) -> OhlcvMutationReport:
@@ -541,7 +556,7 @@ class HistoricalOhlcvMaintenanceService:
         step_ms: int | None,
         timeframe: str,
     ) -> tuple[tuple[OhlcvRepairRange, ...], tuple[str, ...]]:
-        candidates: list[tuple[int, int, tuple[int, ...], tuple[str, ...]]] = []
+        candidates: list[tuple[int, int, tuple[int, ...], tuple[int, ...], tuple[str, ...]]] = []
         warnings: list[str] = []
         variable_timeframe_warning_added = False
 
@@ -577,6 +592,7 @@ class HistoricalOhlcvMaintenanceService:
                     start_ts_ms,
                     end_ts_ms,
                     (row_index,),
+                    (ts_ms,),
                     (f"{issue.severity}: {issue.message}",),
                 )
             )
@@ -585,31 +601,32 @@ class HistoricalOhlcvMaintenanceService:
 
     def _merge_repair_candidates(
         self,
-        candidates: list[tuple[int, int, tuple[int, ...], tuple[str, ...]]],
+        candidates: list[tuple[int, int, tuple[int, ...], tuple[int, ...], tuple[str, ...]]],
         *,
         step_ms: int | None,
     ) -> tuple[OhlcvRepairRange, ...]:
         if not candidates:
             return ()
 
-        merged: list[tuple[int, int, tuple[int, ...], tuple[str, ...]]] = []
+        merged: list[tuple[int, int, tuple[int, ...], tuple[int, ...], tuple[str, ...]]] = []
         merge_gap_ms = 0 if step_ms is None else step_ms
-        for start_ts_ms, end_ts_ms, rows, reasons in sorted(candidates, key=lambda item: item[0]):
+        for start_ts_ms, end_ts_ms, rows, anchors, reasons in sorted(candidates, key=lambda item: item[0]):
             if not merged:
-                merged.append((start_ts_ms, end_ts_ms, rows, reasons))
+                merged.append((start_ts_ms, end_ts_ms, rows, anchors, reasons))
                 continue
 
-            prev_start, prev_end, prev_rows, prev_reasons = merged[-1]
+            prev_start, prev_end, prev_rows, prev_anchors, prev_reasons = merged[-1]
             if start_ts_ms <= prev_end + merge_gap_ms:
                 merged[-1] = (
                     prev_start,
                     max(prev_end, end_ts_ms),
                     self._dedupe_ints(prev_rows + rows),
+                    self._dedupe_ints(prev_anchors + anchors),
                     self._dedupe_strings(prev_reasons + reasons),
                 )
                 continue
 
-            merged.append((start_ts_ms, end_ts_ms, rows, reasons))
+            merged.append((start_ts_ms, end_ts_ms, rows, anchors, reasons))
 
         return tuple(
             OhlcvRepairRange(
@@ -622,15 +639,45 @@ class HistoricalOhlcvMaintenanceService:
                 reason="; ".join(reasons),
                 issue_count=len(reasons),
                 rows=rows,
+                anchor_ts_ms=anchors,
                 estimated_bars=self._estimated_bars(start_ts_ms, end_ts_ms, step_ms),
             )
-            for start_ts_ms, end_ts_ms, rows, reasons in merged
+            for start_ts_ms, end_ts_ms, rows, anchors, reasons in merged
         )
 
     def _estimated_bars(self, start_ts_ms: int, end_ts_ms: int, step_ms: int | None) -> int | None:
         if step_ms is None or step_ms <= 0:
             return None
         return int((end_ts_ms - start_ts_ms) // step_ms) + 1
+
+    def _repair_execution_warnings(
+        self,
+        *,
+        ranges: tuple[OhlcvRepairRange, ...],
+        range_results: tuple[OhlcvRepairExecutionRange, ...],
+        before_by_ts: dict[int, Candle],
+        final_candles: list[Candle],
+    ) -> tuple[str, ...]:
+        final_by_ts = {candle.ts_ms: candle for candle in final_candles}
+        warnings: list[str] = []
+        for index, repair_range in enumerate(ranges, start=1):
+            result = range_results[index - 1] if index <= len(range_results) else None
+            if result is not None and result.downloaded_bars == 0:
+                warnings.append(
+                    f"Range {index} fetched no exchange candles; existing rows in the repair range were not replaced."
+                )
+
+            for ts_ms in repair_range.anchor_ts_ms:
+                final_candle = final_by_ts.get(ts_ms)
+                if final_candle is None:
+                    warnings.append(f"Range {index} no longer contains validation anchor ts_ms {ts_ms}.")
+                    continue
+                before_candle = before_by_ts.get(ts_ms)
+                if before_candle is not None and final_candle == before_candle:
+                    warnings.append(
+                        f"Range {index} left validation anchor ts_ms {ts_ms} unchanged after repair."
+                    )
+        return tuple(dict.fromkeys(warnings))
 
     def _row_index_for_issue(self, issue: OhlcvValidationIssue) -> int | None:
         match = _VALIDATION_ROW_RE.search(issue.message)

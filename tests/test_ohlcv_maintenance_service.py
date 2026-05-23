@@ -151,6 +151,7 @@ def test_maintenance_service_plans_timestamp_anchored_repair_without_metadata_mu
     assert repair_range.end_ts_ms == 240_000
     assert repair_range.estimated_bars == 5
     assert repair_range.rows == (1,)
+    assert repair_range.anchor_ts_ms == (120_000,)
     assert repair_range.issue_count == 1
     assert "open out of bounds at row 1" in repair_range.reason
     assert plan.csv_fingerprint_size_bytes is not None
@@ -202,7 +203,7 @@ def test_maintenance_service_executes_repair_plan_through_downloader_and_stamps_
         def __init__(self, root: Path) -> None:
             assert root == tmp_path / "historical"
 
-        async def run_with_job_id(self, _ctx, req, job_id: str):
+        async def run_repair_range_with_job_id(self, _ctx, req, job_id: str):
             requests.append((req.start_ms, req.end_ms))
             CsvOHLCVStore().write_atomic(
                 csv_path,
@@ -212,7 +213,14 @@ def test_maintenance_service_executes_repair_plan_through_downloader_and_stamps_
                 ],
                 market=market,
             )
-            return SimpleNamespace(total_rows=2, file_path=csv_path, job_id=job_id)
+            return SimpleNamespace(
+                total_rows=2,
+                file_path=csv_path,
+                job_id=job_id,
+                fetched_rows=2,
+                downloaded_first_ts_ms=60_000,
+                downloaded_last_ts_ms=120_000,
+            )
 
     monkeypatch.setattr("leonardo.data.historical.ohlcv_maintenance.HistoricalDownloader", _FakeDownloader)
 
@@ -233,7 +241,10 @@ def test_maintenance_service_executes_repair_plan_through_downloader_and_stamps_
     assert report.metadata_updated is True
     assert report.cache_invalidated is True
     assert report.range_results[0].estimated_bars == plan.ranges[0].estimated_bars
-    assert report.range_results[0].downloaded_bars is None
+    assert report.range_results[0].downloaded_bars == 2
+    assert report.range_results[0].downloaded_first_ts_ms == 60_000
+    assert report.range_results[0].downloaded_last_ts_ms == 120_000
+    assert report.warnings == ()
     assert dataset_service.invalidated[-1] == DatasetId("bybit", "linear", "LINKUSDT", "1m")
     payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
     assert payload["validation"]["status"] == "ok"
@@ -264,7 +275,7 @@ def test_maintenance_service_execute_repair_stamps_failed_post_validation(
         def __init__(self, root: Path) -> None:
             assert root == tmp_path / "historical"
 
-        async def run_with_job_id(self, _ctx, _req, job_id: str):
+        async def run_repair_range_with_job_id(self, _ctx, _req, job_id: str):
             CsvOHLCVStore().write_atomic(
                 csv_path,
                 [
@@ -273,7 +284,14 @@ def test_maintenance_service_execute_repair_stamps_failed_post_validation(
                 ],
                 market=market,
             )
-            return SimpleNamespace(total_rows=2, file_path=csv_path, job_id=job_id)
+            return SimpleNamespace(
+                total_rows=2,
+                file_path=csv_path,
+                job_id=job_id,
+                fetched_rows=2,
+                downloaded_first_ts_ms=60_000,
+                downloaded_last_ts_ms=120_000,
+            )
 
     monkeypatch.setattr("leonardo.data.historical.ohlcv_maintenance.HistoricalDownloader", _FakeDownloader)
 
@@ -288,6 +306,7 @@ def test_maintenance_service_execute_repair_stamps_failed_post_validation(
     assert report.validation_status == "error"
     assert report.metadata_updated is True
     assert any(issue.message == "open out of bounds at row 1" for issue in report.validation_issues)
+    assert any("left validation anchor ts_ms 120000 unchanged" in warning for warning in report.warnings)
     payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
     assert payload["validation"]["status"] == "error"
 

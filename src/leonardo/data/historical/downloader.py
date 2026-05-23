@@ -38,6 +38,9 @@ class DownloadResult:
     market: MarketId
     file_path: Path
     total_rows: int
+    fetched_rows: int = 0
+    downloaded_first_ts_ms: Optional[int] = None
+    downloaded_last_ts_ms: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -421,6 +424,25 @@ class HistoricalDownloader:
         }
 
     async def run_with_job_id(self, ctx: AppContext, req: DownloadRequest, job_id: str) -> DownloadResult:
+        return await self._run_with_job_id(ctx, req, job_id, replace_existing_range=False)
+
+    async def run_repair_range_with_job_id(
+        self,
+        ctx: AppContext,
+        req: DownloadRequest,
+        job_id: str,
+    ) -> DownloadResult:
+        """Download a reviewed repair range and replace local rows in that range."""
+        return await self._run_with_job_id(ctx, req, job_id, replace_existing_range=True)
+
+    async def _run_with_job_id(
+        self,
+        ctx: AppContext,
+        req: DownloadRequest,
+        job_id: str,
+        *,
+        replace_existing_range: bool,
+    ) -> DownloadResult:
         market = canonicalize(req.exchange, req.market_type, req.symbol, req.timeframe)
 
         ohlcv_dir = self._paths.ensure_ohlcv_dir(market)
@@ -504,6 +526,9 @@ class HistoricalDownloader:
                     market=market,
                     file_path=file_path,
                     total_rows=len(existing),
+                    fetched_rows=0,
+                    downloaded_first_ts_ms=None,
+                    downloaded_last_ts_ms=None,
                 )
 
             total_fetched = 0
@@ -519,6 +544,11 @@ class HistoricalDownloader:
             planned_end_ms = plan.planned_end_ms
             derived_from_now = plan.derived_from_now
             drop_open_last_bar = (req.start_ms is None and req.end_ms is None)
+            replace_start_ms = int(effective_start_ms) if replace_existing_range and effective_start_ms is not None else None
+            replace_end_ms = int(planned_end_ms) if replace_existing_range and planned_end_ms is not None else None
+            if replace_existing_range and (replace_start_ms is None or replace_end_ms is None):
+                raise ValueError("repair replacement requires explicit start and end timestamps")
+            replacement_rows: List[Candle] = []
 
             while page_no < plan.max_pages:
                 page_no += 1
@@ -561,15 +591,26 @@ class HistoricalDownloader:
                         batch = batch[:-1]
 
                 incoming = self._to_store_candles(batch)
+                if replace_existing_range:
+                    incoming = [
+                        candle
+                        for candle in incoming
+                        if replace_start_ms is not None
+                        and replace_end_ms is not None
+                        and replace_start_ms <= candle.ts_ms <= replace_end_ms
+                    ]
                 if not incoming:
                     break
 
                 total_fetched += len(incoming)
 
-                merged = merge_idempotent(existing, incoming)
-                self._store.write_atomic(file_path, merged, market=market)
-                await self._invalidate_dataset_cache_after_write(ctx, job_id, market)
-                existing = merged
+                if replace_existing_range:
+                    replacement_rows = merge_idempotent(replacement_rows, incoming)
+                else:
+                    merged = merge_idempotent(existing, incoming)
+                    self._store.write_atomic(file_path, merged, market=market)
+                    await self._invalidate_dataset_cache_after_write(ctx, job_id, market)
+                    existing = merged
 
                 oldest_ts = incoming[0].ts_ms
                 newest_ts = incoming[-1].ts_ms
@@ -619,6 +660,16 @@ class HistoricalDownloader:
                 # if len(incoming) < page_limit:
                 #     break
 
+            if replace_existing_range and replacement_rows:
+                existing = self._replace_existing_range(
+                    existing,
+                    replacement_rows,
+                    start_ms=int(replace_start_ms),
+                    end_ms=int(replace_end_ms),
+                )
+                self._store.write_atomic(file_path, existing, market=market)
+                await self._invalidate_dataset_cache_after_write(ctx, job_id, market)
+
             await self._emit(ctx, "download completed", job_id, market, extra={
                 "fetched": total_fetched,
                 "downloaded_bars": total_fetched,
@@ -645,6 +696,9 @@ class HistoricalDownloader:
                 market=market,
                 file_path=file_path,
                 total_rows=len(existing),
+                fetched_rows=total_fetched,
+                downloaded_first_ts_ms=downloaded_first_ts_ms,
+                downloaded_last_ts_ms=downloaded_last_ts_ms,
             )
 
         except asyncio.CancelledError:
@@ -1071,6 +1125,18 @@ class HistoricalDownloader:
             )
         out.sort(key=lambda x: x.ts_ms)
         return out
+
+    def _replace_existing_range(
+        self,
+        existing: Sequence[Candle],
+        incoming: Sequence[Candle],
+        *,
+        start_ms: int,
+        end_ms: int,
+    ) -> List[Candle]:
+        remaining = [candle for candle in existing if not (start_ms <= candle.ts_ms <= end_ms)]
+        replacements = [candle for candle in incoming if start_ms <= candle.ts_ms <= end_ms]
+        return merge_idempotent(remaining, replacements)
 
     async def _emit_batch(self, ctx: AppContext, message: str, job_id: str, *, extra: dict) -> None:
         severity = "info"

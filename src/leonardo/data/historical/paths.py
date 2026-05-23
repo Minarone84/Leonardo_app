@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
-from leonardo.data.naming import MarketId, canonicalize
+from leonardo.data.naming import MarketId, canonicalize, normalize_timeframe
 
 DatasetType = Literal[
     "ohlcv",
@@ -17,6 +17,31 @@ DatasetType = Literal[
 ]
 
 
+def timeframe_to_storage_segment(timeframe: str) -> str:
+    """
+    Return the filesystem segment for a canonical timeframe.
+
+    Canonical timeframe identity remains unchanged in APIs and metadata. The
+    storage segment is allowed to differ where case-insensitive filesystems
+    would otherwise collapse distinct canonical values such as ``1m`` and
+    ``1M`` into one directory.
+    """
+    canonical = normalize_timeframe(timeframe)
+    if canonical.endswith("M"):
+        return f"{canonical[:-1]}mo"
+    return canonical
+
+
+def storage_segment_to_timeframe(segment: str) -> str:
+    """
+    Return the canonical timeframe represented by a storage segment.
+
+    This accepts current collision-safe month segments such as ``1mo`` and
+    legacy canonical segments such as ``1M``.
+    """
+    return normalize_timeframe(segment)
+
+
 @dataclass(frozen=True)
 class HistoricalPaths:
     """
@@ -27,7 +52,7 @@ class HistoricalPaths:
         <exchange>/
           <market_type>/
             <symbol>/
-              <timeframe>/
+              <timeframe_storage_segment>/
                 <dataset>/
 
     Example:
@@ -37,7 +62,13 @@ class HistoricalPaths:
     root: Path
 
     def partition_dir(self, m: MarketId) -> Path:
-        return self.root / m.exchange / m.market_type / m.symbol / m.timeframe
+        return (
+            self.root
+            / m.exchange
+            / m.market_type
+            / m.symbol
+            / timeframe_to_storage_segment(m.timeframe)
+        )
 
     def dataset_dir(self, m: MarketId, dataset: DatasetType) -> Path:
         return self.partition_dir(m) / dataset

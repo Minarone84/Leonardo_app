@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import AsyncIterator, Literal, Optional, Sequence, Set
+import time
+from typing import Any, AsyncIterator, Literal, Mapping, Optional, Sequence, Set
 
 import aiohttp
 import websockets
@@ -41,6 +42,12 @@ _BYBIT_WS_TESTNET = "wss://stream-testnet.bybit.com/v5/public"
 
 _BYBIT_MAX_KLINE_LIMIT = 1000
 _BYBIT_MONTH_DISCOVERY_STEP_MS = 31 * 86_400_000
+_BYBIT_RATE_LIMIT_RETCODE = 10006
+_BYBIT_REST_MAX_ATTEMPTS = 4
+_BYBIT_REST_MIN_INTERVAL_SECONDS = 0.20
+_BYBIT_REST_RATE_LIMIT_FALLBACK_SLEEP_SECONDS = 1.0
+_BYBIT_REST_MAX_RATE_LIMIT_SLEEP_SECONDS = 10.0
+_BYBIT_REST_RESET_CUSHION_SECONDS = 0.05
 
 _TIMEFRAME_TO_BYBIT_INTERVAL: dict[Bybit_Timeframe, str] = {
     "1m": "1",
@@ -68,6 +75,8 @@ class BybitExchange(BaseExchange):
     def __init__(self, *, testnet: bool = False) -> None:
         self._testnet = bool(testnet)
         self._session: Optional[aiohttp.ClientSession] = None
+        self._rest_lock = asyncio.Lock()
+        self._next_rest_request_at = 0.0
 
     @property
     def name(self) -> str:
@@ -90,18 +99,139 @@ class BybitExchange(BaseExchange):
         if self._session is not None and not self._session.closed:
             await self._session.close()
 
+    async def _public_get_json(
+        self,
+        path: str,
+        *,
+        params: Optional[Mapping[str, object]] = None,
+    ) -> dict[str, Any]:
+        await self.open()
+        assert self._session is not None
+
+        url = f"{self._rest_base}{path}"
+        last_rate_limit: tuple[int, str] | None = None
+
+        async with self._rest_lock:
+            for attempt in range(1, _BYBIT_REST_MAX_ATTEMPTS + 1):
+                await self._pace_rest_request_locked()
+
+                async with self._session.get(url, params=dict(params or {})) as resp:
+                    status = int(getattr(resp, "status", 200) or 200)
+                    headers = getattr(resp, "headers", {}) or {}
+                    try:
+                        data = await resp.json()
+                    except Exception as e:
+                        if status == 429:
+                            data = {}
+                        else:
+                            raise RuntimeError(f"Bybit REST response JSON decode failed for {path}: {e}") from e
+
+                if not isinstance(data, dict):
+                    raise RuntimeError(f"Bybit REST response was not a JSON object for {path}: {data!r}")
+
+                if self._is_rate_limit_response(status, data):
+                    last_rate_limit = (status, str(data.get("retMsg") or "rate limit"))
+                    if attempt >= _BYBIT_REST_MAX_ATTEMPTS:
+                        break
+                    await asyncio.sleep(self._rate_limit_sleep_seconds(headers, attempt=attempt))
+                    continue
+
+                self._update_pacing_from_headers(headers)
+                ret_code = self._ret_code(data)
+                if status >= 400:
+                    raise RuntimeError(f"Bybit HTTP error: {status} {data!r}")
+                if ret_code not in (None, 0):
+                    raise RuntimeError(f"Bybit REST error: {data.get('retCode')} {data.get('retMsg')}")
+                return data
+
+        status, message = last_rate_limit or (0, "rate limit")
+        raise RuntimeError(
+            f"Bybit REST rate limit exceeded after {_BYBIT_REST_MAX_ATTEMPTS} attempts: {status} {message}"
+        )
+
+    async def _pace_rest_request_locked(self) -> None:
+        now = time.monotonic()
+        delay = self._next_rest_request_at - now
+        if delay > 0:
+            await asyncio.sleep(delay)
+        self._next_rest_request_at = time.monotonic() + _BYBIT_REST_MIN_INTERVAL_SECONDS
+
+    def _update_pacing_from_headers(self, headers: object) -> None:
+        remaining = self._header_int(headers, "X-Bapi-Limit-Status")
+        if remaining is None or remaining > 0:
+            return
+
+        reset_delay = self._rate_limit_reset_delay_seconds(headers)
+        if reset_delay is not None:
+            self._next_rest_request_at = max(
+                self._next_rest_request_at,
+                time.monotonic() + reset_delay,
+            )
+
+    def _rate_limit_sleep_seconds(self, headers: object, *, attempt: int) -> float:
+        reset_delay = self._rate_limit_reset_delay_seconds(headers)
+        if reset_delay is not None:
+            return reset_delay
+        return min(
+            _BYBIT_REST_RATE_LIMIT_FALLBACK_SLEEP_SECONDS * max(1, int(attempt)),
+            _BYBIT_REST_MAX_RATE_LIMIT_SLEEP_SECONDS,
+        )
+
+    def _rate_limit_reset_delay_seconds(self, headers: object) -> Optional[float]:
+        reset_ms = self._header_int(headers, "X-Bapi-Limit-Reset-Timestamp")
+        if reset_ms is None:
+            return None
+        delay = (reset_ms / 1000.0) - time.time() + _BYBIT_REST_RESET_CUSHION_SECONDS
+        if delay <= 0:
+            return None
+        return min(delay, _BYBIT_REST_MAX_RATE_LIMIT_SLEEP_SECONDS)
+
+    @staticmethod
+    def _is_rate_limit_response(status: int, data: Mapping[str, Any]) -> bool:
+        return int(status) == 429 or BybitExchange._ret_code(data) == _BYBIT_RATE_LIMIT_RETCODE
+
+    @staticmethod
+    def _ret_code(data: Mapping[str, Any]) -> Optional[int]:
+        value = data.get("retCode")
+        if value is None:
+            return None
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _header_int(headers: object, name: str) -> Optional[int]:
+        raw = BybitExchange._header_value(headers, name)
+        if raw is None:
+            return None
+        try:
+            return int(str(raw))
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _header_value(headers: object, name: str) -> Optional[object]:
+        getter = getattr(headers, "get", None)
+        if callable(getter):
+            value = getter(name)
+            if value is not None:
+                return value
+
+        items = getattr(headers, "items", None)
+        if callable(items):
+            wanted = name.lower()
+            for key, value in items():
+                if str(key).lower() == wanted:
+                    return value
+        return None
+
     async def get_server_time_ms(self) -> int:
         """
         GET /v5/market/time
         Returns server time in ms.
         """
-        await self.open()
-        assert self._session is not None
-
-        url = f"{self._rest_base}/v5/market/time"
-        async with self._session.get(url) as resp:
-            data = await resp.json()
-
+        data = await self._public_get_json("/v5/market/time")
         # Typical shape: {"retCode":0,...,"result":{},"time":1672025956592}
         t = data.get("time")
         if t is None:
@@ -353,9 +483,6 @@ class BybitExchange(BaseExchange):
         if lim > _BYBIT_MAX_KLINE_LIMIT:
             lim = _BYBIT_MAX_KLINE_LIMIT
 
-        await self.open()
-        assert self._session is not None
-
         params: dict[str, object] = {
             "category": m,
             "symbol": symbol.upper(),
@@ -367,13 +494,7 @@ class BybitExchange(BaseExchange):
         if end_ms is not None:
             params["end"] = int(end_ms)
 
-        url = f"{self._rest_base}/v5/market/kline"
-        async with self._session.get(url, params=params) as resp:
-            data = await resp.json()
-
-        if data.get("retCode") != 0:
-            raise RuntimeError(f"Bybit REST error: {data.get('retCode')} {data.get('retMsg')}")
-
+        data = await self._public_get_json("/v5/market/kline", params=params)
         result = data.get("result") or {}
         rows = result.get("list") or []
 

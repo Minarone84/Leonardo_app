@@ -11,6 +11,11 @@ import time
 
 import pandas as pd
 
+from leonardo.data.historical.paths import (
+    storage_segment_to_timeframe,
+    timeframe_to_storage_segment,
+)
+
 
 @dataclass(frozen=True)
 class DatasetId:
@@ -204,11 +209,18 @@ class HistoricalDatasetService:
         asset_path = self._catalog_root() / exchange_name / market_type_name / symbol_name
 
         timeframes: List[str] = []
+        seen_timeframes: set[str] = set()
         for timeframe_name in self._list_child_directories(asset_path):
-            timeframe = self._safe_catalog_segment(timeframe_name, label="timeframe")
-            partition_path = asset_path / timeframe
+            storage_segment = self._safe_catalog_segment(timeframe_name, label="timeframe")
+            try:
+                timeframe = storage_segment_to_timeframe(storage_segment)
+            except ValueError:
+                timeframe = storage_segment
+            partition_path = asset_path / storage_segment
             if self._partition_has_candles_file(partition_path):
-                timeframes.append(timeframe_name)
+                if timeframe not in seen_timeframes:
+                    seen_timeframes.add(timeframe)
+                    timeframes.append(timeframe)
         return timeframes
 
     def has_dataset(self, dataset_id: DatasetId) -> bool:
@@ -224,14 +236,15 @@ class HistoricalDatasetService:
 
     def _resolve_path(self, dataset_id: DatasetId) -> Path:
         # Expected structure:
-        # data/historical/{exchange}/{market_type}/{symbol}/{timeframe}/ohlcv/candles.csv
+        # data/historical/{exchange}/{market_type}/{symbol}/{timeframe_segment}/ohlcv/candles.csv
+        timeframe_segment = timeframe_to_storage_segment(dataset_id.timeframe)
         return (
             self._data_root
             / "historical"
             / dataset_id.exchange
             / dataset_id.market_type
             / dataset_id.symbol
-            / dataset_id.timeframe
+            / timeframe_segment
             / "ohlcv"
             / "candles.csv"
         )

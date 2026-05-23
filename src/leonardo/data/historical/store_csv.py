@@ -32,6 +32,7 @@ from .artifact_metadata_naming import (
     metadata_path_for_csv,
     new_unique_id,
 )
+from .paths import storage_segment_to_timeframe
 
 
 @dataclass(frozen=True)
@@ -72,7 +73,7 @@ class OHLCVLocalState:
 class CsvOHLCVStore:
     """
     CSV store for a single partition:
-      .../<exchange>/<market_type>/<symbol>/<timeframe>/ohlcv/candles.csv
+      .../<exchange>/<market_type>/<symbol>/<timeframe_storage_segment>/ohlcv/candles.csv
 
     Guarantees:
     - read returns sorted by ts_ms ascending
@@ -350,7 +351,8 @@ class CsvOHLCVStore:
             symbol_dir = path.parents[2]
             market_type_dir = path.parents[3]
             exchange_dir = path.parents[4]
-            return canonicalize(exchange_dir.name, market_type_dir.name, symbol_dir.name, timeframe_dir.name)
+            timeframe = storage_segment_to_timeframe(timeframe_dir.name)
+            return canonicalize(exchange_dir.name, market_type_dir.name, symbol_dir.name, timeframe)
         except Exception:
             return None
 

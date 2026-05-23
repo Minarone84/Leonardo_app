@@ -825,9 +825,13 @@ class HistoricalDownloadWindow(QMainWindow):
         self.stop_btn = QPushButton("Stop")
         self.stop_btn.setEnabled(False)
 
-        self.status_lbl = QLabel("Idle.")
-        self.status_lbl.setWordWrap(True)
-        self.status_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._status_text = "Idle."
+        self.status_panel = QPlainTextEdit()
+        self.status_panel.setReadOnly(True)
+        self.status_panel.setPlainText(self._status_text)
+        self.status_panel.setLineWrapMode(QPlainTextEdit.LineWrapMode.WidgetWidth)
+        self.status_panel.setMinimumHeight(84)
+        self.status_panel.setMaximumHeight(120)
 
         form = QFormLayout()
         form.addRow("Exchange", self.exchange_cb)
@@ -857,7 +861,7 @@ class HistoricalDownloadWindow(QMainWindow):
         layout = QVBoxLayout()
         layout.addLayout(form)
         layout.addLayout(btn_row)
-        layout.addWidget(self.status_lbl)
+        layout.addWidget(self.status_panel)
         root.setLayout(layout)
 
         # ---- Events ----
@@ -995,7 +999,8 @@ class HistoricalDownloadWindow(QMainWindow):
         return int(s)
 
     def _set_status(self, msg: str) -> None:
-        self.status_lbl.setText(msg)
+        self._status_text = msg
+        self.status_panel.setPlainText(msg)
 
     def _set_running(self, running: bool) -> None:
         self.start_btn.setEnabled(not running)
@@ -1132,7 +1137,7 @@ class HistoricalDownloadWindow(QMainWindow):
             return
 
         if not fut.done():
-            if self.status_lbl.text().startswith("Preparing download range"):
+            if self._status_text.startswith("Preparing download range"):
                 self._set_status("Preparing download range... (Core preflight pending)")
             return
 
@@ -1321,7 +1326,7 @@ class HistoricalDownloadWindow(QMainWindow):
             return
 
         if not fut.done():
-            if self.status_lbl.text().startswith("Submitting job"):
+            if self._status_text.startswith("Submitting job"):
                 self._set_status("Submitting job... (core task pending)")
             return
 

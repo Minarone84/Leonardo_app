@@ -12,3 +12,12 @@ def test_historical_download_window_uses_core_bridge_download_boundary() -> None
     assert "DownloadBatchRequest" not in source
     assert "runtime.data_dir" not in source
     assert ' / "historical"' not in source
+
+
+def test_historical_download_window_status_uses_read_only_message_panel() -> None:
+    source = Path("src/leonardo/gui/windows/historical_download_window.py").read_text(encoding="utf-8")
+
+    assert "self.status_panel = QPlainTextEdit()" in source
+    assert "self.status_panel.setReadOnly(True)" in source
+    assert "self._status_text" in source
+    assert "self.status_lbl.text().startswith" not in source

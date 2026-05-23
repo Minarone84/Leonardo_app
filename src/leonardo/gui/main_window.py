@@ -70,7 +70,7 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         menu1 = mb.addMenu("menu1")
         menu2 = mb.addMenu("Analysis")
-        menu3 = mb.addMenu("menu3")
+        historical_menu = mb.addMenu("Historical")
 
         # ---- Chart actions ----
         self._act_toggle_volume = QAction("Toggle Volume", self, checkable=True)
@@ -122,16 +122,21 @@ class MainWindow(QMainWindow):
         self._act_open_data_manager.triggered.connect(self._open_data_manager)
         menu2.addAction(self._act_open_data_manager)
 
-        # ---- Menu3: Historical tools ----
+        # ---- Historical tools ----
         self._act_open_hist_download = QAction("Historical Download Manager", self)
         self._act_open_hist_download.setEnabled(False)
         self._act_open_hist_download.triggered.connect(self._open_historical_download_manager)
-        menu3.addAction(self._act_open_hist_download)
+        historical_menu.addAction(self._act_open_hist_download)
+
+        self._act_open_ohlcv_maintenance = QAction("OHLCV Maintenance...", self)
+        self._act_open_ohlcv_maintenance.setEnabled(False)
+        self._act_open_ohlcv_maintenance.triggered.connect(self._open_ohlcv_maintenance)
+        historical_menu.addAction(self._act_open_ohlcv_maintenance)
 
         self._act_open_hist_manager = QAction("Historical Data Manager", self)
         self._act_open_hist_manager.setEnabled(False)
         self._act_open_hist_manager.triggered.connect(self._open_historical_data_manager)
-        menu3.addAction(self._act_open_hist_manager)
+        historical_menu.addAction(self._act_open_hist_manager)
 
         # Studies overlay (kept)
         self._workspace.set_studies_labels(indicators=[], oscillators=[])
@@ -151,6 +156,7 @@ class MainWindow(QMainWindow):
         self._act_open_runtime_inspector.setEnabled(True)
         self._act_open_data_manager.setEnabled(True)
         self._act_open_hist_download.setEnabled(True)
+        self._act_open_ohlcv_maintenance.setEnabled(True)
         self._act_open_hist_manager.setEnabled(True)
 
         self._ctx_ref = self._core.context
@@ -292,7 +298,7 @@ class MainWindow(QMainWindow):
         else:
             wm.open_windows_inspector()
 
-    # ---- Menu3: Historical handlers ----
+    # ---- Historical handlers ----
 
     def _open_historical_download_manager(self) -> None:
         wm = self._wm()
@@ -300,6 +306,14 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Window manager missing")
             return
         wm.open_historical_download_manager(core_bridge=self._core, parent=self)
+
+    def _open_ohlcv_maintenance(self) -> None:
+        wm = self._wm()
+        if wm is None:
+            self.statusBar().showMessage("Window manager missing")
+            return
+        wm.open_ohlcv_maintenance(parent=self)
+        self.statusBar().showMessage("OHLCV Maintenance opened")
 
     def _open_historical_data_manager(self) -> None:
         wm = self._wm()

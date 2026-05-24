@@ -44,7 +44,16 @@ def _write_ohlcv(root: Path) -> None:
         Candle(2000, 2.0, 2.5, 1.5, 2.2, 20.0),
         Candle(3000, 3.0, 3.5, 2.5, 3.2, 30.0),
     ]
-    CsvOHLCVStore().write_atomic(csv_path, candles, market=market)
+    store = CsvOHLCVStore()
+    store.write_atomic(csv_path, candles, market=market)
+    store.record_validation_result(
+        csv_path,
+        market=market,
+        status="ok",
+        row_count=len(candles),
+        issues=(),
+        validator="HistoricalDatasetValidator",
+    )
 
 
 def _rsi_payload(*, period: int = 14) -> dict[str, object]:

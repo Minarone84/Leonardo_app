@@ -18,6 +18,10 @@ from leonardo.data.historical.artifact_recipe_collection_store import (
     ArtifactRecipeCollectionStore,
 )
 from leonardo.data.historical.artifact_recipe_store import ArtifactRecipe
+from leonardo.data.historical.dataset_service import (
+    evaluate_ohlcv_dataset_loadability,
+    format_ohlcv_loadability_error,
+)
 from leonardo.data.historical.derived_store_csv import DerivedKind, DerivedCsvStore
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.store_csv import CsvOHLCVStore
@@ -476,6 +480,18 @@ class ArtifactRecoveryPlanner:
         ohlcv_path = CsvOHLCVStore().file_path(self._paths.ohlcv_dir(recipe.market))
         if not ohlcv_path.exists():
             blockers.append(f"Missing OHLCV candles file required for recalculation: {ohlcv_path}")
+        else:
+            loadability = evaluate_ohlcv_dataset_loadability(
+                historical_root=self._historical_root,
+                market=recipe.market,
+            )
+            if not loadability.loadable:
+                blockers.append(
+                    format_ohlcv_loadability_error(
+                        loadability,
+                        context="Data Manager artifact recovery",
+                    )
+                )
 
         for role_name, source_meta in self._iter_source_metadata(recipe.input_binding_meta):
             blockers.extend(

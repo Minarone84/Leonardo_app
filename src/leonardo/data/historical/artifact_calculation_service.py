@@ -8,6 +8,7 @@ import pandas as pd
 
 from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.artifact_result_conversion import result_to_save_dataframe
+from leonardo.data.historical.dataset_service import require_ohlcv_dataset_loadable
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore, DerivedKind
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.store_csv import CsvOHLCVStore
@@ -169,6 +170,11 @@ class ArtifactCalculationService:
 
     def _load_full_dataset_dataframe(self, market: MarketId) -> pd.DataFrame:
         ohlcv_path = CsvOHLCVStore().file_path(self._paths.ohlcv_dir(market))
+        require_ohlcv_dataset_loadable(
+            historical_root=self._historical_root,
+            market=market,
+            context="Data Manager artifact calculation",
+        )
         if not ohlcv_path.exists():
             raise FileNotFoundError(f"OHLCV candles file not found: {ohlcv_path}")
 

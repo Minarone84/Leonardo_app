@@ -18,7 +18,21 @@ def _market():
     return canonicalize("bybit", "linear", "BTCUSDT", "30m")
 
 
-def _write_ohlcv(root: Path, *, rows: int = 20):
+def _issues_for_status(status: str) -> tuple[tuple[str, str], ...]:
+    if status == "error":
+        return (("error", "test validation error"),)
+    if status == "warning":
+        return (("warning", "test validation warning"),)
+    return ()
+
+
+def _write_ohlcv(
+    root: Path,
+    *,
+    rows: int = 20,
+    validation_status: str = "ok",
+    write_metadata: bool = True,
+):
     market = _market()
     paths = HistoricalPaths(root=root)
     csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
@@ -34,7 +48,17 @@ def _write_ohlcv(root: Path, *, rows: int = 20):
         )
         for idx in range(rows)
     ]
-    CsvOHLCVStore().write_atomic(csv_path, candles, market=market)
+    store = CsvOHLCVStore()
+    store.write_atomic(csv_path, candles, market=market, write_metadata=write_metadata)
+    if write_metadata:
+        store.record_validation_result(
+            csv_path,
+            market=market,
+            status=validation_status,
+            row_count=len(candles),
+            issues=_issues_for_status(validation_status),
+            validator="HistoricalDatasetValidator",
+        )
     return market, csv_path
 
 
@@ -268,6 +292,68 @@ def test_recovery_planner_blocks_recovery_when_ohlcv_is_missing(tmp_path: Path) 
     assert item.status == "blocked"
     assert item.can_recalculate is False
     assert any("OHLCV" in reason for reason in item.blocked_reasons)
+
+
+def test_recovery_planner_allows_modified_ohlcv_for_recalculation(tmp_path: Path) -> None:
+    _write_ohlcv(tmp_path, validation_status="modified")
+    recipe = _recipe(tmp_path, _rsi_payload(period=14))
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    assert report.missing_count == 1
+    assert report.blocked_count == 0
+    assert report.actionable_recipe_ids == (recipe.recipe_id,)
+
+
+@pytest.mark.parametrize("status", ["unknown", "error", "warning"])
+def test_recovery_planner_blocks_unaccepted_ohlcv_statuses(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    _write_ohlcv(tmp_path, validation_status=status)
+    recipe = _recipe(tmp_path, _rsi_payload(period=14))
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    assert report.blocked_count == 1
+    assert report.actionable_recipe_ids == ()
+    item = report.items[0]
+    assert item.status == "blocked"
+    assert item.can_recalculate is False
+    assert any("not loadable" in reason for reason in item.blocked_reasons)
+    assert any("OHLCV Maintenance" in reason for reason in item.blocked_reasons)
+
+
+def test_recovery_planner_blocks_missing_ohlcv_metadata(tmp_path: Path) -> None:
+    _write_ohlcv(tmp_path, write_metadata=False)
+    recipe = _recipe(tmp_path, _rsi_payload(period=14))
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    item = report.items[0]
+    assert item.status == "blocked"
+    assert item.can_recalculate is False
+    assert any("metadata sidecar" in reason for reason in item.blocked_reasons)
+
+
+def test_recovery_planner_blocks_stale_ohlcv_validation_fingerprint(tmp_path: Path) -> None:
+    _market, csv_path = _write_ohlcv(tmp_path, validation_status="ok")
+    csv_path.write_text(
+        csv_path.read_text(encoding="utf-8") + "\n",
+        encoding="utf-8",
+    )
+    recipe = _recipe(tmp_path, _rsi_payload(period=14))
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    item = report.items[0]
+    assert item.status == "blocked"
+    assert item.can_recalculate is False
+    assert any("changed after validation" in reason or "stale" in reason for reason in item.blocked_reasons)
 
 
 def test_recovery_planner_blocks_construct_recovery_when_saved_source_is_missing(tmp_path: Path) -> None:

@@ -14,7 +14,21 @@ from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
 
-def _write_ohlcv(root: Path, *, rows: int = 40):
+def _issues_for_status(status: str) -> tuple[tuple[str, str], ...]:
+    if status == "error":
+        return (("error", "test validation error"),)
+    if status == "warning":
+        return (("warning", "test validation warning"),)
+    return ()
+
+
+def _write_ohlcv(
+    root: Path,
+    *,
+    rows: int = 40,
+    validation_status: str = "ok",
+    write_metadata: bool = True,
+):
     market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
     paths = HistoricalPaths(root=root)
     ohlcv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
@@ -30,8 +44,33 @@ def _write_ohlcv(root: Path, *, rows: int = 40):
         )
         for idx in range(rows)
     ]
-    CsvOHLCVStore().write_atomic(ohlcv_path, candles, market=market)
+    store = CsvOHLCVStore()
+    store.write_atomic(ohlcv_path, candles, market=market, write_metadata=write_metadata)
+    if write_metadata:
+        store.record_validation_result(
+            ohlcv_path,
+            market=market,
+            status=validation_status,
+            row_count=len(candles),
+            issues=_issues_for_status(validation_status),
+            validator="HistoricalDatasetValidator",
+        )
     return market, ohlcv_path
+
+
+def _payload(market, *, tool_key: str = "rsi", tool_type: str = "oscillator") -> dict[str, object]:
+    return {
+        "tool_type": tool_type,
+        "tool_key": tool_key,
+        "tool_title": tool_key.upper(),
+        "exchange": market.exchange,
+        "market_type": market.market_type,
+        "symbol": market.symbol,
+        "timeframe": market.timeframe,
+        "params": {"period": 14},
+        "input_bindings": {},
+        "input_binding_meta": {},
+    }
 
 
 def _load_manifest(csv_path: Path) -> HistoricalCsvArtifactManifest:
@@ -127,7 +166,7 @@ def test_artifact_calculation_service_saves_volume_oscillator_with_configurable_
 def test_artifact_calculation_service_requires_existing_ohlcv(tmp_path):
     service = ArtifactCalculationService(historical_root=tmp_path)
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(PermissionError, match="not loadable"):
         service.calculate_and_save(
             {
                 "tool_type": "indicator",
@@ -140,3 +179,46 @@ def test_artifact_calculation_service_requires_existing_ohlcv(tmp_path):
                 "params": {"period": 5},
             }
         )
+
+
+def test_artifact_calculation_service_allows_modified_ohlcv(tmp_path: Path) -> None:
+    market, _ohlcv_path = _write_ohlcv(tmp_path, validation_status="modified")
+    service = ArtifactCalculationService(historical_root=tmp_path)
+
+    result = service.calculate_and_save(_payload(market))
+
+    assert result.saved_path.exists()
+
+
+@pytest.mark.parametrize("status", ["unknown", "error", "warning"])
+def test_artifact_calculation_service_blocks_unaccepted_ohlcv_statuses(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    market, _ohlcv_path = _write_ohlcv(tmp_path, validation_status=status)
+    service = ArtifactCalculationService(historical_root=tmp_path)
+
+    with pytest.raises(PermissionError, match="OHLCV Maintenance"):
+        service.calculate_and_save(_payload(market))
+
+
+def test_artifact_calculation_service_blocks_missing_ohlcv_metadata(tmp_path: Path) -> None:
+    market, _ohlcv_path = _write_ohlcv(tmp_path, write_metadata=False)
+    service = ArtifactCalculationService(historical_root=tmp_path)
+
+    with pytest.raises(PermissionError, match="metadata sidecar"):
+        service.calculate_and_save(_payload(market))
+
+
+def test_artifact_calculation_service_blocks_stale_ohlcv_validation_fingerprint(
+    tmp_path: Path,
+) -> None:
+    market, ohlcv_path = _write_ohlcv(tmp_path, validation_status="ok")
+    ohlcv_path.write_text(
+        ohlcv_path.read_text(encoding="utf-8") + "\n",
+        encoding="utf-8",
+    )
+    service = ArtifactCalculationService(historical_root=tmp_path)
+
+    with pytest.raises(PermissionError, match="changed after validation|stale"):
+        service.calculate_and_save(_payload(market))

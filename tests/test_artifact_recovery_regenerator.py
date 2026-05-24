@@ -62,7 +62,16 @@ def _write_ohlcv(root: Path, *, rows: int = 20):
         )
         for idx in range(rows)
     ]
-    CsvOHLCVStore().write_atomic(csv_path, candles, market=market)
+    store = CsvOHLCVStore()
+    store.write_atomic(csv_path, candles, market=market)
+    store.record_validation_result(
+        csv_path,
+        market=market,
+        status="ok",
+        row_count=len(candles),
+        issues=(),
+        validator="HistoricalDatasetValidator",
+    )
     return market, csv_path
 
 

@@ -15,6 +15,7 @@ import pandas as pd
 from leonardo.data.historical.artifact_metadata_contracts import HistoricalCsvArtifactManifest
 from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.paths import (
+    HistoricalPaths,
     storage_segment_to_timeframe,
     timeframe_to_storage_segment,
 )
@@ -60,6 +61,174 @@ class DatasetLoadability:
 def is_ohlcv_dataset_loadable(validation_status: str | None) -> bool:
     """Return whether a metadata validation status is accepted for chart loading."""
     return str(validation_status or "").strip().lower() in LOADABLE_OHLCV_VALIDATION_STATUSES
+
+
+def evaluate_ohlcv_dataset_loadability(
+    *,
+    historical_root: Path,
+    market: MarketId,
+) -> DatasetLoadability:
+    """Evaluate whether an OHLCV dataset is accepted for data-layer loading.
+
+    The acceptance boundary is the persisted OHLCV metadata sidecar. Download
+    preliminary validation is not sufficient: the validation status must be
+    ``ok`` or ``modified`` and the stored validation fingerprint must still
+    match the current CSV.
+    """
+    dataset_id = DatasetId(
+        exchange=_safe_historical_segment(market.exchange, label="exchange"),
+        market_type=_safe_historical_segment(market.market_type, label="market_type"),
+        symbol=_safe_historical_segment(market.symbol, label="symbol"),
+        timeframe=_safe_historical_segment(market.timeframe, label="timeframe"),
+    )
+    paths = HistoricalPaths(root=Path(historical_root))
+    store = CsvOHLCVStore()
+    csv_path = store.file_path(paths.ohlcv_dir(market))
+    metadata_path = metadata_path_for_csv(csv_path)
+
+    def blocked(status: str, reason: str) -> DatasetLoadability:
+        return DatasetLoadability(
+            dataset_id=dataset_id,
+            loadable=False,
+            validation_status=status,
+            reason=reason,
+            csv_path=str(csv_path),
+            metadata_path=str(metadata_path),
+        )
+
+    if not csv_path.is_file():
+        return blocked("unknown", "OHLCV candles.csv is missing.")
+    if not metadata_path.is_file():
+        return blocked(
+            "unknown",
+            "This OHLCV dataset has no metadata sidecar. Open Historical \u2192 OHLCV Maintenance to rebuild metadata and validate it.",
+        )
+
+    local_state = store.inspect(csv_path, market=market, repair_metadata=False)
+    if not local_state.metadata_valid:
+        issue_text = "; ".join(local_state.issues) if local_state.issues else "metadata could not be validated"
+        return blocked(
+            "unknown",
+            f"This OHLCV dataset metadata is missing, unreadable, mismatched, or stale: {issue_text}. Open Historical \u2192 OHLCV Maintenance to inspect it.",
+        )
+
+    manifest = _load_historical_manifest(metadata_path)
+    if manifest is None:
+        return blocked(
+            "unknown",
+            "This OHLCV dataset metadata is unreadable. Open Historical \u2192 OHLCV Maintenance to rebuild metadata and validate it.",
+        )
+
+    validation_status = str(manifest.validation.status or "unknown").strip().lower()
+    if not is_ohlcv_dataset_loadable(validation_status):
+        return blocked(
+            validation_status,
+            blocked_ohlcv_validation_reason(validation_status),
+        )
+
+    current_fingerprint = store.file_fingerprint(csv_path)
+    validation_fingerprint = manifest.validation.csv_fingerprint
+    if validation_fingerprint.size_bytes != current_fingerprint.size_bytes:
+        return blocked(
+            "unknown",
+            "This OHLCV dataset changed after validation. Re-run validation in OHLCV Maintenance.",
+        )
+    if validation_fingerprint.modified_at_ms != current_fingerprint.modified_at_ms:
+        return blocked(
+            "unknown",
+            "This OHLCV dataset changed after validation. Re-run validation in OHLCV Maintenance.",
+        )
+
+    reason = (
+        "Modified: valid after documented source correction."
+        if validation_status == "modified"
+        else "Dataset is manually validated and loadable."
+    )
+    return DatasetLoadability(
+        dataset_id=dataset_id,
+        loadable=True,
+        validation_status=validation_status,
+        reason=reason,
+        csv_path=str(csv_path),
+        metadata_path=str(metadata_path),
+    )
+
+
+def require_ohlcv_dataset_loadable(
+    *,
+    historical_root: Path,
+    market: MarketId,
+    context: str,
+) -> DatasetLoadability:
+    """Return loadability or raise when an OHLCV dataset is not accepted."""
+    loadability = evaluate_ohlcv_dataset_loadability(
+        historical_root=historical_root,
+        market=market,
+    )
+    if not loadability.loadable:
+        raise PermissionError(
+            format_ohlcv_loadability_error(loadability, context=context)
+        )
+    return loadability
+
+
+def format_ohlcv_loadability_error(
+    loadability: DatasetLoadability,
+    *,
+    context: str,
+) -> str:
+    """Format a user-actionable data-layer loadability failure."""
+    dataset_id = loadability.dataset_id
+    identity = (
+        f"{dataset_id.exchange} / {dataset_id.market_type} / "
+        f"{dataset_id.symbol} / {dataset_id.timeframe}"
+    )
+    status = str(loadability.validation_status or "unknown").strip().lower() or "unknown"
+    context_text = f" for {context}" if str(context or "").strip() else ""
+    return (
+        f"OHLCV dataset {identity} is not loadable{context_text}: "
+        f"validation.status is {status}. {loadability.reason} "
+        "Open Historical \u2192 OHLCV Maintenance to analyze, repair, or source-correct this dataset before using it in Data Manager."
+    )
+
+
+def blocked_ohlcv_validation_reason(validation_status: str) -> str:
+    """Return the standard reason for an unaccepted OHLCV validation status."""
+    status = str(validation_status or "unknown").strip().lower()
+    if status in {"unknown", "not_validated"}:
+        return (
+            "This OHLCV dataset has not been manually validated. "
+            "Open Historical \u2192 OHLCV Maintenance and run Analyze Checked."
+        )
+    if status == "error":
+        return (
+            "This OHLCV dataset failed validation. "
+            "Open Historical \u2192 OHLCV Maintenance to repair or source-correct it."
+        )
+    if status == "warning":
+        return (
+            "This OHLCV dataset has validation warnings and is blocked until a loading policy is approved. "
+            "Open Historical \u2192 OHLCV Maintenance to review it."
+        )
+    return (
+        "This OHLCV dataset is not accepted for chart loading. "
+        "Open Historical \u2192 OHLCV Maintenance to inspect it."
+    )
+
+
+def _load_historical_manifest(metadata_path: Path) -> HistoricalCsvArtifactManifest | None:
+    try:
+        with Path(metadata_path).open("r", encoding="utf-8") as handle:
+            return HistoricalCsvArtifactManifest.from_dict(json.load(handle))
+    except Exception:
+        return None
+
+
+def _safe_historical_segment(value: str, *, label: str) -> str:
+    text = str(value or "").strip()
+    if not text or text in {".", ".."} or "/" in text or "\\" in text:
+        raise ValueError(f"Invalid historical dataset {label}: {value!r}")
+    return text
 
 
 @dataclass(frozen=True)
@@ -155,7 +324,6 @@ class HistoricalDatasetService:
     ) -> None:
         self._data_root = data_root
         self._slice_cache = LruSliceCache(max_entries=slice_cache_entries)
-        self._store = CsvOHLCVStore()
 
         # Per-dataset in-memory store: ts and OHLCV columns
         self._datasets: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
@@ -176,10 +344,7 @@ class HistoricalDatasetService:
     @staticmethod
     def _safe_catalog_segment(value: str, *, label: str) -> str:
         """Normalize one catalog path segment and reject traversal-like input."""
-        text = str(value or "").strip()
-        if not text or text in {".", ".."} or "/" in text or "\\" in text:
-            raise ValueError(f"Invalid historical dataset {label}: {value!r}")
-        return text
+        return _safe_historical_segment(value, label=label)
 
     @staticmethod
     def _list_child_directories(path: Path) -> List[str]:
@@ -207,110 +372,15 @@ class HistoricalDatasetService:
         self._safe_catalog_segment(dataset_id.symbol, label="symbol")
         self._safe_catalog_segment(dataset_id.timeframe, label="timeframe")
 
-        csv_path = self._resolve_path(dataset_id)
-        metadata_path = metadata_path_for_csv(csv_path)
-
-        def blocked(status: str, reason: str) -> DatasetLoadability:
-            return DatasetLoadability(
-                dataset_id=dataset_id,
-                loadable=False,
-                validation_status=status,
-                reason=reason,
-                csv_path=str(csv_path),
-                metadata_path=str(metadata_path),
-            )
-
-        if not csv_path.is_file():
-            return blocked("unknown", "OHLCV candles.csv is missing.")
-        if not metadata_path.is_file():
-            return blocked(
-                "unknown",
-                "This OHLCV dataset has no metadata sidecar. Open Historical \u2192 OHLCV Maintenance to rebuild metadata and validate it.",
-            )
-
         market = MarketId(
             exchange=dataset_id.exchange,
             market_type=dataset_id.market_type,
             symbol=dataset_id.symbol,
             timeframe=dataset_id.timeframe,
         )
-        local_state = self._store.inspect(csv_path, market=market, repair_metadata=False)
-        if not local_state.metadata_valid:
-            issue_text = "; ".join(local_state.issues) if local_state.issues else "metadata could not be validated"
-            return blocked(
-                "unknown",
-                f"This OHLCV dataset metadata is missing, unreadable, mismatched, or stale: {issue_text}. Open Historical \u2192 OHLCV Maintenance to inspect it.",
-            )
-
-        manifest = self._load_manifest(metadata_path)
-        if manifest is None:
-            return blocked(
-                "unknown",
-                "This OHLCV dataset metadata is unreadable. Open Historical \u2192 OHLCV Maintenance to rebuild metadata and validate it.",
-            )
-
-        validation_status = str(manifest.validation.status or "unknown").strip().lower()
-        if not is_ohlcv_dataset_loadable(validation_status):
-            return blocked(
-                validation_status,
-                self._blocked_validation_reason(validation_status),
-            )
-
-        current_fingerprint = self._store.file_fingerprint(csv_path)
-        validation_fingerprint = manifest.validation.csv_fingerprint
-        if validation_fingerprint.size_bytes != current_fingerprint.size_bytes:
-            return blocked(
-                "unknown",
-                "This OHLCV dataset changed after validation. Re-run validation in OHLCV Maintenance.",
-            )
-        if validation_fingerprint.modified_at_ms != current_fingerprint.modified_at_ms:
-            return blocked(
-                "unknown",
-                "This OHLCV dataset changed after validation. Re-run validation in OHLCV Maintenance.",
-            )
-
-        reason = (
-            "Modified: valid after documented source correction."
-            if validation_status == "modified"
-            else "Dataset is manually validated and loadable."
-        )
-        return DatasetLoadability(
-            dataset_id=dataset_id,
-            loadable=True,
-            validation_status=validation_status,
-            reason=reason,
-            csv_path=str(csv_path),
-            metadata_path=str(metadata_path),
-        )
-
-    def _load_manifest(self, metadata_path: Path) -> HistoricalCsvArtifactManifest | None:
-        try:
-            with Path(metadata_path).open("r", encoding="utf-8") as handle:
-                return HistoricalCsvArtifactManifest.from_dict(json.load(handle))
-        except Exception:
-            return None
-
-    @staticmethod
-    def _blocked_validation_reason(validation_status: str) -> str:
-        status = str(validation_status or "unknown").strip().lower()
-        if status in {"unknown", "not_validated"}:
-            return (
-                "This OHLCV dataset has not been manually validated. "
-                "Open Historical \u2192 OHLCV Maintenance and run Analyze Checked."
-            )
-        if status == "error":
-            return (
-                "This OHLCV dataset failed validation. "
-                "Open Historical \u2192 OHLCV Maintenance to repair or source-correct it."
-            )
-        if status == "warning":
-            return (
-                "This OHLCV dataset has validation warnings and is blocked until a loading policy is approved. "
-                "Open Historical \u2192 OHLCV Maintenance to review it."
-            )
-        return (
-            "This OHLCV dataset is not accepted for chart loading. "
-            "Open Historical \u2192 OHLCV Maintenance to inspect it."
+        return evaluate_ohlcv_dataset_loadability(
+            historical_root=self._catalog_root(),
+            market=market,
         )
 
     def list_dataset_exchanges(self) -> List[str]:

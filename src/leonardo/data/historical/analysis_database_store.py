@@ -12,6 +12,7 @@ from typing import Iterable
 
 import pandas as pd
 
+from leonardo.data.historical.dataset_service import require_ohlcv_dataset_loadable
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.naming import MarketId, canonicalize
 
@@ -510,6 +511,11 @@ class AnalysisDatabaseStore:
 
     def _load_selected_ohlcv_dataframe(self, manifest: AnalysisDatabaseManifest) -> pd.DataFrame:
         path = self._paths.ohlcv_dir(manifest.market) / "candles.csv"
+        require_ohlcv_dataset_loadable(
+            historical_root=self._historical_root,
+            market=manifest.market,
+            context="Data Manager Analysis Database materialization",
+        )
         if not path.exists():
             raise FileNotFoundError(f"OHLCV candles.csv not found: {path}")
 

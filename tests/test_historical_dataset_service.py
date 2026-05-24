@@ -6,7 +6,13 @@ from pathlib import Path
 
 import pytest
 
-from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService, SliceRequest
+from leonardo.data.historical.dataset_service import (
+    DatasetId,
+    HistoricalDatasetService,
+    SliceRequest,
+    evaluate_ohlcv_dataset_loadability,
+    require_ohlcv_dataset_loadable,
+)
 from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.paths import timeframe_to_storage_segment
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
@@ -150,6 +156,19 @@ def test_dataset_service_blocks_missing_validation_block(tmp_path) -> None:
     assert report.validation_status == "unknown"
 
 
+def test_dataset_service_blocks_unreadable_metadata_sidecar(tmp_path) -> None:
+    dataset = DatasetId("bybit", "linear", "BTCUSDT", "1m")
+    csv_path = _write_dataset(tmp_path, dataset, [1.0, 2.0], validation_status="ok")
+    metadata_path_for_csv(csv_path).write_text("{", encoding="utf-8")
+    service = HistoricalDatasetService(tmp_path)
+
+    report = service.dataset_loadability(dataset)
+
+    assert report.loadable is False
+    assert report.validation_status == "unknown"
+    assert "unreadable" in report.reason or "invalid" in report.reason
+
+
 def test_dataset_service_blocks_stale_validation_fingerprint(tmp_path) -> None:
     dataset = DatasetId("bybit", "linear", "BTCUSDT", "1m")
     csv_path = _write_dataset(tmp_path, dataset, [1.0, 2.0], validation_status="ok")
@@ -173,6 +192,26 @@ def test_dataset_service_loadability_preserves_month_storage_segment(tmp_path) -
 
     assert service.list_loadable_dataset_timeframes("bybit", "linear", "LINKUSDT") == ["1M"]
     assert service.dataset_loadability(dataset).loadable is True
+
+
+def test_shared_ohlcv_loadability_helper_uses_historical_root_and_month_segment(tmp_path) -> None:
+    dataset = DatasetId("bybit", "linear", "LINKUSDT", "1M")
+    csv_path = _write_dataset(tmp_path, dataset, [1.0, 2.0], validation_status="modified")
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1M")
+
+    report = evaluate_ohlcv_dataset_loadability(
+        historical_root=tmp_path / "historical",
+        market=market,
+    )
+
+    assert report.loadable is True
+    assert report.validation_status == "modified"
+    assert report.csv_path == str(csv_path)
+    assert require_ohlcv_dataset_loadable(
+        historical_root=tmp_path / "historical",
+        market=market,
+        context="test",
+    ).loadable is True
 
 
 def test_invalidate_dataset_cache_removes_only_matching_loaded_and_slice_entries(tmp_path) -> None:

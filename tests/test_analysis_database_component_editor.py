@@ -17,6 +17,8 @@ from leonardo.data.historical.analysis_database_naming import (
     build_feature_source_id,
 )
 from leonardo.data.historical.analysis_database_store import AnalysisDatabaseStore
+from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
 
@@ -26,18 +28,22 @@ def _market():
 
 def _write_ohlcv(root: Path) -> None:
     market = _market()
-    path = root / market.exchange / market.market_type / market.symbol / market.timeframe / "ohlcv" / "candles.csv"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        {
-            "ts_ms": [1000, 2000, 3000],
-            "open": [1.0, 2.0, 3.0],
-            "high": [1.5, 2.5, 3.5],
-            "low": [0.5, 1.5, 2.5],
-            "close": [1.2, 2.2, 3.2],
-            "volume": [10.0, 20.0, 30.0],
-        }
-    ).to_csv(path, index=False)
+    store = CsvOHLCVStore()
+    path = store.file_path(HistoricalPaths(root=root).ensure_ohlcv_dir(market))
+    candles = [
+        Candle(1000, 1.0, 1.5, 0.5, 1.2, 10.0),
+        Candle(2000, 2.0, 2.5, 1.5, 2.2, 20.0),
+        Candle(3000, 3.0, 3.5, 2.5, 3.2, 30.0),
+    ]
+    store.write_atomic(path, candles, market=market)
+    store.record_validation_result(
+        path,
+        market=market,
+        status="ok",
+        row_count=len(candles),
+        issues=(),
+        validator="HistoricalDatasetValidator",
+    )
 
 
 def _write_feature_artifact(

@@ -8,22 +8,45 @@ import pytest
 from leonardo.data.historical.analysis_database_contracts import AnalysisDatabaseColumn, AnalysisFeatureSource
 from leonardo.data.historical.analysis_database_naming import build_database_column_name, build_feature_source_id
 from leonardo.data.historical.analysis_database_store import AnalysisDatabaseStore
+from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
 
-def _write_ohlcv(root: Path, market) -> None:
-    path = root / market.exchange / market.market_type / market.symbol / market.timeframe / "ohlcv" / "candles.csv"
-    path.parent.mkdir(parents=True, exist_ok=True)
-    pd.DataFrame(
-        {
-            "ts_ms": [1000, 2000, 3000],
-            "open": [1.0, 2.0, 3.0],
-            "high": [1.5, 2.5, 3.5],
-            "low": [0.5, 1.5, 2.5],
-            "close": [1.2, 2.2, 3.2],
-            "volume": [10.0, 20.0, 30.0],
-        }
-    ).to_csv(path, index=False)
+def _issues_for_status(status: str) -> tuple[tuple[str, str], ...]:
+    if status == "error":
+        return (("error", "test validation error"),)
+    if status == "warning":
+        return (("warning", "test validation warning"),)
+    return ()
+
+
+def _write_ohlcv(
+    root: Path,
+    market,
+    *,
+    validation_status: str = "ok",
+    write_metadata: bool = True,
+) -> Path:
+    paths = HistoricalPaths(root=root)
+    store = CsvOHLCVStore()
+    path = store.file_path(paths.ensure_ohlcv_dir(market))
+    candles = [
+        Candle(1000, 1.0, 1.5, 0.5, 1.2, 10.0),
+        Candle(2000, 2.0, 2.5, 1.5, 2.2, 20.0),
+        Candle(3000, 3.0, 3.5, 2.5, 3.2, 30.0),
+    ]
+    store.write_atomic(path, candles, market=market, write_metadata=write_metadata)
+    if write_metadata:
+        store.record_validation_result(
+            path,
+            market=market,
+            status=validation_status,
+            row_count=len(candles),
+            issues=_issues_for_status(validation_status),
+            validator="HistoricalDatasetValidator",
+        )
+    return path
 
 
 def _write_feature_artifact(root: Path, market, *, family: str, instance_key: str, column_name: str, values) -> Path:
@@ -180,6 +203,117 @@ def test_materialize_database_rebuild_preserves_identity_recipe_and_updates_data
     assert rebuilt.materialization.created_at_ms == first.materialization.created_at_ms
     assert rebuilt.materialization.updated_at_ms >= first.materialization.updated_at_ms
     assert rebuilt_dataframe["oscillator__rsi__rsi_default_period_14__rsi_14"].tolist() == [40.0, 50.0, 60.0]
+
+
+def test_materialize_database_allows_modified_ohlcv(tmp_path: Path) -> None:
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    _write_ohlcv(tmp_path, market, validation_status="modified")
+    _write_feature_artifact(
+        tmp_path,
+        market,
+        family="oscillators",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+        values=[45.0, 55.0, 65.0],
+    )
+    store = AnalysisDatabaseStore(historical_root=tmp_path)
+    rsi = _feature(
+        family="oscillators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+    )
+    draft = _draft(store, market, display_name="BTCUSDT_30m_modified", feature=rsi)
+
+    materialized = store.materialize_database(market=market, database_id=draft.database_id)
+
+    assert materialized.status == "materialized"
+
+
+@pytest.mark.parametrize("status", ["unknown", "error", "warning"])
+def test_materialize_database_blocks_unaccepted_ohlcv_statuses(
+    tmp_path: Path,
+    status: str,
+) -> None:
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    _write_ohlcv(tmp_path, market, validation_status=status)
+    _write_feature_artifact(
+        tmp_path,
+        market,
+        family="oscillators",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+        values=[45.0, 55.0, 65.0],
+    )
+    store = AnalysisDatabaseStore(historical_root=tmp_path)
+    rsi = _feature(
+        family="oscillators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+    )
+    draft = _draft(store, market, display_name=f"BTCUSDT_30m_{status}", feature=rsi)
+
+    with pytest.raises(PermissionError, match="OHLCV Maintenance"):
+        store.materialize_database(market=market, database_id=draft.database_id)
+
+
+def test_materialize_database_blocks_missing_ohlcv_metadata(tmp_path: Path) -> None:
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    _write_ohlcv(tmp_path, market, write_metadata=False)
+    _write_feature_artifact(
+        tmp_path,
+        market,
+        family="oscillators",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+        values=[45.0, 55.0, 65.0],
+    )
+    store = AnalysisDatabaseStore(historical_root=tmp_path)
+    rsi = _feature(
+        family="oscillators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+    )
+    draft = _draft(store, market, display_name="BTCUSDT_30m_missing_meta", feature=rsi)
+
+    with pytest.raises(PermissionError, match="metadata sidecar"):
+        store.materialize_database(market=market, database_id=draft.database_id)
+
+
+def test_materialize_database_blocks_stale_ohlcv_validation_fingerprint(
+    tmp_path: Path,
+) -> None:
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    ohlcv_path = _write_ohlcv(tmp_path, market, validation_status="ok")
+    ohlcv_path.write_text(
+        ohlcv_path.read_text(encoding="utf-8") + "\n",
+        encoding="utf-8",
+    )
+    _write_feature_artifact(
+        tmp_path,
+        market,
+        family="oscillators",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+        values=[45.0, 55.0, 65.0],
+    )
+    store = AnalysisDatabaseStore(historical_root=tmp_path)
+    rsi = _feature(
+        family="oscillators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+    )
+    draft = _draft(store, market, display_name="BTCUSDT_30m_stale", feature=rsi)
+
+    with pytest.raises(PermissionError, match="changed after validation|stale"):
+        store.materialize_database(market=market, database_id=draft.database_id)
 
 
 def test_analysis_database_rename_preserves_id_and_delete_removes_folder(tmp_path: Path):

@@ -237,6 +237,9 @@ def test_maintenance_service_executes_repair_plan_through_downloader_and_stamps_
     assert report.ranges_requested == 1
     assert report.ranges_completed == 1
     assert report.final_row_count == 2
+    assert report.repair_outcome == "repaired_ok"
+    assert report.source_invalid is False
+    assert report.source_invalid_anchors == ()
     assert report.validation_status == "ok"
     assert report.metadata_updated is True
     assert report.cache_invalidated is True
@@ -304,9 +307,121 @@ def test_maintenance_service_execute_repair_stamps_failed_post_validation(
     )
 
     assert report.validation_status == "error"
+    assert report.repair_outcome == "source_invalid"
+    assert report.source_invalid is True
+    assert report.source_invalid_anchors == (120_000,)
     assert report.metadata_updated is True
     assert any(issue.message == "open out of bounds at row 1" for issue in report.validation_issues)
+    assert "exchange data still contains invalid candle" in report.message
+    assert any("Source-invalid candle detected at ts_ms 120000" in warning for warning in report.warnings)
+    assert any("No local correction was applied" in warning for warning in report.warnings)
     assert any("left validation anchor ts_ms 120000 unchanged" in warning for warning in report.warnings)
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    assert payload["validation"]["status"] == "error"
+
+
+def test_maintenance_service_execute_repair_reports_missing_anchor_coverage(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    CsvOHLCVStore().write_atomic(
+        csv_path,
+        [
+            Candle(60_000, 1.0, 2.0, 0.5, 1.5, 10.0),
+            Candle(120_000, 10.0, 5.0, 1.0, 2.0, 11.0),
+        ],
+        market=market,
+    )
+    service = HistoricalOhlcvMaintenanceService(
+        historical_root=tmp_path / "historical",
+        dataset_service=_InvalidateTrackingDatasetService(),  # type: ignore[arg-type]
+    )
+    plan = service.plan_ohlcv_repair(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    class _FakeDownloader:
+        def __init__(self, root: Path) -> None:
+            assert root == tmp_path / "historical"
+
+        async def run_repair_range_with_job_id(self, _ctx, _req, job_id: str):
+            return SimpleNamespace(
+                total_rows=2,
+                file_path=csv_path,
+                job_id=job_id,
+                fetched_rows=1,
+                downloaded_first_ts_ms=60_000,
+                downloaded_last_ts_ms=60_000,
+            )
+
+    monkeypatch.setattr("leonardo.data.historical.ohlcv_maintenance.HistoricalDownloader", _FakeDownloader)
+
+    report = asyncio.run(
+        service.execute_ohlcv_repair(
+            object(),
+            DatasetId("bybit", "linear", "LINKUSDT", "1m"),
+            plan,
+        )
+    )
+
+    assert report.repair_outcome == "coverage_missing_anchor"
+    assert report.source_invalid is False
+    assert any("coverage did not include validation anchor ts_ms 120000" in warning for warning in report.warnings)
+    assert "downloaded coverage did not include" in report.message
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    assert payload["validation"]["status"] == "error"
+
+
+def test_maintenance_service_execute_repair_reports_no_replacement_rows(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    CsvOHLCVStore().write_atomic(
+        csv_path,
+        [
+            Candle(60_000, 1.0, 2.0, 0.5, 1.5, 10.0),
+            Candle(120_000, 10.0, 5.0, 1.0, 2.0, 11.0),
+        ],
+        market=market,
+    )
+    service = HistoricalOhlcvMaintenanceService(
+        historical_root=tmp_path / "historical",
+        dataset_service=_InvalidateTrackingDatasetService(),  # type: ignore[arg-type]
+    )
+    plan = service.plan_ohlcv_repair(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    class _FakeDownloader:
+        def __init__(self, root: Path) -> None:
+            assert root == tmp_path / "historical"
+
+        async def run_repair_range_with_job_id(self, _ctx, _req, job_id: str):
+            return SimpleNamespace(
+                total_rows=2,
+                file_path=csv_path,
+                job_id=job_id,
+                fetched_rows=0,
+                downloaded_first_ts_ms=None,
+                downloaded_last_ts_ms=None,
+            )
+
+    monkeypatch.setattr("leonardo.data.historical.ohlcv_maintenance.HistoricalDownloader", _FakeDownloader)
+
+    report = asyncio.run(
+        service.execute_ohlcv_repair(
+            object(),
+            DatasetId("bybit", "linear", "LINKUSDT", "1m"),
+            plan,
+        )
+    )
+
+    assert report.repair_outcome == "no_replacement_rows"
+    assert report.source_invalid is False
+    assert any("fetched no exchange candles" in warning for warning in report.warnings)
+    assert "no replacement candles were fetched" in report.message
     payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
     assert payload["validation"]["status"] == "error"
 

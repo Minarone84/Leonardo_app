@@ -816,6 +816,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
         lines = [
             "Repair Execution Complete",
             f"  Dataset: {self._dataset_label(dataset)}",
+            f"  Repair outcome: {self._text(report, 'repair_outcome') or 'unknown'}",
             f"  Ranges requested: {self._text(report, 'ranges_requested')}",
             f"  Ranges completed: {self._text(report, 'ranges_completed')}",
             f"  Final validation status: {self._text(report, 'validation_status')}",
@@ -851,6 +852,20 @@ class OHLCVMaintenanceWindow(QMainWindow):
                         f"    Job ID: {self._text(item, 'job_id')}",
                     ]
                 )
+
+        source_invalid_anchors = tuple(getattr(report, "source_invalid_anchors", ()) or ())
+        if source_invalid_anchors:
+            lines.extend(["", "Source-Invalid Candles"])
+            lines.extend(f"  - ts_ms: {anchor}" for anchor in source_invalid_anchors)
+            lines.extend(
+                [
+                    "",
+                    "The repair range was redownloaded from the exchange, but the replacement candle "
+                    "still violates OHLC validation.",
+                    "No local correction was applied.",
+                    "Dataset remains Error.",
+                ]
+            )
 
         warnings = tuple(getattr(report, "warnings", ()) or ())
         if warnings:

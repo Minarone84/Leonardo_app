@@ -86,6 +86,11 @@ def test_ohlcv_maintenance_window_exposes_confirmed_repair_execution() -> None:
     assert "candles.meta.json may be rewritten" in source
     assert "Final validation status" in source
     assert "Cache invalidated" in source
+    assert "Repair outcome" in source
+    assert "Source-Invalid Candles" in source
+    assert "source_invalid_anchors" in source
+    assert "No local correction was applied." in source
+    assert "Dataset remains Error." in source
 
 
 def test_ohlcv_maintenance_window_centralizes_action_state_and_row_styling() -> None:

@@ -174,6 +174,7 @@ class OhlcvRepairExecutionReport:
 
     dataset: OhlcvDatasetSummary
     action: str
+    repair_outcome: str
     csv_path: Path
     metadata_path: Path
     message: str
@@ -188,6 +189,8 @@ class OhlcvRepairExecutionReport:
     metadata_update_error: str = ""
     cache_invalidated: bool = False
     warnings: tuple[str, ...] = ()
+    source_invalid: bool = False
+    source_invalid_anchors: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -388,21 +391,25 @@ class HistoricalOhlcvMaintenanceService:
 
         final_validation = self.validate_ohlcv(summary.dataset_id)
         cache_invalidated = self._dataset_service.invalidate_dataset_cache(summary.dataset_id)
-        warnings = self._repair_execution_warnings(
+        final_candles = self._store.read(summary.csv_path)
+        repair_outcome, source_invalid_anchors, warnings = self._repair_execution_classification(
             ranges=plan.ranges,
             range_results=tuple(range_results),
             before_by_ts=before_by_ts,
-            final_candles=self._store.read(summary.csv_path),
+            final_candles=final_candles,
+            final_validation_status=final_validation.status,
+            final_issue_messages_by_ts=self._validation_issue_messages_by_ts(
+                final_validation.issues,
+                self._store.read_ts_ms_by_row(summary.csv_path),
+            ),
         )
         return OhlcvRepairExecutionReport(
             dataset=summary,
             action="execute_ohlcv_repair",
+            repair_outcome=repair_outcome,
             csv_path=summary.csv_path,
             metadata_path=summary.metadata_path,
-            message=(
-                f"Executed OHLCV repair for {summary.exchange} / {summary.market_type} / "
-                f"{summary.symbol} / {summary.timeframe}."
-            ),
+            message=self._repair_execution_message(summary, repair_outcome),
             ranges_requested=len(plan.ranges),
             ranges_completed=len(range_results),
             range_results=tuple(range_results),
@@ -414,6 +421,8 @@ class HistoricalOhlcvMaintenanceService:
             metadata_update_error=final_validation.metadata_update_error,
             cache_invalidated=bool(cache_invalidated),
             warnings=warnings,
+            source_invalid=repair_outcome == "source_invalid",
+            source_invalid_anchors=source_invalid_anchors,
         )
 
     def delete_ohlcv(self, dataset_id: DatasetId) -> OhlcvMutationReport:
@@ -650,24 +659,44 @@ class HistoricalOhlcvMaintenanceService:
             return None
         return int((end_ts_ms - start_ts_ms) // step_ms) + 1
 
-    def _repair_execution_warnings(
+    def _repair_execution_classification(
         self,
         *,
         ranges: tuple[OhlcvRepairRange, ...],
         range_results: tuple[OhlcvRepairExecutionRange, ...],
         before_by_ts: dict[int, Candle],
         final_candles: list[Candle],
-    ) -> tuple[str, ...]:
+        final_validation_status: str,
+        final_issue_messages_by_ts: dict[int, tuple[str, ...]],
+    ) -> tuple[str, tuple[int, ...], tuple[str, ...]]:
         final_by_ts = {candle.ts_ms: candle for candle in final_candles}
         warnings: list[str] = []
+        no_replacement_rows = False
+        coverage_missing_anchor = False
+        incomplete_ranges = len(range_results) < len(ranges)
+        source_invalid_anchors: list[int] = []
         for index, repair_range in enumerate(ranges, start=1):
             result = range_results[index - 1] if index <= len(range_results) else None
+            if result is None:
+                warnings.append(f"Range {index} did not return a repair result.")
+                continue
+
             if result is not None and result.downloaded_bars == 0:
+                no_replacement_rows = True
                 warnings.append(
                     f"Range {index} fetched no exchange candles; existing rows in the repair range were not replaced."
                 )
+                continue
 
             for ts_ms in repair_range.anchor_ts_ms:
+                coverage_includes_anchor = self._downloaded_coverage_includes(result, ts_ms)
+                if not coverage_includes_anchor:
+                    coverage_missing_anchor = True
+                    warnings.append(
+                        f"Range {index} downloaded coverage did not include validation anchor ts_ms {ts_ms}; "
+                        "repair could not prove replacement of the bad candle."
+                    )
+
                 final_candle = final_by_ts.get(ts_ms)
                 if final_candle is None:
                     warnings.append(f"Range {index} no longer contains validation anchor ts_ms {ts_ms}.")
@@ -677,7 +706,82 @@ class HistoricalOhlcvMaintenanceService:
                     warnings.append(
                         f"Range {index} left validation anchor ts_ms {ts_ms} unchanged after repair."
                     )
-        return tuple(dict.fromkeys(warnings))
+
+                issue_messages = final_issue_messages_by_ts.get(ts_ms, ())
+                if final_validation_status == "error" and coverage_includes_anchor and issue_messages:
+                    source_invalid_anchors.append(ts_ms)
+                    warnings.append(
+                        f"Source-invalid candle detected at ts_ms {ts_ms}: {'; '.join(issue_messages)}. "
+                        "The repair range was redownloaded from the exchange, but the replacement candle still "
+                        "violates OHLC validation. No local correction was applied. Dataset remains invalid."
+                    )
+
+        if final_validation_status == "ok":
+            repair_outcome = "repaired_ok"
+        elif incomplete_ranges:
+            repair_outcome = "repair_failed"
+        elif no_replacement_rows:
+            repair_outcome = "no_replacement_rows"
+        elif coverage_missing_anchor:
+            repair_outcome = "coverage_missing_anchor"
+        elif source_invalid_anchors:
+            repair_outcome = "source_invalid"
+        elif final_validation_status == "warning":
+            repair_outcome = "repaired_warning"
+        else:
+            repair_outcome = "validation_failed"
+
+        return (
+            repair_outcome,
+            tuple(sorted(set(source_invalid_anchors))),
+            tuple(dict.fromkeys(warnings)),
+        )
+
+    def _validation_issue_messages_by_ts(
+        self,
+        issues: tuple[OhlcvValidationIssue, ...],
+        row_timestamps: tuple[int | None, ...],
+    ) -> dict[int, tuple[str, ...]]:
+        messages_by_ts: dict[int, list[str]] = {}
+        for issue in issues:
+            row_index = self._row_index_for_issue(issue)
+            if row_index is None or row_index < 0 or row_index >= len(row_timestamps):
+                continue
+            ts_ms = row_timestamps[row_index]
+            if ts_ms is None:
+                continue
+            messages_by_ts.setdefault(ts_ms, []).append(f"{issue.severity}: {issue.message}")
+        return {ts_ms: tuple(messages) for ts_ms, messages in messages_by_ts.items()}
+
+    @staticmethod
+    def _downloaded_coverage_includes(result: OhlcvRepairExecutionRange | None, ts_ms: int) -> bool:
+        if result is None:
+            return False
+        if result.downloaded_first_ts_ms is None or result.downloaded_last_ts_ms is None:
+            return False
+        return int(result.downloaded_first_ts_ms) <= int(ts_ms) <= int(result.downloaded_last_ts_ms)
+
+    def _repair_execution_message(self, summary: OhlcvDatasetSummary, repair_outcome: str) -> str:
+        dataset = f"{summary.exchange} / {summary.market_type} / {summary.symbol} / {summary.timeframe}"
+        if repair_outcome == "repaired_ok":
+            return f"Repair completed and post-repair validation passed for {dataset}."
+        if repair_outcome == "source_invalid":
+            return (
+                "Repair executed, but validation still failed because the exchange data still contains "
+                f"invalid candle(s) for {dataset}."
+            )
+        if repair_outcome == "coverage_missing_anchor":
+            return (
+                "Repair executed, but downloaded coverage did not include one or more validation anchor "
+                f"candles for {dataset}."
+            )
+        if repair_outcome == "no_replacement_rows":
+            return f"Repair executed, but no replacement candles were fetched for {dataset}."
+        if repair_outcome == "repair_failed":
+            return f"Repair did not complete all planned ranges for {dataset}."
+        if repair_outcome == "repaired_warning":
+            return f"Repair executed; post-repair validation completed with warnings for {dataset}."
+        return f"Repair executed, but post-repair validation still failed for {dataset}."
 
     def _row_index_for_issue(self, issue: OhlcvValidationIssue) -> int | None:
         match = _VALIDATION_ROW_RE.search(issue.message)

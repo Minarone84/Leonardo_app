@@ -408,11 +408,54 @@ class OHLCVMaintenanceWindow(QMainWindow):
         available = screen.availableGeometry()
         if not available.isValid():
             return
-        width = max(self.minimumWidth(), available.width() // 3)
+        width = max(self.minimumWidth(), available.width() // 2)
         width = min(width, available.width())
         height = available.height()
-        self.setGeometry(available.left(), available.top(), width, height)
+        x = available.left() + (available.width() - width) // 2
+        self.resize(width, height)
+        self.move(x, available.top())
         self._initial_geometry_applied = True
+        QTimer.singleShot(0, lambda: self._fit_initial_frame_inside_available_geometry(screen))
+
+    def _fit_initial_frame_inside_available_geometry(self, screen: object) -> None:
+        available = screen.availableGeometry()
+        if not available.isValid():
+            return
+
+        frame = self.frameGeometry()
+        if not frame.isValid():
+            return
+
+        width = self.width()
+        height = self.height()
+        frame_width_delta = max(0, frame.width() - self.width())
+        frame_height_delta = max(0, frame.height() - self.height())
+        if frame.width() > available.width():
+            width = max(self.minimumWidth(), available.width() - frame_width_delta)
+        if frame.height() > available.height():
+            height = max(self.minimumHeight(), available.height() - frame_height_delta)
+        if width != self.width() or height != self.height():
+            self.resize(width, height)
+            frame = self.frameGeometry()
+
+        target_left = available.left() + (available.width() - frame.width()) // 2
+        target_top = frame.top()
+        if frame.top() < available.top():
+            target_top += available.top() - frame.top()
+        if frame.bottom() > available.bottom():
+            target_top -= frame.bottom() - available.bottom()
+        target_top = max(available.top(), target_top)
+
+        if frame.left() < available.left():
+            target_left = available.left()
+        if frame.right() > available.right():
+            target_left = min(target_left, available.right() - frame.width() + 1)
+        target_left = max(available.left(), target_left)
+
+        current_frame = self.frameGeometry()
+        client_dx = self.pos().x() - current_frame.left()
+        client_dy = self.pos().y() - current_frame.top()
+        self.move(target_left + client_dx, target_top + client_dy)
 
     def _apply_window_font_bump(self) -> None:
         font = QFont(self.font())

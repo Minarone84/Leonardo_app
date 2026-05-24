@@ -152,9 +152,19 @@ def test_ohlcv_maintenance_window_uses_local_opening_geometry_and_font_bump() ->
     assert "parent.screen()" in source
     assert "app.primaryScreen()" in source
     assert "screen.availableGeometry()" in source
-    assert "available.width() // 3" in source
+    assert "available.width() // 2" in source
+    assert "available.width() // 3" not in source
     assert "height = available.height()" in source
-    assert "self.setGeometry(available.left(), available.top(), width, height)" in source
+    assert "x = available.left() + (available.width() - width) // 2" in source
+    assert "self.resize(width, height)" in source
+    assert "self.move(x, available.top())" in source
+    assert "QTimer.singleShot(0, lambda: self._fit_initial_frame_inside_available_geometry(screen))" in source
+    assert "def _fit_initial_frame_inside_available_geometry" in source
+    assert "self.frameGeometry()" in source
+    assert "frame.top() < available.top()" in source
+    assert "frame.bottom() > available.bottom()" in source
+    assert "frame.left() < available.left()" in source
+    assert "frame.right() > available.right()" in source
     assert "showFullScreen" not in source
     assert "showMaximized" not in source
     assert "WindowStaysOnTopHint" not in source

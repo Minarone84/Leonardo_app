@@ -159,16 +159,16 @@ class CoreBridge(QObject):
         return Path(ctx.config.runtime.data_dir) / "historical"
 
     def list_historical_dataset_exchanges(self) -> list[str]:
-        """Return exchanges that have at least one Core-loadable OHLCV dataset."""
-        return self._historical_dataset_service().list_dataset_exchanges()
+        """Return exchanges that have at least one accepted OHLCV dataset."""
+        return self._historical_dataset_service().list_loadable_dataset_exchanges()
 
     def list_historical_dataset_market_types(self, exchange: str) -> list[str]:
         """Return market types available in the Core-owned historical dataset catalog."""
-        return self._historical_dataset_service().list_dataset_market_types(exchange)
+        return self._historical_dataset_service().list_loadable_dataset_market_types(exchange)
 
     def list_historical_dataset_symbols(self, exchange: str, market_type: str) -> list[str]:
         """Return symbols available in the Core-owned historical dataset catalog."""
-        return self._historical_dataset_service().list_dataset_symbols(exchange, market_type)
+        return self._historical_dataset_service().list_loadable_dataset_symbols(exchange, market_type)
 
     def list_historical_dataset_timeframes(
         self,
@@ -176,12 +176,24 @@ class CoreBridge(QObject):
         market_type: str,
         symbol: str,
     ) -> list[str]:
-        """Return timeframes available in the Core-owned historical dataset catalog."""
-        return self._historical_dataset_service().list_dataset_timeframes(
+        """Return accepted timeframes available in the Core-owned dataset catalog."""
+        return self._historical_dataset_service().list_loadable_dataset_timeframes(
             exchange,
             market_type,
             symbol,
         )
+
+    def historical_dataset_loadability(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> object:
+        """Return Core/data-owned OHLCV chart-load eligibility for one dataset."""
+        dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
+        return self._historical_dataset_service().dataset_loadability(dataset_id)
 
     def historical_dataset_exists(
         self,
@@ -191,9 +203,9 @@ class CoreBridge(QObject):
         symbol: str,
         timeframe: str,
     ) -> bool:
-        """Return whether Core can identify the exact OHLCV dataset value file."""
+        """Return whether Core accepts the exact OHLCV dataset for chart loading."""
         dataset_id = DatasetId(exchange, market_type, symbol, timeframe)
-        return self._historical_dataset_service().has_dataset(dataset_id)
+        return self._historical_dataset_service().dataset_loadability(dataset_id).loadable
 
     def list_historical_ohlcv_datasets(self) -> Future[object]:
         """Return read-only OHLCV dataset summaries through the Core boundary."""

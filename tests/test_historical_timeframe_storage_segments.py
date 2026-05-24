@@ -50,6 +50,22 @@ def test_dataset_service_resolves_month_storage_segment_to_canonical_timeframe(t
 
     store.write_atomic(store.file_path(paths.ensure_ohlcv_dir(minute)), _candles(), market=minute)
     store.write_atomic(store.file_path(paths.ensure_ohlcv_dir(month)), _candles(), market=month)
+    store.record_validation_result(
+        store.file_path(paths.ensure_ohlcv_dir(minute)),
+        market=minute,
+        status="ok",
+        row_count=len(_candles()),
+        issues=(),
+        validator="HistoricalDatasetValidator",
+    )
+    store.record_validation_result(
+        store.file_path(paths.ensure_ohlcv_dir(month)),
+        market=month,
+        status="ok",
+        row_count=len(_candles()),
+        issues=(),
+        validator="HistoricalDatasetValidator",
+    )
 
     partition_names = {
         child.name

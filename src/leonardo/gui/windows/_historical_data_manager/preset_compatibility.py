@@ -634,6 +634,46 @@ def _append_dataset_existence_issue(
     chart_index: int,
     dataset: Mapping[str, Any],
 ) -> None:
+    loadability_fn = getattr(core_bridge, "historical_dataset_loadability", None)
+    if callable(loadability_fn):
+        try:
+            loadability = loadability_fn(
+                exchange=str(dataset.get("exchange", "") or ""),
+                market_type=str(dataset.get("market_type", "") or ""),
+                symbol=str(dataset.get("symbol", "") or ""),
+                timeframe=str(dataset.get("timeframe", "") or ""),
+            )
+        except Exception as exc:
+            issues.append(
+                _broken(
+                    "dataset_preflight_failed",
+                    f"Chart {chart_index} dataset could not be validated: {exc!r}.",
+                    {"chart_index": chart_index, "dataset": dict(dataset)},
+                )
+            )
+            return
+
+        loadable = bool(
+            loadability.get("loadable")
+            if isinstance(loadability, Mapping)
+            else getattr(loadability, "loadable", False)
+        )
+        if not loadable:
+            reason = (
+                loadability.get("reason", "")
+                if isinstance(loadability, Mapping)
+                else getattr(loadability, "reason", "")
+            )
+            message = str(reason or "dataset is not accepted for chart loading").strip()
+            issues.append(
+                _broken(
+                    "blocked_ohlcv_dataset",
+                    f"Chart {chart_index} dataset is not loadable: {_dataset_text(dataset)}. {message}",
+                    {"chart_index": chart_index, "dataset": dict(dataset)},
+                )
+            )
+        return
+
     exists_fn = getattr(core_bridge, "historical_dataset_exists", None)
     if not callable(exists_fn):
         issues.append(

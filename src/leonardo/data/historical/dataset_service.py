@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import csv
+import json
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -11,10 +12,14 @@ import time
 
 import pandas as pd
 
+from leonardo.data.historical.artifact_metadata_contracts import HistoricalCsvArtifactManifest
+from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.paths import (
     storage_segment_to_timeframe,
     timeframe_to_storage_segment,
 )
+from leonardo.data.historical.store_csv import CsvOHLCVStore
+from leonardo.data.naming import MarketId
 
 
 @dataclass(frozen=True)
@@ -34,6 +39,27 @@ class DatasetMeta:
     last_ts_ms: int
     count: int
     path: str
+
+
+LOADABLE_OHLCV_VALIDATION_STATUSES: frozenset[str] = frozenset({"ok", "modified"})
+BLOCKED_OHLCV_VALIDATION_STATUSES: frozenset[str] = frozenset(
+    {"unknown", "not_validated", "warning", "error"}
+)
+
+
+@dataclass(frozen=True)
+class DatasetLoadability:
+    dataset_id: DatasetId
+    loadable: bool
+    validation_status: str
+    reason: str
+    csv_path: str
+    metadata_path: str
+
+
+def is_ohlcv_dataset_loadable(validation_status: str | None) -> bool:
+    """Return whether a metadata validation status is accepted for chart loading."""
+    return str(validation_status or "").strip().lower() in LOADABLE_OHLCV_VALIDATION_STATUSES
 
 
 @dataclass(frozen=True)
@@ -129,6 +155,7 @@ class HistoricalDatasetService:
     ) -> None:
         self._data_root = data_root
         self._slice_cache = LruSliceCache(max_entries=slice_cache_entries)
+        self._store = CsvOHLCVStore()
 
         # Per-dataset in-memory store: ts and OHLCV columns
         self._datasets: Dict[Tuple[str, str, str, str], Dict[str, object]] = {}
@@ -167,8 +194,127 @@ class HistoricalDatasetService:
     def _partition_has_candles_file(partition_path: Path) -> bool:
         return (partition_path / "ohlcv" / "candles.csv").is_file()
 
+    def dataset_loadability(self, dataset_id: DatasetId) -> DatasetLoadability:
+        """Return whether one OHLCV dataset is accepted for chart loading.
+
+        The chart loader accepts only explicitly validated datasets whose
+        validation fingerprint still matches the current CSV. Download-time
+        preliminary validation is intentionally ignored here; the persisted
+        metadata validation block is the acceptance boundary.
+        """
+        self._safe_catalog_segment(dataset_id.exchange, label="exchange")
+        self._safe_catalog_segment(dataset_id.market_type, label="market_type")
+        self._safe_catalog_segment(dataset_id.symbol, label="symbol")
+        self._safe_catalog_segment(dataset_id.timeframe, label="timeframe")
+
+        csv_path = self._resolve_path(dataset_id)
+        metadata_path = metadata_path_for_csv(csv_path)
+
+        def blocked(status: str, reason: str) -> DatasetLoadability:
+            return DatasetLoadability(
+                dataset_id=dataset_id,
+                loadable=False,
+                validation_status=status,
+                reason=reason,
+                csv_path=str(csv_path),
+                metadata_path=str(metadata_path),
+            )
+
+        if not csv_path.is_file():
+            return blocked("unknown", "OHLCV candles.csv is missing.")
+        if not metadata_path.is_file():
+            return blocked(
+                "unknown",
+                "This OHLCV dataset has no metadata sidecar. Open Historical \u2192 OHLCV Maintenance to rebuild metadata and validate it.",
+            )
+
+        market = MarketId(
+            exchange=dataset_id.exchange,
+            market_type=dataset_id.market_type,
+            symbol=dataset_id.symbol,
+            timeframe=dataset_id.timeframe,
+        )
+        local_state = self._store.inspect(csv_path, market=market, repair_metadata=False)
+        if not local_state.metadata_valid:
+            issue_text = "; ".join(local_state.issues) if local_state.issues else "metadata could not be validated"
+            return blocked(
+                "unknown",
+                f"This OHLCV dataset metadata is missing, unreadable, mismatched, or stale: {issue_text}. Open Historical \u2192 OHLCV Maintenance to inspect it.",
+            )
+
+        manifest = self._load_manifest(metadata_path)
+        if manifest is None:
+            return blocked(
+                "unknown",
+                "This OHLCV dataset metadata is unreadable. Open Historical \u2192 OHLCV Maintenance to rebuild metadata and validate it.",
+            )
+
+        validation_status = str(manifest.validation.status or "unknown").strip().lower()
+        if not is_ohlcv_dataset_loadable(validation_status):
+            return blocked(
+                validation_status,
+                self._blocked_validation_reason(validation_status),
+            )
+
+        current_fingerprint = self._store.file_fingerprint(csv_path)
+        validation_fingerprint = manifest.validation.csv_fingerprint
+        if validation_fingerprint.size_bytes != current_fingerprint.size_bytes:
+            return blocked(
+                "unknown",
+                "This OHLCV dataset changed after validation. Re-run validation in OHLCV Maintenance.",
+            )
+        if validation_fingerprint.modified_at_ms != current_fingerprint.modified_at_ms:
+            return blocked(
+                "unknown",
+                "This OHLCV dataset changed after validation. Re-run validation in OHLCV Maintenance.",
+            )
+
+        reason = (
+            "Modified: valid after documented source correction."
+            if validation_status == "modified"
+            else "Dataset is manually validated and loadable."
+        )
+        return DatasetLoadability(
+            dataset_id=dataset_id,
+            loadable=True,
+            validation_status=validation_status,
+            reason=reason,
+            csv_path=str(csv_path),
+            metadata_path=str(metadata_path),
+        )
+
+    def _load_manifest(self, metadata_path: Path) -> HistoricalCsvArtifactManifest | None:
+        try:
+            with Path(metadata_path).open("r", encoding="utf-8") as handle:
+                return HistoricalCsvArtifactManifest.from_dict(json.load(handle))
+        except Exception:
+            return None
+
+    @staticmethod
+    def _blocked_validation_reason(validation_status: str) -> str:
+        status = str(validation_status or "unknown").strip().lower()
+        if status in {"unknown", "not_validated"}:
+            return (
+                "This OHLCV dataset has not been manually validated. "
+                "Open Historical \u2192 OHLCV Maintenance and run Analyze Checked."
+            )
+        if status == "error":
+            return (
+                "This OHLCV dataset failed validation. "
+                "Open Historical \u2192 OHLCV Maintenance to repair or source-correct it."
+            )
+        if status == "warning":
+            return (
+                "This OHLCV dataset has validation warnings and is blocked until a loading policy is approved. "
+                "Open Historical \u2192 OHLCV Maintenance to review it."
+            )
+        return (
+            "This OHLCV dataset is not accepted for chart loading. "
+            "Open Historical \u2192 OHLCV Maintenance to inspect it."
+        )
+
     def list_dataset_exchanges(self) -> List[str]:
-        """Return exchanges with at least one loadable OHLCV dataset.
+        """Return exchanges with at least one strict OHLCV dataset.
 
         This is the Core/data-owned dataset catalog surface for GUI selection.
         The GUI must consume this API instead of walking storage folders itself.
@@ -181,7 +327,7 @@ class HistoricalDatasetService:
         return exchanges
 
     def list_dataset_market_types(self, exchange: str) -> List[str]:
-        """Return market types with at least one loadable OHLCV dataset."""
+        """Return market types with at least one strict OHLCV dataset."""
         exchange_name = self._safe_catalog_segment(exchange, label="exchange")
         exchange_path = self._catalog_root() / exchange_name
         market_types: List[str] = []
@@ -191,7 +337,7 @@ class HistoricalDatasetService:
         return market_types
 
     def list_dataset_symbols(self, exchange: str, market_type: str) -> List[str]:
-        """Return symbols/assets with at least one loadable OHLCV dataset."""
+        """Return symbols/assets with at least one strict OHLCV dataset."""
         exchange_name = self._safe_catalog_segment(exchange, label="exchange")
         market_type_name = self._safe_catalog_segment(market_type, label="market_type")
         symbol_root = self._catalog_root() / exchange_name / market_type_name
@@ -203,6 +349,50 @@ class HistoricalDatasetService:
 
     def list_dataset_timeframes(self, exchange: str, market_type: str, symbol: str) -> List[str]:
         """Return timeframes whose partition contains strict ``ohlcv/candles.csv``."""
+        return self._list_dataset_timeframes(exchange, market_type, symbol, loadable_only=False)
+
+    def list_loadable_dataset_exchanges(self) -> List[str]:
+        """Return exchanges with at least one accepted OHLCV dataset."""
+        root = self._catalog_root()
+        exchanges: List[str] = []
+        for exchange_name in self._list_child_directories(root):
+            if self.list_loadable_dataset_market_types(exchange_name):
+                exchanges.append(exchange_name)
+        return exchanges
+
+    def list_loadable_dataset_market_types(self, exchange: str) -> List[str]:
+        """Return market types with at least one accepted OHLCV dataset."""
+        exchange_name = self._safe_catalog_segment(exchange, label="exchange")
+        exchange_path = self._catalog_root() / exchange_name
+        market_types: List[str] = []
+        for market_type_name in self._list_child_directories(exchange_path):
+            if self.list_loadable_dataset_symbols(exchange_name, market_type_name):
+                market_types.append(market_type_name)
+        return market_types
+
+    def list_loadable_dataset_symbols(self, exchange: str, market_type: str) -> List[str]:
+        """Return symbols/assets with at least one accepted OHLCV dataset."""
+        exchange_name = self._safe_catalog_segment(exchange, label="exchange")
+        market_type_name = self._safe_catalog_segment(market_type, label="market_type")
+        symbol_root = self._catalog_root() / exchange_name / market_type_name
+        symbols: List[str] = []
+        for symbol_name in self._list_child_directories(symbol_root):
+            if self.list_loadable_dataset_timeframes(exchange_name, market_type_name, symbol_name):
+                symbols.append(symbol_name)
+        return symbols
+
+    def list_loadable_dataset_timeframes(self, exchange: str, market_type: str, symbol: str) -> List[str]:
+        """Return accepted timeframes whose OHLCV metadata permits chart loading."""
+        return self._list_dataset_timeframes(exchange, market_type, symbol, loadable_only=True)
+
+    def _list_dataset_timeframes(
+        self,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        *,
+        loadable_only: bool,
+    ) -> List[str]:
         exchange_name = self._safe_catalog_segment(exchange, label="exchange")
         market_type_name = self._safe_catalog_segment(market_type, label="market_type")
         symbol_name = self._safe_catalog_segment(symbol, label="symbol")
@@ -217,7 +407,15 @@ class HistoricalDatasetService:
             except ValueError:
                 timeframe = storage_segment
             partition_path = asset_path / storage_segment
-            if self._partition_has_candles_file(partition_path):
+            dataset_id = DatasetId(
+                exchange=exchange_name,
+                market_type=market_type_name,
+                symbol=symbol_name,
+                timeframe=timeframe,
+            )
+            if self._partition_has_candles_file(partition_path) and (
+                not loadable_only or self.dataset_loadability(dataset_id).loadable
+            ):
                 if timeframe not in seen_timeframes:
                     seen_timeframes.add(timeframe)
                     timeframes.append(timeframe)
@@ -225,9 +423,6 @@ class HistoricalDatasetService:
 
     def has_dataset(self, dataset_id: DatasetId) -> bool:
         """Return whether a dataset has the strict OHLCV value file expected by Core."""
-        # Validate the identity even though the final path resolution also uses
-        # these fields.  Catalog validation belongs in the data service so the
-        # GUI does not need filesystem-layout knowledge.
         self._safe_catalog_segment(dataset_id.exchange, label="exchange")
         self._safe_catalog_segment(dataset_id.market_type, label="market_type")
         self._safe_catalog_segment(dataset_id.symbol, label="symbol")
@@ -294,6 +489,13 @@ class HistoricalDatasetService:
         """
         key = dataset_id.key()
         async with self._dataset_lock(key):
+            loadability = self.dataset_loadability(dataset_id)
+            if not loadability.loadable:
+                raise PermissionError(
+                    "Historical OHLCV dataset is not accepted for chart loading: "
+                    f"{loadability.reason}"
+                )
+
             cached = self._datasets.get(key)
             if cached is not None:
                 meta: DatasetMeta = cached["meta"]  # type: ignore[assignment]

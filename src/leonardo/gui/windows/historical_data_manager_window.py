@@ -70,6 +70,11 @@ class HistoricalChartSelectionDialog(QDialog):
     CoreBridge → HistoricalDatasetService dataset catalog
     """
 
+    NO_LOADABLE_DATASETS_MESSAGE = (
+        "No validated OHLCV datasets available. "
+        "Open Historical \u2192 OHLCV Maintenance to validate, repair, or source-correct datasets."
+    )
+
     def __init__(
         self,
         *,
@@ -210,7 +215,7 @@ class HistoricalChartSelectionDialog(QDialog):
         if has_values:
             self._set_info_text("Select an exchange to continue.")
         else:
-            self._set_info_text("No historical OHLCV datasets were found.")
+            self._set_info_text(self.NO_LOADABLE_DATASETS_MESSAGE)
 
     def _populate_market_types(self, exchange_name: str) -> None:
         if self._market_type_combo is None:
@@ -241,7 +246,10 @@ class HistoricalChartSelectionDialog(QDialog):
         if market_type_names:
             self._set_info_text("Select a market type.")
         else:
-            self._set_info_text("No market types are available for this exchange.")
+            self._set_info_text(
+                "No validated OHLCV datasets are available for this exchange. "
+                "Open Historical \u2192 OHLCV Maintenance to analyze/validate or repair/source-correct datasets."
+            )
 
     def _populate_assets(self, exchange_name: str, market_type_name: str) -> None:
         if self._asset_combo is None:
@@ -272,7 +280,10 @@ class HistoricalChartSelectionDialog(QDialog):
         if asset_names:
             self._set_info_text("Select an asset.")
         else:
-            self._set_info_text("No assets are available for this exchange/market type.")
+            self._set_info_text(
+                "No validated OHLCV datasets are available for this exchange/market type. "
+                "Open Historical \u2192 OHLCV Maintenance to analyze/validate or repair/source-correct datasets."
+            )
 
     def _populate_timeframes(
         self,
@@ -298,14 +309,26 @@ class HistoricalChartSelectionDialog(QDialog):
             return
 
         for timeframe_name in timeframe_names:
-            self._timeframe_combo.addItem(timeframe_name, timeframe_name)
+            loadability = self._dataset_loadability(
+                exchange=exchange_name,
+                market_type=market_type_name,
+                symbol=asset_name,
+                timeframe=timeframe_name,
+            )
+            self._timeframe_combo.addItem(
+                self._timeframe_display_name(timeframe_name, loadability),
+                timeframe_name,
+            )
 
         self._timeframe_combo.setEnabled(self._timeframe_combo.count() > 1)
         self._update_load_button_state()
         if timeframe_names:
             self._set_info_text("Select a timeframe.")
         else:
-            self._set_info_text("No timeframes are available for this asset.")
+            self._set_info_text(
+                "No validated OHLCV datasets are available for this asset. "
+                "Open Historical \u2192 OHLCV Maintenance to analyze/validate or repair/source-correct datasets."
+            )
 
     def _on_exchange_changed(self) -> None:
         exchange_name = self._current_data(self._exchange_combo)
@@ -380,7 +403,7 @@ class HistoricalChartSelectionDialog(QDialog):
             return
 
         try:
-            exists = self._core.historical_dataset_exists(
+            loadability = self._dataset_loadability(
                 exchange=selected_exchange,
                 market_type=selected_market_type,
                 symbol=selected_asset,
@@ -394,11 +417,16 @@ class HistoricalChartSelectionDialog(QDialog):
             )
             return
 
-        if not exists:
+        if not self._loadability_is_loadable(loadability):
+            reason = self._loadability_reason(loadability)
             QMessageBox.warning(
                 self,
                 "Load Data",
-                "Selected dataset is not available through the Core historical dataset service.",
+                reason
+                or (
+                    "Selected OHLCV dataset is not accepted for chart loading. "
+                    "Open Historical \u2192 OHLCV Maintenance to analyze/validate or repair/source-correct it."
+                ),
             )
             return
 
@@ -453,6 +481,67 @@ class HistoricalChartSelectionDialog(QDialog):
     def _set_info_text(self, text: str) -> None:
         if self._info_label is not None:
             self._info_label.setText(text)
+
+    def _dataset_loadability(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> object:
+        loadability_fn = getattr(self._core, "historical_dataset_loadability", None)
+        if callable(loadability_fn):
+            return loadability_fn(
+                exchange=exchange,
+                market_type=market_type,
+                symbol=symbol,
+                timeframe=timeframe,
+            )
+
+        exists_fn = getattr(self._core, "historical_dataset_exists", None)
+        if callable(exists_fn):
+            return {
+                "loadable": bool(
+                    exists_fn(
+                        exchange=exchange,
+                        market_type=market_type,
+                        symbol=symbol,
+                        timeframe=timeframe,
+                    )
+                ),
+                "validation_status": "",
+                "reason": "",
+            }
+        return {"loadable": False, "validation_status": "", "reason": ""}
+
+    def _timeframe_display_name(self, timeframe: str, loadability: object) -> str:
+        status = self._loadability_validation_status(loadability)
+        if status == "modified":
+            return f"{timeframe} (Modified)"
+        return timeframe
+
+    @staticmethod
+    def _loadability_is_loadable(loadability: object) -> bool:
+        if isinstance(loadability, Mapping):
+            return bool(loadability.get("loadable"))
+        return bool(getattr(loadability, "loadable", False))
+
+    @staticmethod
+    def _loadability_validation_status(loadability: object) -> str:
+        if isinstance(loadability, Mapping):
+            value = loadability.get("validation_status")
+        else:
+            value = getattr(loadability, "validation_status", "")
+        return str(value or "").strip().lower()
+
+    @staticmethod
+    def _loadability_reason(loadability: object) -> str:
+        if isinstance(loadability, Mapping):
+            value = loadability.get("reason")
+        else:
+            value = getattr(loadability, "reason", "")
+        return str(value or "").strip()
 
     @staticmethod
     def _reset_combo(combo: Optional[QComboBox], placeholder: str = "") -> None:

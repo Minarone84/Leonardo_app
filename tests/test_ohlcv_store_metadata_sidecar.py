@@ -111,3 +111,42 @@ def test_ohlcv_store_reads_csv_order_timestamps_without_ohlcv_parsing(tmp_path: 
     )
 
     assert CsvOHLCVStore().read_ts_ms_by_row(csv_path) == (3000, None, 1000)
+
+
+def test_ohlcv_store_records_source_corrections_and_modified_validation(tmp_path: Path):
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    csv_path = tmp_path / market.exchange / market.market_type / market.symbol / market.timeframe / "ohlcv" / "candles.csv"
+    store = CsvOHLCVStore()
+    store.write_atomic(csv_path, _candles(), market=market)
+
+    store.record_source_corrections(
+        csv_path,
+        market=market,
+        records=[
+            {
+                "ts_ms": 1_609_459_200_000,
+                "issue_code": "open_out_of_bounds",
+                "action": "adjust_ohlc_envelope",
+                "needs_source_recheck": True,
+                "original": {"open": 1.0, "high": 2.0, "low": 0.5, "close": 1.5, "volume": 10.0},
+                "corrected": {"open": 1.0, "high": 2.0, "low": 1.0, "close": 1.5, "volume": 10.0},
+            }
+        ],
+    )
+    store.record_validation_result(
+        csv_path,
+        market=market,
+        status="modified",
+        row_count=2,
+        issues=(),
+        validator="HistoricalDatasetValidator",
+        message_override="Dataset is valid after documented source correction.",
+    )
+
+    manifest = HistoricalCsvArtifactManifest.from_dict(
+        json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    )
+    assert manifest.validation.status == "modified"
+    assert manifest.quality.validation_status == "modified"
+    assert store.has_current_source_corrections(csv_path, market=market) is True
+    assert store.source_correction_records(csv_path, market=market)[0]["needs_source_recheck"] is True

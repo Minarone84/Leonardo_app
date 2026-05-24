@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -46,6 +47,22 @@ def _write_ohlcv(tmp_path: Path, *, timeframe: str = "1h") -> Path:
     csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
     CsvOHLCVStore().write_atomic(csv_path, _candles(), market=market)
     return csv_path
+
+
+def _write_ohlcv_rows(tmp_path: Path, candles: list[Candle], *, timeframe: str = "1m") -> Path:
+    market = canonicalize("bybit", "linear", "LINKUSDT", timeframe)
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    CsvOHLCVStore().write_atomic(csv_path, candles, market=market)
+    return csv_path
+
+
+def _source_correction_records(csv_path: Path) -> list[dict[str, object]]:
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    for entry in payload.get("metadata", []):
+        if entry.get("namespace") == "ohlcv" and entry.get("key") == "source_corrections":
+            return list(entry.get("value", []))
+    return []
 
 
 def test_maintenance_service_lists_canonical_ohlcv_datasets(tmp_path: Path) -> None:
@@ -269,6 +286,433 @@ def test_maintenance_service_repair_plan_keeps_unanchored_issues_read_only(tmp_p
     assert any("missing column: high" in issue.message for issue in plan.issues)
     assert any("no row timestamp anchor" in warning for warning in plan.warnings)
     assert not metadata_path_for_csv(csv_path).exists()
+
+
+def test_maintenance_service_plans_open_source_correction_from_previous_close(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.5, 25.0, 24.0, 24.633, 10.0),
+            Candle(120_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+        ],
+    )
+    before_csv = csv_path.read_text(encoding="utf-8")
+
+    plan = _service(tmp_path).plan_ohlcv_source_correction(
+        DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    )
+
+    assert plan.status == "error"
+    assert plan.actionable is True
+    assert plan.item_count == 1
+    assert plan.actionable_count == 1
+    item = plan.items[0]
+    assert item.ts_ms == 120_000
+    assert item.row_index == 1
+    assert item.issue_code == "open_out_of_bounds"
+    assert item.action == "adjust_ohlc_envelope"
+    assert item.method == "previous_close_context"
+    assert item.confidence == "high"
+    assert item.original is not None
+    assert item.original.low == 24.687
+    assert item.proposed is not None
+    assert item.proposed.open == 24.633
+    assert item.proposed.low == 24.633
+    assert item.proposed.high == 24.718
+    assert item.context.previous_close == 24.633
+    assert item.context.current_open == 24.633
+    assert item.context.context_match is True
+    assert csv_path.read_text(encoding="utf-8") == before_csv
+
+
+def test_maintenance_service_marks_open_source_correction_ambiguous_without_context_match(
+    tmp_path: Path,
+) -> None:
+    _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.5, 25.0, 24.0, 24.0, 10.0),
+            Candle(120_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+        ],
+    )
+
+    plan = _service(tmp_path).plan_ohlcv_source_correction(
+        DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    )
+
+    assert plan.actionable is False
+    item = plan.items[0]
+    assert item.action == "ambiguous_no_action"
+    assert item.proposed is None
+    assert item.context.context_match is False
+    assert "Previous close does not approximately match" in item.reason
+
+
+def test_maintenance_service_plans_close_source_correction_from_next_open(tmp_path: Path) -> None:
+    _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 4.5, 5.0, 4.0, 4.8, 9.0),
+            Candle(120_000, 5.0, 6.0, 4.0, 7.0, 10.0),
+            Candle(180_000, 7.0, 7.5, 6.5, 7.2, 11.0),
+        ],
+    )
+
+    plan = _service(tmp_path).plan_ohlcv_source_correction(
+        DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    )
+
+    assert plan.actionable is True
+    item = plan.items[0]
+    assert item.issue_code == "close_out_of_bounds"
+    assert item.action == "adjust_ohlc_envelope"
+    assert item.method == "next_open_context"
+    assert item.proposed is not None
+    assert item.proposed.high == 7.0
+    assert item.context.next_open == 7.0
+    assert item.context.current_close == 7.0
+
+
+def test_maintenance_service_plans_low_high_envelope_source_correction_with_context(tmp_path: Path) -> None:
+    _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 9.5, 10.5, 9.0, 10.0, 8.0),
+            Candle(120_000, 10.0, 9.0, 11.0, 12.0, 9.0),
+            Candle(180_000, 12.0, 12.5, 11.5, 12.2, 10.0),
+        ],
+    )
+
+    plan = _service(tmp_path).plan_ohlcv_source_correction(
+        DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    )
+
+    low_high_item = next(item for item in plan.items if item.issue_code == "low_greater_than_high")
+    assert low_high_item.action == "adjust_ohlc_envelope"
+    assert low_high_item.method == "envelope_context"
+    assert low_high_item.actionable is True
+    assert low_high_item.proposed is not None
+    assert low_high_item.proposed.low == 9.0
+    assert low_high_item.proposed.high == 12.0
+    assert low_high_item.context.previous_close == 10.0
+    assert low_high_item.context.next_open == 12.0
+    assert low_high_item.context.context_match is True
+
+
+def test_maintenance_service_plans_initial_invalid_bar_drop(tmp_path: Path) -> None:
+    _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+            Candle(120_000, 24.687, 24.9, 24.6, 24.8, 90.0),
+        ],
+    )
+
+    plan = _service(tmp_path).plan_ohlcv_source_correction(
+        DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    )
+
+    assert plan.actionable is True
+    item = plan.items[0]
+    assert item.action == "drop_initial_invalid_bar"
+    assert item.method == "initial_bar_drop"
+    assert item.proposed is None
+    assert any("row count" in warning for warning in item.warnings)
+
+
+def test_maintenance_service_source_correction_items_are_oldest_to_newest(tmp_path: Path) -> None:
+    _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 10.0, 10.5, 9.5, 10.0, 8.0),
+            Candle(120_000, 10.0, 12.0, 11.0, 11.5, 9.0),
+            Candle(180_000, 11.5, 12.0, 11.0, 20.0, 10.0),
+            Candle(240_000, 20.0, 21.0, 19.5, 20.5, 11.0),
+        ],
+    )
+
+    plan = _service(tmp_path).plan_ohlcv_source_correction(
+        DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    )
+
+    assert [item.ts_ms for item in plan.items] == sorted(item.ts_ms for item in plan.items if item.ts_ms is not None)
+    assert [item.issue_code for item in plan.items] == ["open_out_of_bounds", "close_out_of_bounds"]
+
+
+def test_maintenance_service_source_correction_reports_unsupported_schema_issue(tmp_path: Path) -> None:
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    csv_path.parent.mkdir(parents=True, exist_ok=True)
+    csv_path.write_text("ts_ms,open\n60000,1\n", encoding="utf-8")
+
+    plan = _service(tmp_path).plan_ohlcv_source_correction(
+        DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    )
+
+    assert plan.status == "error"
+    assert plan.actionable is False
+    assert len(plan.items) == 1
+    item = plan.items[0]
+    assert item.issue_code == "missing_column"
+    assert item.action == "unsupported_no_action"
+    assert item.original is None
+    assert "not eligible" in item.reason
+    assert not metadata_path_for_csv(csv_path).exists()
+
+
+def test_maintenance_service_source_correction_reports_no_plan_for_valid_csv(tmp_path: Path) -> None:
+    _write_ohlcv(tmp_path, timeframe="1h")
+
+    plan = _service(tmp_path).plan_ohlcv_source_correction(
+        DatasetId("bybit", "linear", "LINKUSDT", "1h")
+    )
+
+    assert plan.status == "ok"
+    assert plan.actionable is False
+    assert plan.item_count == 0
+    assert plan.items == ()
+    assert "No validation errors" in plan.message
+
+
+def test_maintenance_service_executes_open_source_correction_and_stamps_modified(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.5, 25.0, 24.0, 24.633, 10.0),
+            Candle(120_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+        ],
+    )
+    dataset_service = _InvalidateTrackingDatasetService()
+    service = HistoricalOhlcvMaintenanceService(
+        historical_root=tmp_path / "historical",
+        dataset_service=dataset_service,  # type: ignore[arg-type]
+    )
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    report = service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), plan)
+
+    candles = CsvOHLCVStore().read(csv_path)
+    assert [(c.ts_ms, c.open, c.high, c.low, c.close, c.volume) for c in candles] == [
+        (60_000, 24.5, 25.0, 24.0, 24.633, 10.0),
+        (120_000, 24.633, 24.718, 24.633, 24.687, 128.7),
+    ]
+    assert report.status == "ok"
+    assert report.validation_status == "modified"
+    assert report.applied_count == 1
+    assert report.final_row_count == 2
+    assert report.metadata_updated is True
+    assert report.validation_metadata_updated is True
+    assert report.cache_invalidated is True
+    assert dataset_service.invalidated == [DatasetId("bybit", "linear", "LINKUSDT", "1m")]
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    assert payload["validation"]["status"] == "modified"
+    assert payload["validation"]["error_count"] == 0
+    assert "documented source correction" in payload["validation"]["message"]
+    records = _source_correction_records(csv_path)
+    assert len(records) == 1
+    assert records[0]["ts_ms"] == 120_000
+    assert records[0]["issue_code"] == "open_out_of_bounds"
+    assert records[0]["action"] == "adjust_ohlc_envelope"
+    assert records[0]["needs_source_recheck"] is True
+    assert records[0]["original"]["low"] == 24.687
+    assert records[0]["corrected"]["low"] == 24.633
+    assert records[0]["source"] == "bybit"
+
+
+def test_maintenance_service_executes_close_source_correction(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 4.5, 5.0, 4.0, 4.8, 9.0),
+            Candle(120_000, 5.0, 6.0, 4.0, 7.0, 10.0),
+            Candle(180_000, 7.0, 7.5, 6.5, 7.2, 11.0),
+        ],
+    )
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    report = service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), plan)
+
+    candles = CsvOHLCVStore().read(csv_path)
+    assert candles[1] == Candle(120_000, 5.0, 7.0, 4.0, 7.0, 10.0)
+    assert candles[0] == Candle(60_000, 4.5, 5.0, 4.0, 4.8, 9.0)
+    assert candles[2] == Candle(180_000, 7.0, 7.5, 6.5, 7.2, 11.0)
+    assert report.validation_status == "modified"
+    assert _source_correction_records(csv_path)[0]["method"] == "next_open_context"
+
+
+def test_maintenance_service_executes_initial_invalid_bar_drop(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+            Candle(120_000, 24.687, 24.9, 24.6, 24.8, 90.0),
+        ],
+    )
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    report = service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), plan)
+
+    candles = CsvOHLCVStore().read(csv_path)
+    assert candles == [Candle(120_000, 24.687, 24.9, 24.6, 24.8, 90.0)]
+    assert report.final_row_count == 1
+    assert report.validation_status == "modified"
+    record = _source_correction_records(csv_path)[0]
+    assert record["action"] == "drop_initial_invalid_bar"
+    assert record["corrected"] is None
+
+
+def test_maintenance_service_executes_multiple_source_corrections_oldest_to_newest(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 10.0, 10.5, 9.5, 10.0, 8.0),
+            Candle(120_000, 10.0, 12.0, 11.0, 11.5, 9.0),
+            Candle(180_000, 11.5, 12.0, 11.0, 20.0, 10.0),
+            Candle(240_000, 20.0, 21.0, 19.5, 20.5, 11.0),
+        ],
+    )
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    report = service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), plan)
+
+    assert [item.ts_ms for item in report.items] == [120_000, 180_000]
+    assert CsvOHLCVStore().read(csv_path)[1] == Candle(120_000, 10.0, 12.0, 10.0, 11.5, 9.0)
+    assert CsvOHLCVStore().read(csv_path)[2] == Candle(180_000, 11.5, 20.0, 11.0, 20.0, 10.0)
+    assert report.validation_status == "modified"
+    assert len(_source_correction_records(csv_path)) == 2
+
+
+def test_maintenance_service_source_correction_rejects_stale_plan(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.5, 25.0, 24.0, 24.633, 10.0),
+            Candle(120_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+        ],
+    )
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+    with csv_path.open("a", encoding="utf-8") as handle:
+        handle.write("180000,24.8,25,24.7,24.9,10\n")
+
+    try:
+        service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), plan)
+    except ValueError as exc:
+        assert "stale" in str(exc)
+    else:
+        raise AssertionError("execute_ohlcv_source_correction should reject a stale plan")
+
+
+def test_maintenance_service_source_correction_rejects_original_row_mismatch(tmp_path: Path) -> None:
+    _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.5, 25.0, 24.0, 24.633, 10.0),
+            Candle(120_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+        ],
+    )
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+    item = plan.items[0]
+    assert item.original is not None
+    mismatched_plan = replace(plan, items=(replace(item, original=replace(item.original, low=99.0)),))
+
+    try:
+        service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), mismatched_plan)
+    except ValueError as exc:
+        assert "no longer matches" in str(exc)
+    else:
+        raise AssertionError("execute_ohlcv_source_correction should reject row value mismatch")
+
+
+def test_maintenance_service_source_correction_rejects_non_actionable_plan(tmp_path: Path) -> None:
+    _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.5, 25.0, 24.0, 24.0, 10.0),
+            Candle(120_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+        ],
+    )
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+    assert plan.actionable is False
+
+    try:
+        service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), plan)
+    except ValueError as exc:
+        assert "no actionable" in str(exc)
+    else:
+        raise AssertionError("execute_ohlcv_source_correction should reject non-actionable plans")
+
+
+def test_maintenance_service_source_correction_stamps_error_when_final_validation_fails(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    csv_path = _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.5, 25.0, 24.0, 24.633, 10.0),
+            Candle(120_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+        ],
+    )
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    class _FinalErrorValidator:
+        step_ms = 60_000
+
+        def __init__(self, _timeframe: str) -> None:
+            pass
+
+        def validate(self, _path: Path):
+            return SimpleNamespace(
+                status="error",
+                row_count=2,
+                issues=[
+                    ValidationIssue(
+                        severity="error",
+                        message="remaining error at row 1",
+                        code="open_out_of_bounds",
+                        row_index=1,
+                        ts_ms=120_000,
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("leonardo.data.historical.ohlcv_maintenance.HistoricalDatasetValidator", _FinalErrorValidator)
+
+    report = service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), plan)
+
+    assert report.status == "error"
+    assert report.validation_status == "error"
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    assert payload["validation"]["status"] == "error"
+    assert _source_correction_records(csv_path)
+
+
+def test_maintenance_service_validate_preserves_modified_status_after_source_correction(tmp_path: Path) -> None:
+    csv_path = _write_ohlcv_rows(
+        tmp_path,
+        [
+            Candle(60_000, 24.5, 25.0, 24.0, 24.633, 10.0),
+            Candle(120_000, 24.633, 24.718, 24.687, 24.687, 128.7),
+        ],
+    )
+    service = _service(tmp_path)
+    plan = service.plan_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+    service.execute_ohlcv_source_correction(DatasetId("bybit", "linear", "LINKUSDT", "1m"), plan)
+
+    report = service.validate_ohlcv(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    assert report.status == "modified"
+    payload = json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    assert payload["validation"]["status"] == "modified"
+    assert service.list_ohlcv_datasets()[0].validation_status == "modified"
 
 
 def test_maintenance_service_executes_repair_plan_through_downloader_and_stamps_validation(

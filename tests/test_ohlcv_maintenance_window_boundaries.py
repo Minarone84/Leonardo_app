@@ -12,6 +12,8 @@ def test_ohlcv_maintenance_window_uses_core_bridge_not_data_layer_files() -> Non
     assert "rebuild_historical_ohlcv_metadata" in source
     assert "plan_historical_ohlcv_repair" in source
     assert "execute_historical_ohlcv_repair" in source
+    assert "plan_historical_ohlcv_source_correction" in source
+    assert "execute_historical_ohlcv_source_correction" in source
     assert "QMessageBox" in source
     assert "CsvOHLCVStore" not in source
     assert "HistoricalDatasetValidator" not in source
@@ -23,6 +25,29 @@ def test_ohlcv_maintenance_window_uses_core_bridge_not_data_layer_files() -> Non
     assert "remove(" not in source
     assert "rmtree(" not in source
     assert "write_text(" not in source
+
+
+def test_ohlcv_maintenance_window_exposes_source_correction_planning_and_execution_ui() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert 'QPushButton("Plan Source Correction"' in source
+    assert 'QPushButton("Apply Source Correction..."' in source
+    assert "def plan_source_correction_selected" in source
+    assert "def apply_source_correction_selected" in source
+    assert "plan_historical_ohlcv_source_correction" in source
+    assert "execute_historical_ohlcv_source_correction" in source
+    assert "def _format_source_correction_plan" in source
+    assert "def _format_source_correction_execution" in source
+    assert "class OhlcvSourceCorrectionConfirmDialog" in source
+    assert "Confirm Source Correction" in source
+    assert "Apply Source Correction" in source
+    assert "Source Correction Plan" in source
+    assert "Source Correction Execution Recap" in source
+    assert "This is a read-only plan. No CSV or metadata files were changed." in source
+    assert "Modified means the dataset validates after documented local source correction." in source
+    assert "This applies local source correction and changes OHLCV data." in source
+    assert "corrected_low" not in source
+    assert "corrected_high" not in source
 
 
 def test_ohlcv_maintenance_window_exposes_checked_batch_validation_status() -> None:
@@ -44,6 +69,7 @@ def test_ohlcv_maintenance_window_exposes_checked_batch_validation_status() -> N
     assert "def _start_validation_batch" in source
     assert "QProgressDialog" in source
     assert 'if status == "ok":\n            return "OK"' in source
+    assert 'if status == "modified":\n            return "Modified"' in source
     assert 'if status == "warning":\n            return "Warning"' in source
     assert 'if status == "error":\n            return "Error"' in source
     assert "def _apply_row_validation_style" in source
@@ -107,7 +133,10 @@ def test_ohlcv_maintenance_window_centralizes_action_state_and_row_styling() -> 
     assert "self._rebuild_metadata_button.setEnabled(checked_count == 1 and not busy)" in source
     assert "self._delete_button.setEnabled(checked_count == 1 and not busy)" in source
     assert "self._execute_repair_button.setEnabled(self._can_execute_checked_repair_plan() and not busy)" in source
+    assert "self._source_correction_plan_button.setEnabled(self._can_plan_source_correction() and not busy)" in source
+    assert "self._apply_source_correction_button.setEnabled(self._can_execute_source_correction_plan() and not busy)" in source
     assert "QColor(198, 239, 206)" in source
+    assert "QColor(189, 230, 238)" in source
     assert "QColor(0, 0, 0)" in source
     assert "QColor(156, 0, 6)" in source
     assert "QColor(255, 242, 128)" in source
@@ -125,6 +154,19 @@ def test_ohlcv_maintenance_window_requires_current_validation_before_repair_plan
     assert "current=True" in source
     assert "Run Analyze Checked for the checked dataset before planning repair" in source
     assert "self._repair_plan_button.setEnabled(checked_count == 1 and not busy)" not in source
+
+
+def test_ohlcv_maintenance_window_requires_current_error_before_source_correction_planning() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert "def _can_plan_source_correction" in source
+    assert "self._source_invalid_repair_keys: set[tuple[str, str, str, str]] = set()" in source
+    assert "self._source_invalid_repair_keys.add(key)" in source
+    assert "self._source_invalid_repair_keys.clear()" in source
+    assert "if key not in self._current_validation_keys:" in source
+    assert 'return self._validation_status_by_key.get(key) == "Error" and key in self._source_invalid_repair_keys' in source
+    assert "source-invalid is reported before source correction" in source
+    assert '"source_correction_plan"' in source
 
 
 def test_ohlcv_maintenance_window_preserves_repair_recap_after_auto_validation() -> None:

@@ -31,8 +31,8 @@ ArtifactMetadataStatus = Literal["explicit", "inferred", "unknown", "not_applica
 ArtifactToolIdentityStatus = Literal["explicit", "inferred", "unknown"]
 ArtifactSha256Status = Literal["computed", "not_computed", "unknown", "error"]
 ArtifactTimelineStatus = Literal["verified", "assumed_sorted", "unverified", "error"]
-ArtifactValidationStatus = Literal["not_validated", "ok", "warning", "error"]
-ArtifactValidationResultStatus = Literal["unknown", "ok", "warning", "error"]
+ArtifactValidationStatus = Literal["not_validated", "ok", "modified", "warning", "error"]
+ArtifactValidationResultStatus = Literal["unknown", "ok", "modified", "warning", "error"]
 JsonValue = Any
 
 _IDENTIFIER_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -689,7 +689,7 @@ class ArtifactValidationMetadata:
     message: str = ""
 
     def __post_init__(self) -> None:
-        if self.status not in {"unknown", "ok", "warning", "error"}:
+        if self.status not in {"unknown", "ok", "modified", "warning", "error"}:
             raise ValueError(f"Unsupported validation status: {self.status!r}")
         object.__setattr__(self, "validated_at", self.validated_at or format_ts_ms_utc(self.validated_at_ms))
         object.__setattr__(self, "validated_at_rome", self.validated_at_rome or format_ts_ms_rome(self.validated_at_ms))

@@ -20,6 +20,7 @@ from .artifact_metadata_contracts import (
     ArtifactFingerprint,
     ArtifactIdentity,
     ArtifactLineage,
+    ArtifactMetadataEntry,
     ArtifactQuality,
     ArtifactShape,
     ArtifactTimeRange,
@@ -34,6 +35,9 @@ from .artifact_metadata_naming import (
     new_unique_id,
 )
 from .paths import storage_segment_to_timeframe
+
+SOURCE_CORRECTIONS_METADATA_NAMESPACE = "ohlcv"
+SOURCE_CORRECTIONS_METADATA_KEY = "source_corrections"
 
 
 @dataclass(frozen=True)
@@ -306,6 +310,7 @@ class CsvOHLCVStore:
         row_count: int,
         issues: Iterable[tuple[str, str]],
         validator: str,
+        message_override: str | None = None,
     ) -> bool:
         """Persist an explicit validation result in the adjacent metadata sidecar."""
         csv_path = Path(file_path)
@@ -340,7 +345,7 @@ class CsvOHLCVStore:
             warning_count=warning_count,
             error_count=error_count,
             csv_fingerprint=fingerprint,
-            message=self._validation_message(issue_pairs),
+            message=str(message_override) if message_override else self._validation_message(issue_pairs),
         )
         quality_status = "not_validated" if canonical_status == "unknown" else canonical_status
         updated_manifest = replace(
@@ -354,6 +359,98 @@ class CsvOHLCVStore:
             validation=validation,
         )
         self._atomic_write_json(updated_manifest.to_dict(), metadata_path)
+        return True
+
+    def source_correction_records(
+        self,
+        file_path: Path,
+        *,
+        market: MarketId | None = None,
+    ) -> tuple[dict[str, object], ...]:
+        """
+        Return current source-correction provenance records from metadata.
+
+        Records are returned only when the sidecar identity and fingerprint still
+        match the CSV. Stale or mismatched metadata is treated as having no
+        current source-correction provenance.
+        """
+        csv_path = Path(file_path)
+        manifest = self._load_existing_manifest(metadata_path_for_csv(csv_path))
+        if manifest is None:
+            return ()
+        if self._manifest_issue_for_csv(manifest=manifest, file_path=csv_path, market=market) is not None:
+            return ()
+        return self._source_correction_records_from_manifest(manifest)
+
+    def has_current_source_corrections(
+        self,
+        file_path: Path,
+        *,
+        market: MarketId | None = None,
+    ) -> bool:
+        """Return whether metadata records current source corrections for the CSV."""
+        return bool(self.source_correction_records(file_path, market=market))
+
+    def record_source_corrections(
+        self,
+        file_path: Path,
+        *,
+        market: MarketId | None,
+        records: Iterable[dict[str, object]],
+        existing_records: Iterable[dict[str, object]] = (),
+    ) -> bool:
+        """
+        Append source-correction provenance to the adjacent metadata sidecar.
+
+        The helper preserves existing manifest fields, rebuilds stale sidecars
+        before writing, and stores correction history as artifact metadata under
+        the OHLCV namespace. CSV values are not read or modified by this method.
+        """
+        csv_path = Path(file_path)
+        if not csv_path.is_file():
+            raise FileNotFoundError(f"OHLCV CSV not found: {csv_path}")
+
+        metadata_path = metadata_path_for_csv(csv_path)
+        manifest = self._load_existing_manifest(metadata_path)
+        if manifest is not None and self._manifest_issue_for_csv(
+            manifest=manifest,
+            file_path=csv_path,
+            market=market,
+        ) is not None:
+            manifest = None
+        if manifest is None:
+            self.rebuild_metadata_sidecar(csv_path, market=market)
+            manifest = self._load_existing_manifest(metadata_path)
+        if manifest is None:
+            raise RuntimeError(f"Cannot update OHLCV source correction metadata: {metadata_path}")
+
+        merged_records = self._dedupe_source_correction_records(
+            tuple(dict(item) for item in existing_records)
+            + tuple(dict(item) for item in records)
+        )
+        metadata = tuple(
+            entry
+            for entry in manifest.metadata
+            if not (
+                entry.namespace == SOURCE_CORRECTIONS_METADATA_NAMESPACE
+                and entry.key == SOURCE_CORRECTIONS_METADATA_KEY
+            )
+        )
+        if merged_records:
+            metadata += (
+                ArtifactMetadataEntry(
+                    namespace=SOURCE_CORRECTIONS_METADATA_NAMESPACE,
+                    key=SOURCE_CORRECTIONS_METADATA_KEY,
+                    value=list(merged_records),
+                    label="OHLCV source corrections",
+                    description="Documented local corrections applied to source-invalid OHLCV candles.",
+                    tags=("source_correction", "ohlcv"),
+                    searchable=False,
+                    identity_affecting=False,
+                ),
+            )
+
+        self._atomic_write_json(replace(manifest, metadata=metadata).to_dict(), metadata_path)
         return True
 
     def _write_metadata_sidecar(
@@ -467,9 +564,47 @@ class CsvOHLCVStore:
 
     def _canonical_validation_status(self, status: str) -> str:
         value = str(status or "").strip().lower()
-        if value in {"ok", "warning", "error"}:
+        if value in {"ok", "modified", "warning", "error"}:
             return value
         return "unknown"
+
+    def _source_correction_records_from_manifest(
+        self,
+        manifest: HistoricalCsvArtifactManifest,
+    ) -> tuple[dict[str, object], ...]:
+        for entry in manifest.metadata:
+            if (
+                entry.namespace == SOURCE_CORRECTIONS_METADATA_NAMESPACE
+                and entry.key == SOURCE_CORRECTIONS_METADATA_KEY
+            ):
+                records = entry.value
+                if not isinstance(records, list):
+                    return ()
+                return tuple(dict(item) for item in records if isinstance(item, dict))
+        return ()
+
+    def _dedupe_source_correction_records(
+        self,
+        records: tuple[dict[str, object], ...],
+    ) -> tuple[dict[str, object], ...]:
+        out: list[dict[str, object]] = []
+        seen: set[str] = set()
+        for record in records:
+            key = json.dumps(
+                {
+                    "ts_ms": record.get("ts_ms"),
+                    "action": record.get("action"),
+                    "source_csv_fingerprint": record.get("source_csv_fingerprint"),
+                    "corrected_csv_fingerprint": record.get("corrected_csv_fingerprint"),
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(dict(record))
+        return tuple(out)
 
     def _validation_message(self, issues: tuple[tuple[str, str], ...]) -> str:
         if not issues:

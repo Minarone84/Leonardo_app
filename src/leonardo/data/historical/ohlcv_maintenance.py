@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 import uuid
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -24,6 +25,13 @@ from leonardo.data.naming import MarketId, canonicalize
 
 
 _VALIDATION_ROW_RE = re.compile(r"\brow\s+(\d+)\b")
+_SOURCE_CORRECTION_ELIGIBLE_CODES = {
+    "open_out_of_bounds",
+    "close_out_of_bounds",
+    "low_greater_than_high",
+}
+_SOURCE_CORRECTION_RELATIVE_TOLERANCE = 0.0001
+_SOURCE_CORRECTION_ABSOLUTE_TOLERANCE = 1e-12
 
 
 @dataclass(frozen=True)
@@ -199,6 +207,113 @@ class OhlcvRepairExecutionReport:
 
 
 @dataclass(frozen=True)
+class OhlcvSourceCorrectionValues:
+    """OHLCV values used by a read-only source-correction proposal."""
+
+    open: float
+    high: float
+    low: float
+    close: float
+    volume: float
+
+
+@dataclass(frozen=True)
+class OhlcvSourceCorrectionContext:
+    """Neighbor-candle context used to justify a source-correction item."""
+
+    previous_close: float | None = None
+    current_open: float | None = None
+    next_open: float | None = None
+    current_close: float | None = None
+    absolute_difference: float | None = None
+    tolerance: float | None = None
+    context_match: bool | None = None
+    previous_contiguous: bool | None = None
+    next_contiguous: bool | None = None
+
+
+@dataclass(frozen=True)
+class OhlcvSourceCorrectionItem:
+    """One read-only source-correction proposal or non-actionable finding."""
+
+    ts_ms: int | None
+    row_index: int | None
+    issue_code: str
+    issue_message: str
+    action: str
+    actionable: bool
+    confidence: str
+    method: str
+    original: OhlcvSourceCorrectionValues | None
+    proposed: OhlcvSourceCorrectionValues | None
+    context: OhlcvSourceCorrectionContext
+    reason: str
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OhlcvSourceCorrectionPlan:
+    """Read-only source-correction plan for source-invalid OHLCV candles."""
+
+    dataset: OhlcvDatasetSummary
+    status: str
+    actionable: bool
+    item_count: int
+    actionable_count: int
+    row_count: int
+    items: tuple[OhlcvSourceCorrectionItem, ...]
+    message: str
+    warnings: tuple[str, ...] = ()
+    csv_fingerprint_size_bytes: int | None = None
+    csv_fingerprint_modified_at_ms: int | None = None
+    generated_at_ms: int | None = None
+    relative_tolerance: float = _SOURCE_CORRECTION_RELATIVE_TOLERANCE
+    absolute_tolerance: float = _SOURCE_CORRECTION_ABSOLUTE_TOLERANCE
+
+
+@dataclass(frozen=True)
+class OhlcvSourceCorrectionExecutionItem:
+    """Execution result for one planned source-correction item."""
+
+    ts_ms: int | None
+    row_index: int | None
+    action: str
+    status: str
+    issue_code: str
+    original: OhlcvSourceCorrectionValues | None
+    corrected: OhlcvSourceCorrectionValues | None
+    message: str
+    warnings: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class OhlcvSourceCorrectionExecutionReport:
+    """Structured result for explicit OHLCV source-correction execution."""
+
+    dataset: OhlcvDatasetSummary
+    status: str
+    validation_status: str
+    action_count: int
+    applied_count: int
+    skipped_count: int
+    failed_count: int
+    final_row_count: int
+    metadata_updated: bool
+    validation_metadata_updated: bool
+    cache_invalidated: bool
+    csv_path: Path
+    metadata_path: Path
+    source_csv_fingerprint_size_bytes: int | None
+    source_csv_fingerprint_modified_at_ms: int | None
+    corrected_csv_fingerprint_size_bytes: int | None
+    corrected_csv_fingerprint_modified_at_ms: int | None
+    items: tuple[OhlcvSourceCorrectionExecutionItem, ...]
+    message: str
+    warnings: tuple[str, ...] = ()
+    errors: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class OhlcvMutationReport:
     """Structured result for one explicit OHLCV maintenance mutation."""
 
@@ -277,22 +392,24 @@ class HistoricalOhlcvMaintenanceService:
         """Validate one OHLCV dataset and persist explicit validation metadata."""
         summary = self._summary_for_dataset(dataset_id)
         report = HistoricalDatasetValidator(summary.timeframe).validate(summary.csv_path)
+        recorded_status = self._validation_status_for_metadata(summary, report.status)
         metadata_updated = False
         metadata_update_error = ""
         try:
             metadata_updated = self._store.record_validation_result(
                 summary.csv_path,
                 market=self._market_for_dataset(dataset_id),
-                status=report.status,
+                status=recorded_status,
                 row_count=report.row_count,
                 issues=tuple((issue.severity, issue.message) for issue in report.issues),
                 validator="HistoricalDatasetValidator",
+                message_override=self._validation_message_override(recorded_status, report.status),
             )
         except Exception as exc:
             metadata_update_error = f"{type(exc).__name__}: {exc}"
         return OhlcvValidationReport(
             dataset=summary,
-            status=report.status,
+            status=recorded_status,
             row_count=report.row_count,
             issues=tuple(
                 self._ohlcv_validation_issue(issue)
@@ -345,6 +462,81 @@ class HistoricalOhlcvMaintenanceService:
             warnings=warnings,
             csv_fingerprint_size_bytes=fingerprint.size_bytes,
             csv_fingerprint_modified_at_ms=fingerprint.modified_at_ms,
+        )
+
+    def plan_ohlcv_source_correction(self, dataset_id: DatasetId) -> OhlcvSourceCorrectionPlan:
+        """Build a read-only source-correction plan from current validation issues."""
+        summary = self._summary_for_dataset(dataset_id)
+        self._validate_ohlcv_targets(summary)
+        if not summary.csv_path.is_file():
+            raise FileNotFoundError(f"OHLCV CSV not found: {summary.csv_path}")
+
+        validator = HistoricalDatasetValidator(summary.timeframe)
+        report = validator.validate(summary.csv_path)
+        row_timestamps = self._store.read_ts_ms_by_row(summary.csv_path)
+        issues = tuple(
+            self._ohlcv_validation_issue(issue)
+            for issue in report.issues
+        )
+        error_issues = tuple(issue for issue in issues if issue.severity == "error")
+        if not error_issues:
+            fingerprint = self._store.file_fingerprint(summary.csv_path)
+            return OhlcvSourceCorrectionPlan(
+                dataset=summary,
+                status=report.status,
+                actionable=False,
+                item_count=0,
+                actionable_count=0,
+                row_count=report.row_count,
+                items=(),
+                message="No validation errors detected; no source correction plan is needed.",
+                csv_fingerprint_size_bytes=fingerprint.size_bytes,
+                csv_fingerprint_modified_at_ms=fingerprint.modified_at_ms,
+                generated_at_ms=int(time.time() * 1000),
+            )
+
+        eligible_issues = tuple(
+            issue
+            for issue in error_issues
+            if (issue.code or "") in _SOURCE_CORRECTION_ELIGIBLE_CODES
+        )
+        candles: list[Candle] = []
+        read_error = ""
+        if eligible_issues:
+            try:
+                candles = self._store.read(summary.csv_path)
+            except Exception as exc:
+                read_error = f"{type(exc).__name__}: {exc}"
+
+        items = self._source_correction_items_from_issues(
+            issues=error_issues,
+            row_timestamps=row_timestamps,
+            candles=candles,
+            step_ms=validator.step_ms,
+            read_error=read_error,
+        )
+        actionable_count = sum(1 for item in items if item.actionable)
+        if actionable_count:
+            message = f"{actionable_count} actionable source-correction item(s) were planned."
+        elif items:
+            message = "Validation errors were found, but no automatic source correction is currently actionable."
+        else:
+            message = "No source correction items could be derived from the current validation report."
+
+        fingerprint = self._store.file_fingerprint(summary.csv_path)
+        return OhlcvSourceCorrectionPlan(
+            dataset=summary,
+            status=report.status,
+            actionable=actionable_count > 0,
+            item_count=len(items),
+            actionable_count=actionable_count,
+            row_count=report.row_count,
+            items=items,
+            message=message,
+            warnings=() if not read_error else (f"Could not read OHLCV rows for context: {read_error}",),
+            csv_fingerprint_size_bytes=fingerprint.size_bytes,
+            csv_fingerprint_modified_at_ms=fingerprint.modified_at_ms,
+            generated_at_ms=int(time.time() * 1000),
         )
 
     async def execute_ohlcv_repair(
@@ -428,6 +620,135 @@ class HistoricalOhlcvMaintenanceService:
             warnings=warnings,
             source_invalid=repair_outcome == "source_invalid",
             source_invalid_anchors=source_invalid_anchors,
+        )
+
+    def execute_ohlcv_source_correction(
+        self,
+        dataset_id: DatasetId,
+        plan: OhlcvSourceCorrectionPlan,
+    ) -> OhlcvSourceCorrectionExecutionReport:
+        """
+        Apply a reviewed source-correction plan to one OHLCV dataset.
+
+        Execution is intentionally limited to a single dataset and to
+        correction actions already present in the supplied plan. The current CSV
+        fingerprint and target row values must still match the plan before any
+        write occurs. Successful corrections are persisted through the CSV
+        store, followed by source-correction provenance, raw validation, modified
+        validation stamping, and dataset-cache invalidation.
+        """
+        summary = self._summary_for_dataset(dataset_id)
+        self._validate_ohlcv_targets(summary)
+        if not summary.csv_path.is_file():
+            raise FileNotFoundError(f"OHLCV CSV not found: {summary.csv_path}")
+        self._validate_source_correction_plan_for_dataset(plan, summary)
+
+        market = self._market_for_dataset(summary.dataset_id)
+        source_fingerprint = self._store.file_fingerprint(summary.csv_path)
+        existing_source_records = self._store.source_correction_records(summary.csv_path, market=market)
+        source_candles = self._store.read(summary.csv_path)
+        row_timestamps = self._store.read_ts_ms_by_row(summary.csv_path)
+        self._validate_source_correction_candles(source_candles)
+
+        pending_candles = list(source_candles)
+        execution_items: list[OhlcvSourceCorrectionExecutionItem] = []
+        record_bases: list[dict[str, object]] = []
+
+        for item in sorted(plan.items, key=self._source_correction_item_execution_key):
+            if not item.actionable:
+                raise ValueError(f"Source correction plan contains a non-actionable item: {item.issue_message}")
+            if item.action not in {"adjust_ohlc_envelope", "drop_initial_invalid_bar"}:
+                raise ValueError(f"Unsupported source correction action: {item.action}")
+
+            if item.action == "adjust_ohlc_envelope":
+                corrected_candles, execution_item, record_base = self._execute_envelope_source_correction_item(
+                    item=item,
+                    candles=pending_candles,
+                    row_timestamps=row_timestamps,
+                )
+            else:
+                corrected_candles, execution_item, record_base = self._execute_initial_drop_source_correction_item(
+                    item=item,
+                    candles=pending_candles,
+                    row_timestamps=row_timestamps,
+                )
+            pending_candles = corrected_candles
+            execution_items.append(execution_item)
+            record_bases.append(record_base)
+
+        self._validate_source_correction_candles(pending_candles)
+        self._store.write_atomic(summary.csv_path, pending_candles, market=market)
+        corrected_fingerprint = self._store.file_fingerprint(summary.csv_path)
+        source_records = tuple(
+            self._final_source_correction_record(
+                record,
+                source=summary.exchange,
+                source_fingerprint=source_fingerprint,
+                corrected_fingerprint=corrected_fingerprint,
+            )
+            for record in record_bases
+        )
+        metadata_updated = self._store.record_source_corrections(
+            summary.csv_path,
+            market=market,
+            records=source_records,
+            existing_records=existing_source_records,
+        )
+
+        final_raw_validation = HistoricalDatasetValidator(summary.timeframe).validate(summary.csv_path)
+        final_status = "modified" if final_raw_validation.status in {"ok", "warning"} else "error"
+        validation_metadata_updated = self._store.record_validation_result(
+            summary.csv_path,
+            market=market,
+            status=final_status,
+            row_count=final_raw_validation.row_count,
+            issues=tuple((issue.severity, issue.message) for issue in final_raw_validation.issues),
+            validator="HistoricalDatasetValidator",
+            message_override=self._source_correction_validation_message(
+                final_status,
+                final_raw_validation.status,
+                final_raw_validation.issues,
+            ),
+        )
+        cache_invalidated = self._dataset_service.invalidate_dataset_cache(summary.dataset_id)
+        final_issues = tuple(self._ohlcv_validation_issue(issue) for issue in final_raw_validation.issues)
+        errors = tuple(
+            f"{issue.severity}: {issue.message}"
+            for issue in final_issues
+            if issue.severity == "error"
+        )
+        status = "ok" if final_status == "modified" else "error"
+        message = (
+            f"Applied {len(execution_items)} source correction item(s); dataset is valid with modified provenance."
+            if final_status == "modified"
+            else "Source correction applied, but final validation still has hard errors."
+        )
+        return OhlcvSourceCorrectionExecutionReport(
+            dataset=summary,
+            status=status,
+            validation_status=final_status,
+            action_count=len(plan.items),
+            applied_count=len(execution_items),
+            skipped_count=0,
+            failed_count=0 if status == "ok" else len(errors),
+            final_row_count=final_raw_validation.row_count,
+            metadata_updated=bool(metadata_updated),
+            validation_metadata_updated=bool(validation_metadata_updated),
+            cache_invalidated=bool(cache_invalidated),
+            csv_path=summary.csv_path,
+            metadata_path=summary.metadata_path,
+            source_csv_fingerprint_size_bytes=source_fingerprint.size_bytes,
+            source_csv_fingerprint_modified_at_ms=source_fingerprint.modified_at_ms,
+            corrected_csv_fingerprint_size_bytes=corrected_fingerprint.size_bytes,
+            corrected_csv_fingerprint_modified_at_ms=corrected_fingerprint.modified_at_ms,
+            items=tuple(execution_items),
+            message=message,
+            warnings=tuple(
+                f"{issue.severity}: {issue.message}"
+                for issue in final_issues
+                if issue.severity == "warning"
+            ),
+            errors=errors,
         )
 
     def delete_ohlcv(self, dataset_id: DatasetId) -> OhlcvMutationReport:
@@ -540,6 +861,268 @@ class HistoricalOhlcvMaintenanceService:
                 return HistoricalCsvArtifactManifest.from_dict(json.load(handle)), ""
         except Exception as exc:
             return None, f"{type(exc).__name__}: {exc}"
+
+    def _validate_source_correction_plan_for_dataset(
+        self,
+        plan: OhlcvSourceCorrectionPlan,
+        summary: OhlcvDatasetSummary,
+    ) -> None:
+        if self._dataset_key(plan.dataset) != self._dataset_key(summary):
+            raise ValueError("Source correction plan dataset does not match the selected OHLCV dataset")
+        if not plan.actionable or not plan.items:
+            raise ValueError("Source correction plan has no actionable items")
+        if not any(item.actionable for item in plan.items):
+            raise ValueError("Source correction plan contains no actionable correction items")
+        if any(not item.actionable for item in plan.items):
+            raise ValueError("Source correction execution requires a fully actionable reviewed plan")
+        if any(item.action not in {"adjust_ohlc_envelope", "drop_initial_invalid_bar"} for item in plan.items):
+            raise ValueError("Source correction plan contains unsupported action types")
+
+        current_fingerprint = self._store.file_fingerprint(summary.csv_path)
+        if (
+            plan.csv_fingerprint_size_bytes != current_fingerprint.size_bytes
+            or plan.csv_fingerprint_modified_at_ms != current_fingerprint.modified_at_ms
+        ):
+            raise ValueError(
+                "Source correction plan is stale. Re-run Analyze Checked and Plan Source Correction."
+            )
+
+    def _execute_envelope_source_correction_item(
+        self,
+        *,
+        item: OhlcvSourceCorrectionItem,
+        candles: list[Candle],
+        row_timestamps: tuple[int | None, ...],
+    ) -> tuple[list[Candle], OhlcvSourceCorrectionExecutionItem, dict[str, object]]:
+        if item.ts_ms is None:
+            raise ValueError("Source correction item has no target timestamp")
+        if item.original is None or item.proposed is None:
+            raise ValueError("Envelope source correction requires original and proposed OHLCV values")
+        self._validate_source_correction_row_index(item, row_timestamps)
+        index = self._single_candle_index_by_ts(candles, int(item.ts_ms))
+        current = candles[index]
+        if not self._source_values_equal(self._source_values(current), item.original):
+            raise ValueError(f"Current OHLCV row no longer matches source correction plan at ts_ms {item.ts_ms}")
+        proposed_candle = self._candle_from_source_values(int(item.ts_ms), item.proposed)
+        self._validate_corrected_candle(proposed_candle)
+        corrected = list(candles)
+        corrected[index] = proposed_candle
+        execution_item = OhlcvSourceCorrectionExecutionItem(
+            ts_ms=item.ts_ms,
+            row_index=item.row_index,
+            action=item.action,
+            status="applied",
+            issue_code=item.issue_code,
+            original=item.original,
+            corrected=item.proposed,
+            message=f"Applied source correction at ts_ms {item.ts_ms}.",
+            warnings=(),
+        )
+        return corrected, execution_item, self._source_correction_record_base(item=item, corrected=item.proposed)
+
+    def _execute_initial_drop_source_correction_item(
+        self,
+        *,
+        item: OhlcvSourceCorrectionItem,
+        candles: list[Candle],
+        row_timestamps: tuple[int | None, ...],
+    ) -> tuple[list[Candle], OhlcvSourceCorrectionExecutionItem, dict[str, object]]:
+        if item.ts_ms is None:
+            raise ValueError("Initial source correction drop has no target timestamp")
+        if item.row_index != 0:
+            raise ValueError("Initial source correction drop requires row_index 0")
+        if not candles or candles[0].ts_ms != int(item.ts_ms):
+            raise ValueError("Initial source correction drop target is no longer the first OHLCV row")
+        self._validate_source_correction_row_index(item, row_timestamps)
+        current = candles[0]
+        if item.original is None or not self._source_values_equal(self._source_values(current), item.original):
+            raise ValueError(f"Current first OHLCV row no longer matches source correction plan at ts_ms {item.ts_ms}")
+        corrected = list(candles[1:])
+        execution_item = OhlcvSourceCorrectionExecutionItem(
+            ts_ms=item.ts_ms,
+            row_index=item.row_index,
+            action=item.action,
+            status="applied",
+            issue_code=item.issue_code,
+            original=item.original,
+            corrected=None,
+            message=f"Dropped initial source-invalid OHLCV row at ts_ms {item.ts_ms}.",
+            warnings=(
+                "Dataset start timestamp changed.",
+                "Dataset row count decreased.",
+            ),
+        )
+        return corrected, execution_item, self._source_correction_record_base(item=item, corrected=None)
+
+    def _validate_source_correction_row_index(
+        self,
+        item: OhlcvSourceCorrectionItem,
+        row_timestamps: tuple[int | None, ...],
+    ) -> None:
+        if item.row_index is None:
+            return
+        if item.row_index < 0 or item.row_index >= len(row_timestamps):
+            raise ValueError(f"Source correction row_index is outside current CSV rows: {item.row_index}")
+        if row_timestamps[item.row_index] != item.ts_ms:
+            raise ValueError(
+                "Source correction plan row/timestamp target no longer matches the current CSV"
+            )
+
+    def _single_candle_index_by_ts(self, candles: list[Candle], ts_ms: int) -> int:
+        matches = [index for index, candle in enumerate(candles) if int(candle.ts_ms) == int(ts_ms)]
+        if not matches:
+            raise ValueError(f"Source correction target ts_ms not found: {ts_ms}")
+        if len(matches) > 1:
+            raise ValueError(f"Source correction target ts_ms is duplicated: {ts_ms}")
+        return matches[0]
+
+    def _validate_corrected_candle(self, candle: Candle) -> None:
+        if candle.volume < 0:
+            raise ValueError(f"Source correction would create negative volume at ts_ms {candle.ts_ms}")
+        if not (candle.low <= candle.high):
+            raise ValueError(f"Source correction would leave low greater than high at ts_ms {candle.ts_ms}")
+        if not (candle.low <= candle.open <= candle.high):
+            raise ValueError(f"Source correction would leave open out of bounds at ts_ms {candle.ts_ms}")
+        if not (candle.low <= candle.close <= candle.high):
+            raise ValueError(f"Source correction would leave close out of bounds at ts_ms {candle.ts_ms}")
+
+    def _validate_source_correction_candles(self, candles: list[Candle]) -> None:
+        ts_values = [int(candle.ts_ms) for candle in candles]
+        if len(ts_values) != len(set(ts_values)):
+            raise ValueError("Source correction would leave duplicate ts_ms values")
+        if any(left >= right for left, right in zip(ts_values, ts_values[1:])):
+            raise ValueError("Source correction would break strict timestamp ordering")
+
+    def _source_correction_record_base(
+        self,
+        *,
+        item: OhlcvSourceCorrectionItem,
+        corrected: OhlcvSourceCorrectionValues | None,
+    ) -> dict[str, object]:
+        return {
+            "ts_ms": item.ts_ms,
+            "row_index": item.row_index,
+            "issue_code": item.issue_code,
+            "issue_message": item.issue_message,
+            "action": item.action,
+            "method": item.method,
+            "confidence": item.confidence,
+            "needs_source_recheck": True,
+            "original": None if item.original is None else self._source_values_dict(item.original),
+            "corrected": None if corrected is None else self._source_values_dict(corrected),
+            "context": self._source_context_dict(item.context),
+        }
+
+    def _final_source_correction_record(
+        self,
+        record: dict[str, object],
+        *,
+        source: str,
+        source_fingerprint: Any,
+        corrected_fingerprint: Any,
+    ) -> dict[str, object]:
+        corrected_at_ms = int(time.time() * 1000)
+        out = dict(record)
+        out.update(
+            {
+                "source": str(source),
+                "corrected_at_ms": corrected_at_ms,
+                "corrected_at": format_ts_ms_utc(corrected_at_ms),
+                "source_csv_fingerprint": self._fingerprint_dict(source_fingerprint),
+                "corrected_csv_fingerprint": self._fingerprint_dict(corrected_fingerprint),
+            }
+        )
+        return out
+
+    def _source_correction_validation_message(
+        self,
+        status: str,
+        raw_status: str,
+        issues: tuple[ValidationIssue, ...] | list[ValidationIssue],
+    ) -> str:
+        if status == "modified":
+            if raw_status == "warning" and issues:
+                return (
+                    "Dataset is valid after documented source correction; "
+                    f"warnings remain: {issues[0].severity}: {issues[0].message}"
+                )
+            return "Dataset is valid after documented source correction."
+        if issues:
+            return f"{len(tuple(issues))} validation issues detected after source correction; first: {issues[0].severity}: {issues[0].message}"
+        return "Source correction completed, but validation did not produce a modified status."
+
+    def _validation_status_for_metadata(self, summary: OhlcvDatasetSummary, raw_status: str) -> str:
+        if raw_status in {"ok", "warning"} and self._store.has_current_source_corrections(
+            summary.csv_path,
+            market=self._market_for_dataset(summary.dataset_id),
+        ):
+            return "modified"
+        return raw_status
+
+    def _validation_message_override(self, recorded_status: str, raw_status: str) -> str | None:
+        if recorded_status == "modified":
+            if raw_status == "warning":
+                return "Dataset is valid after documented source correction; validation warnings remain."
+            return "Dataset is valid after documented source correction."
+        return None
+
+    @staticmethod
+    def _source_correction_item_execution_key(item: OhlcvSourceCorrectionItem) -> tuple[int, int]:
+        ts_ms = 9_223_372_036_854_775_807 if item.ts_ms is None else int(item.ts_ms)
+        row_index = 9_223_372_036_854_775_807 if item.row_index is None else int(item.row_index)
+        return ts_ms, row_index
+
+    @staticmethod
+    def _candle_from_source_values(ts_ms: int, values: OhlcvSourceCorrectionValues) -> Candle:
+        return Candle(
+            ts_ms=int(ts_ms),
+            open=float(values.open),
+            high=float(values.high),
+            low=float(values.low),
+            close=float(values.close),
+            volume=float(values.volume),
+        )
+
+    @staticmethod
+    def _source_values_equal(left: OhlcvSourceCorrectionValues, right: OhlcvSourceCorrectionValues) -> bool:
+        return (
+            left.open == right.open
+            and left.high == right.high
+            and left.low == right.low
+            and left.close == right.close
+            and left.volume == right.volume
+        )
+
+    @staticmethod
+    def _source_values_dict(values: OhlcvSourceCorrectionValues) -> dict[str, object]:
+        return {
+            "open": values.open,
+            "high": values.high,
+            "low": values.low,
+            "close": values.close,
+            "volume": values.volume,
+        }
+
+    @staticmethod
+    def _source_context_dict(context: OhlcvSourceCorrectionContext) -> dict[str, object]:
+        return {
+            "previous_close": context.previous_close,
+            "current_open": context.current_open,
+            "next_open": context.next_open,
+            "current_close": context.current_close,
+            "absolute_difference": context.absolute_difference,
+            "tolerance": context.tolerance,
+            "context_match": context.context_match,
+            "previous_contiguous": context.previous_contiguous,
+            "next_contiguous": context.next_contiguous,
+        }
+
+    @staticmethod
+    def _fingerprint_dict(fingerprint: Any) -> dict[str, object]:
+        return {
+            "size_bytes": getattr(fingerprint, "size_bytes", None),
+            "modified_at_ms": getattr(fingerprint, "modified_at_ms", None),
+        }
 
     def _validate_repair_plan_for_dataset(self, plan: OhlcvRepairPlan, summary: OhlcvDatasetSummary) -> None:
         if self._dataset_key(plan.dataset) != self._dataset_key(summary):
@@ -784,6 +1367,520 @@ class HistoricalOhlcvMaintenanceService:
             return f"Repair executed; post-repair validation completed with warnings for {dataset}."
         return f"Repair executed, but post-repair validation still failed for {dataset}."
 
+    def _source_correction_items_from_issues(
+        self,
+        *,
+        issues: tuple[OhlcvValidationIssue, ...],
+        row_timestamps: tuple[int | None, ...],
+        candles: list[Candle],
+        step_ms: int | None,
+        read_error: str,
+    ) -> tuple[OhlcvSourceCorrectionItem, ...]:
+        candles_by_ts = {candle.ts_ms: candle for candle in candles}
+        position_by_ts = {candle.ts_ms: index for index, candle in enumerate(candles)}
+        issue_timestamps = {
+            ts_ms
+            for issue in issues
+            for ts_ms in (self._ts_ms_for_issue(issue, row_timestamps),)
+            if ts_ms is not None
+        }
+        planned_values_by_ts: dict[int, OhlcvSourceCorrectionValues] = {}
+        sorted_issues = sorted(
+            issues,
+            key=lambda issue: self._source_correction_issue_sort_key(issue, row_timestamps),
+        )
+        items: list[OhlcvSourceCorrectionItem] = []
+
+        for issue in sorted_issues:
+            row_index = self._row_index_for_issue(issue)
+            ts_ms = self._ts_ms_for_issue(issue, row_timestamps)
+            code = issue.code or "unknown"
+            if code not in _SOURCE_CORRECTION_ELIGIBLE_CODES:
+                items.append(
+                    self._unsupported_source_correction_item(
+                        issue=issue,
+                        row_index=row_index,
+                        ts_ms=ts_ms,
+                        reason=(
+                            f"Validation issue code {code!r} is not eligible for source-correction planning."
+                        ),
+                    )
+                )
+                continue
+
+            if read_error:
+                items.append(
+                    self._unsupported_source_correction_item(
+                        issue=issue,
+                        row_index=row_index,
+                        ts_ms=ts_ms,
+                        reason=f"OHLCV rows could not be read for source-correction context: {read_error}",
+                    )
+                )
+                continue
+
+            if ts_ms is None or ts_ms not in candles_by_ts:
+                items.append(
+                    self._unsupported_source_correction_item(
+                        issue=issue,
+                        row_index=row_index,
+                        ts_ms=ts_ms,
+                        reason="The validation issue has no readable candle timestamp for source correction.",
+                    )
+                )
+                continue
+
+            candle = candles_by_ts[ts_ms]
+            position = position_by_ts[ts_ms]
+            if code == "open_out_of_bounds":
+                item = self._plan_open_source_correction(
+                    issue=issue,
+                    candle=candle,
+                    position=position,
+                    row_index=row_index,
+                    candles=candles,
+                    step_ms=step_ms,
+                    invalid_timestamps=issue_timestamps,
+                    planned_values_by_ts=planned_values_by_ts,
+                )
+            elif code == "close_out_of_bounds":
+                item = self._plan_close_source_correction(
+                    issue=issue,
+                    candle=candle,
+                    position=position,
+                    row_index=row_index,
+                    candles=candles,
+                    step_ms=step_ms,
+                    invalid_timestamps=issue_timestamps,
+                    planned_values_by_ts=planned_values_by_ts,
+                )
+            else:
+                item = self._plan_envelope_source_correction(
+                    issue=issue,
+                    candle=candle,
+                    position=position,
+                    row_index=row_index,
+                    candles=candles,
+                    step_ms=step_ms,
+                    invalid_timestamps=issue_timestamps,
+                    planned_values_by_ts=planned_values_by_ts,
+                )
+
+            if item.actionable and item.proposed is not None:
+                planned_values_by_ts[candle.ts_ms] = item.proposed
+            items.append(item)
+
+        return tuple(items)
+
+    def _plan_open_source_correction(
+        self,
+        *,
+        issue: OhlcvValidationIssue,
+        candle: Candle,
+        position: int,
+        row_index: int | None,
+        candles: list[Candle],
+        step_ms: int | None,
+        invalid_timestamps: set[int],
+        planned_values_by_ts: dict[int, OhlcvSourceCorrectionValues],
+    ) -> OhlcvSourceCorrectionItem:
+        original = self._source_values(candle)
+        if position == 0:
+            next_candle = candles[position + 1] if position + 1 < len(candles) else None
+            safe_drop = next_candle is None or next_candle.ts_ms > candle.ts_ms
+            return OhlcvSourceCorrectionItem(
+                ts_ms=candle.ts_ms,
+                row_index=row_index,
+                issue_code=issue.code or "open_out_of_bounds",
+                issue_message=issue.message,
+                action="drop_initial_invalid_bar",
+                actionable=safe_drop,
+                confidence="medium" if safe_drop else "none",
+                method="initial_bar_drop",
+                original=original,
+                proposed=None,
+                context=OhlcvSourceCorrectionContext(current_open=candle.open),
+                reason=(
+                    "First row is source-invalid and no previous close exists. "
+                    "Proposed action: drop the initial invalid bar."
+                ),
+                warnings=(
+                    "This will change dataset start timestamp and row count.",
+                    "Execution requires explicit confirmation in a future source-correction patch.",
+                ),
+            )
+
+        previous = candles[position - 1]
+        previous_contiguous = self._source_context_is_contiguous(previous.ts_ms, candle.ts_ms, step_ms)
+        if not previous_contiguous:
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=OhlcvSourceCorrectionContext(
+                    previous_close=previous.close,
+                    current_open=candle.open,
+                    previous_contiguous=False,
+                ),
+                reason="Previous candle is not contiguous with the invalid open candle.",
+            )
+        if previous.ts_ms in invalid_timestamps and previous.ts_ms not in planned_values_by_ts:
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=OhlcvSourceCorrectionContext(
+                    previous_close=previous.close,
+                    current_open=candle.open,
+                    previous_contiguous=True,
+                ),
+                reason="Previous candle is also invalid and has not already been planned for correction.",
+            )
+
+        previous_values = planned_values_by_ts.get(previous.ts_ms, self._source_values(previous))
+        match, difference, tolerance = self._source_context_matches(previous_values.close, candle.open)
+        context = OhlcvSourceCorrectionContext(
+            previous_close=previous_values.close,
+            current_open=candle.open,
+            absolute_difference=difference,
+            tolerance=tolerance,
+            context_match=match,
+            previous_contiguous=True,
+        )
+        if not match:
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=context,
+                reason="Previous close does not approximately match the current open.",
+            )
+
+        proposed = self._expanded_envelope_values(original)
+        return OhlcvSourceCorrectionItem(
+            ts_ms=candle.ts_ms,
+            row_index=row_index,
+            issue_code=issue.code or "open_out_of_bounds",
+            issue_message=issue.message,
+            action="adjust_ohlc_envelope",
+            actionable=True,
+            confidence="high",
+            method="previous_close_context",
+            original=original,
+            proposed=proposed,
+            context=context,
+            reason=(
+                "Open is outside the OHLC envelope, and previous close matches current open. "
+                "Preserve open and expand the envelope to include it."
+            ),
+        )
+
+    def _plan_close_source_correction(
+        self,
+        *,
+        issue: OhlcvValidationIssue,
+        candle: Candle,
+        position: int,
+        row_index: int | None,
+        candles: list[Candle],
+        step_ms: int | None,
+        invalid_timestamps: set[int],
+        planned_values_by_ts: dict[int, OhlcvSourceCorrectionValues],
+    ) -> OhlcvSourceCorrectionItem:
+        original = self._source_values(candle)
+        if position + 1 >= len(candles):
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=OhlcvSourceCorrectionContext(current_close=candle.close),
+                reason="No next candle exists to validate the current close.",
+            )
+
+        next_candle = candles[position + 1]
+        next_contiguous = self._source_context_is_contiguous(candle.ts_ms, next_candle.ts_ms, step_ms)
+        if not next_contiguous:
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=OhlcvSourceCorrectionContext(
+                    current_close=candle.close,
+                    next_open=next_candle.open,
+                    next_contiguous=False,
+                ),
+                reason="Next candle is not contiguous with the invalid close candle.",
+            )
+        if next_candle.ts_ms in invalid_timestamps and next_candle.ts_ms not in planned_values_by_ts:
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=OhlcvSourceCorrectionContext(
+                    current_close=candle.close,
+                    next_open=next_candle.open,
+                    next_contiguous=True,
+                ),
+                reason="Next candle is also invalid and has not already been planned for correction.",
+            )
+
+        next_values = planned_values_by_ts.get(next_candle.ts_ms, self._source_values(next_candle))
+        match, difference, tolerance = self._source_context_matches(next_values.open, candle.close)
+        context = OhlcvSourceCorrectionContext(
+            current_close=candle.close,
+            next_open=next_values.open,
+            absolute_difference=difference,
+            tolerance=tolerance,
+            context_match=match,
+            next_contiguous=True,
+        )
+        if not match:
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=context,
+                reason="Next open does not approximately match the current close.",
+            )
+
+        proposed = self._expanded_envelope_values(original)
+        return OhlcvSourceCorrectionItem(
+            ts_ms=candle.ts_ms,
+            row_index=row_index,
+            issue_code=issue.code or "close_out_of_bounds",
+            issue_message=issue.message,
+            action="adjust_ohlc_envelope",
+            actionable=True,
+            confidence="high",
+            method="next_open_context",
+            original=original,
+            proposed=proposed,
+            context=context,
+            reason=(
+                "Close is outside the OHLC envelope, and next open matches current close. "
+                "Preserve close and expand the envelope to include it."
+            ),
+        )
+
+    def _plan_envelope_source_correction(
+        self,
+        *,
+        issue: OhlcvValidationIssue,
+        candle: Candle,
+        position: int,
+        row_index: int | None,
+        candles: list[Candle],
+        step_ms: int | None,
+        invalid_timestamps: set[int],
+        planned_values_by_ts: dict[int, OhlcvSourceCorrectionValues],
+    ) -> OhlcvSourceCorrectionItem:
+        original = self._source_values(candle)
+        if position == 0 or position + 1 >= len(candles):
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=OhlcvSourceCorrectionContext(
+                    current_open=candle.open,
+                    current_close=candle.close,
+                ),
+                reason="Both previous close and next open context are required for low/high envelope correction.",
+            )
+
+        previous = candles[position - 1]
+        next_candle = candles[position + 1]
+        previous_contiguous = self._source_context_is_contiguous(previous.ts_ms, candle.ts_ms, step_ms)
+        next_contiguous = self._source_context_is_contiguous(candle.ts_ms, next_candle.ts_ms, step_ms)
+        if not previous_contiguous or not next_contiguous:
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=OhlcvSourceCorrectionContext(
+                    previous_close=previous.close,
+                    current_open=candle.open,
+                    current_close=candle.close,
+                    next_open=next_candle.open,
+                    previous_contiguous=previous_contiguous,
+                    next_contiguous=next_contiguous,
+                ),
+                reason="Neighbor candle context is not contiguous with the invalid envelope candle.",
+            )
+        if (
+            previous.ts_ms in invalid_timestamps and previous.ts_ms not in planned_values_by_ts
+        ) or (
+            next_candle.ts_ms in invalid_timestamps and next_candle.ts_ms not in planned_values_by_ts
+        ):
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=OhlcvSourceCorrectionContext(
+                    previous_close=previous.close,
+                    current_open=candle.open,
+                    current_close=candle.close,
+                    next_open=next_candle.open,
+                    previous_contiguous=True,
+                    next_contiguous=True,
+                ),
+                reason="Neighbor candle context includes invalid candles that are not already planned corrections.",
+            )
+
+        previous_values = planned_values_by_ts.get(previous.ts_ms, self._source_values(previous))
+        next_values = planned_values_by_ts.get(next_candle.ts_ms, self._source_values(next_candle))
+        open_match, open_difference, open_tolerance = self._source_context_matches(
+            previous_values.close,
+            candle.open,
+        )
+        close_match, close_difference, close_tolerance = self._source_context_matches(
+            next_values.open,
+            candle.close,
+        )
+        context = OhlcvSourceCorrectionContext(
+            previous_close=previous_values.close,
+            current_open=candle.open,
+            current_close=candle.close,
+            next_open=next_values.open,
+            absolute_difference=max(open_difference, close_difference),
+            tolerance=max(open_tolerance, close_tolerance),
+            context_match=open_match and close_match,
+            previous_contiguous=True,
+            next_contiguous=True,
+        )
+        if not context.context_match:
+            return self._ambiguous_source_correction_item(
+                issue=issue,
+                row_index=row_index,
+                candle=candle,
+                original=original,
+                context=context,
+                reason="Previous close and next open do not both support the current open/close values.",
+            )
+
+        return OhlcvSourceCorrectionItem(
+            ts_ms=candle.ts_ms,
+            row_index=row_index,
+            issue_code=issue.code or "low_greater_than_high",
+            issue_message=issue.message,
+            action="adjust_ohlc_envelope",
+            actionable=True,
+            confidence="high",
+            method="envelope_context",
+            original=original,
+            proposed=self._expanded_envelope_values(original),
+            context=context,
+            reason=(
+                "Low/high envelope is invalid, and neighbor context supports the current open and close. "
+                "Expand the envelope to include open, high, low, and close."
+            ),
+        )
+
+    def _unsupported_source_correction_item(
+        self,
+        *,
+        issue: OhlcvValidationIssue,
+        row_index: int | None,
+        ts_ms: int | None,
+        reason: str,
+    ) -> OhlcvSourceCorrectionItem:
+        return OhlcvSourceCorrectionItem(
+            ts_ms=ts_ms,
+            row_index=row_index,
+            issue_code=issue.code or "unknown",
+            issue_message=issue.message,
+            action="unsupported_no_action",
+            actionable=False,
+            confidence="none",
+            method="unsupported",
+            original=None,
+            proposed=None,
+            context=OhlcvSourceCorrectionContext(),
+            reason=reason,
+        )
+
+    def _ambiguous_source_correction_item(
+        self,
+        *,
+        issue: OhlcvValidationIssue,
+        row_index: int | None,
+        candle: Candle,
+        original: OhlcvSourceCorrectionValues,
+        context: OhlcvSourceCorrectionContext,
+        reason: str,
+    ) -> OhlcvSourceCorrectionItem:
+        return OhlcvSourceCorrectionItem(
+            ts_ms=candle.ts_ms,
+            row_index=row_index,
+            issue_code=issue.code or "unknown",
+            issue_message=issue.message,
+            action="ambiguous_no_action",
+            actionable=False,
+            confidence="none",
+            method="ambiguous",
+            original=original,
+            proposed=None,
+            context=context,
+            reason=reason,
+        )
+
+    def _source_correction_issue_sort_key(
+        self,
+        issue: OhlcvValidationIssue,
+        row_timestamps: tuple[int | None, ...],
+    ) -> tuple[int, int, int]:
+        row_index = self._row_index_for_issue(issue)
+        ts_ms = self._ts_ms_for_issue(issue, row_timestamps)
+        return (
+            1 if ts_ms is None else 0,
+            9_223_372_036_854_775_807 if ts_ms is None else int(ts_ms),
+            9_223_372_036_854_775_807 if row_index is None else int(row_index),
+        )
+
+    @staticmethod
+    def _source_values(candle: Candle) -> OhlcvSourceCorrectionValues:
+        return OhlcvSourceCorrectionValues(
+            open=float(candle.open),
+            high=float(candle.high),
+            low=float(candle.low),
+            close=float(candle.close),
+            volume=float(candle.volume),
+        )
+
+    @staticmethod
+    def _expanded_envelope_values(values: OhlcvSourceCorrectionValues) -> OhlcvSourceCorrectionValues:
+        return OhlcvSourceCorrectionValues(
+            open=values.open,
+            high=max(values.high, values.open, values.low, values.close),
+            low=min(values.low, values.open, values.high, values.close),
+            close=values.close,
+            volume=values.volume,
+        )
+
+    @staticmethod
+    def _source_context_is_contiguous(left_ts_ms: int, right_ts_ms: int, step_ms: int | None) -> bool:
+        if step_ms is None:
+            return True
+        return int(right_ts_ms) - int(left_ts_ms) == int(step_ms)
+
+    @staticmethod
+    def _source_context_matches(left: float, right: float) -> tuple[bool, float, float]:
+        difference = abs(float(left) - float(right))
+        tolerance = max(
+            _SOURCE_CORRECTION_ABSOLUTE_TOLERANCE,
+            abs(float(right)) * _SOURCE_CORRECTION_RELATIVE_TOLERANCE,
+        )
+        return difference <= tolerance, difference, tolerance
+
     def _row_index_for_issue(self, issue: OhlcvValidationIssue) -> int | None:
         if issue.row_index is not None:
             return int(issue.row_index)
@@ -834,7 +1931,7 @@ class HistoricalOhlcvMaintenanceService:
         if manifest is None:
             return "unknown"
         validation = manifest.validation
-        if validation.status not in {"ok", "warning", "error"}:
+        if validation.status not in {"ok", "modified", "warning", "error"}:
             return "unknown"
         current = self._store.file_fingerprint(summary.csv_path)
         if validation.csv_fingerprint.size_bytes != current.size_bytes:

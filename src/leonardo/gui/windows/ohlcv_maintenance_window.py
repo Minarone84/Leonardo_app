@@ -64,6 +64,41 @@ class OhlcvRepairConfirmDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
 
 
+class OhlcvSourceCorrectionConfirmDialog(QDialog):
+    """Explicit confirmation dialog for a reviewed OHLCV source-correction plan."""
+
+    def __init__(self, *, summary: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Confirm Source Correction")
+        self.resize(880, 700)
+        self.setMinimumSize(720, 560)
+
+        title = QLabel("Confirm Source Correction", self)
+        title.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        hint = QLabel("Review the local source corrections before applying them.", self)
+        hint.setWordWrap(True)
+        hint.setTextInteractionFlags(Qt.TextSelectableByMouse)
+
+        self.summary_box = QPlainTextEdit(self)
+        self.summary_box.setReadOnly(True)
+        self.summary_box.setPlainText(summary)
+        self.summary_box.setMinimumHeight(420)
+
+        buttons = QDialogButtonBox(self)
+        self.apply_button = buttons.addButton("Apply Source Correction", QDialogButtonBox.ButtonRole.AcceptRole)
+        self.cancel_button = buttons.addButton("Cancel", QDialogButtonBox.ButtonRole.RejectRole)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(title)
+        layout.addWidget(hint)
+        layout.addWidget(self.summary_box, 1)
+        layout.addWidget(buttons)
+
+        self.apply_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+
 class OhlcvRepairProgressDialog(QDialog):
     """Maintenance-specific progress surface for explicit OHLCV repair."""
 
@@ -216,10 +251,12 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._datasets: tuple[object, ...] = ()
         self._selected_dataset: object | None = None
         self._last_repair_plan: object | None = None
+        self._last_source_correction_plan: object | None = None
         self._pending: dict[str, Future[object]] = {}
         self._select_first_after_refresh = True
         self._validation_status_by_key: dict[tuple[str, str, str, str], str] = {}
         self._current_validation_keys: set[tuple[str, str, str, str]] = set()
+        self._source_invalid_repair_keys: set[tuple[str, str, str, str]] = set()
         self._validation_running = False
         self._validation_batch_targets: tuple[object, ...] = ()
         self._validation_batch_queue: list[object] = []
@@ -253,17 +290,23 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._validate_button = QPushButton("Analyze Checked", self)
         self._repair_plan_button = QPushButton("Plan Repair", self)
         self._execute_repair_button = QPushButton("Execute Repair...", self)
+        self._source_correction_plan_button = QPushButton("Plan Source Correction", self)
+        self._apply_source_correction_button = QPushButton("Apply Source Correction...", self)
         self._rebuild_metadata_button = QPushButton("Rebuild Metadata...", self)
         self._delete_button = QPushButton("Delete Selected", self)
         self._validate_button.setEnabled(False)
         self._repair_plan_button.setEnabled(False)
         self._execute_repair_button.setEnabled(False)
+        self._source_correction_plan_button.setEnabled(False)
+        self._apply_source_correction_button.setEnabled(False)
         self._rebuild_metadata_button.setEnabled(False)
         self._delete_button.setEnabled(False)
         toolbar.addWidget(self._refresh_button)
         toolbar.addWidget(self._validate_button)
         toolbar.addWidget(self._repair_plan_button)
         toolbar.addWidget(self._execute_repair_button)
+        toolbar.addWidget(self._source_correction_plan_button)
+        toolbar.addWidget(self._apply_source_correction_button)
         toolbar.addWidget(self._rebuild_metadata_button)
         toolbar.addWidget(self._delete_button)
         toolbar.addStretch(1)
@@ -326,6 +369,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._validate_button.clicked.connect(self.validate_selected)
         self._repair_plan_button.clicked.connect(self.plan_repair_selected)
         self._execute_repair_button.clicked.connect(self.execute_repair_selected)
+        self._source_correction_plan_button.clicked.connect(self.plan_source_correction_selected)
+        self._apply_source_correction_button.clicked.connect(self.apply_source_correction_selected)
         self._rebuild_metadata_button.clicked.connect(self.rebuild_metadata_selected)
         self._delete_button.clicked.connect(self.delete_selected)
         self._select_all_button.clicked.connect(self.select_all_datasets)
@@ -343,7 +388,9 @@ class OHLCVMaintenanceWindow(QMainWindow):
         """Request the dataset catalog and control post-refresh selection."""
         self._select_first_after_refresh = bool(select_first)
         self._last_repair_plan = None
+        self._last_source_correction_plan = None
         self._current_validation_keys.clear()
+        self._source_invalid_repair_keys.clear()
         self._pending_repair_validation_key = None
         self._pending_repair_validation_recap = ""
         self._refresh_button.setEnabled(False)
@@ -357,6 +404,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
             self.statusBar().showMessage("Check one or more OHLCV datasets before validating checked rows")
             return
         self._clear_repair_plan()
+        self._last_source_correction_plan = None
         self._pending_repair_validation_key = None
         self._pending_repair_validation_recap = ""
         self._update_action_state()
@@ -388,6 +436,52 @@ class OHLCVMaintenanceWindow(QMainWindow):
             self._bridge.plan_historical_ohlcv_repair(**self._identity_kwargs(summary)),
         )
         self.statusBar().showMessage("Planning OHLCV repair ranges...")
+
+    def plan_source_correction_selected(self) -> None:
+        """Request a read-only source-correction plan for the sole checked dataset."""
+        summary = self._sole_checked_dataset()
+        if summary is None:
+            self.statusBar().showMessage("Check exactly one OHLCV dataset before planning source correction")
+            return
+        if not self._can_plan_source_correction():
+            self.statusBar().showMessage(
+                "Run Analyze Checked and Execute Repair until source-invalid is reported before source correction"
+            )
+            return
+
+        self._last_source_correction_plan = None
+        self._update_action_state()
+        self._validation.setPlainText("Planning source correction for the checked OHLCV dataset...")
+        self._start_future(
+            "source_correction_plan",
+            self._bridge.plan_historical_ohlcv_source_correction(**self._identity_kwargs(summary)),
+        )
+        self.statusBar().showMessage("Planning OHLCV source correction...")
+
+    def apply_source_correction_selected(self) -> None:
+        """Confirm and execute the reviewed source-correction plan."""
+        summary = self._sole_checked_dataset()
+        plan = self._last_source_correction_plan
+        if summary is None or plan is None:
+            self.statusBar().showMessage("Plan source correction before applying it")
+            return
+        if not self._can_execute_source_correction_plan():
+            self.statusBar().showMessage("Source correction plan is not actionable for the checked dataset")
+            return
+        if not self._confirm_apply_source_correction(plan):
+            self.statusBar().showMessage("Source correction cancelled")
+            return
+
+        self._update_action_state()
+        self._validation.setPlainText("Applying OHLCV source correction...")
+        self._start_future(
+            "execute_source_correction",
+            self._bridge.execute_historical_ohlcv_source_correction(
+                **self._identity_kwargs(summary),
+                plan=plan,
+            ),
+        )
+        self.statusBar().showMessage("Applying OHLCV source correction...")
 
     def execute_repair_selected(self) -> None:
         """Confirm and execute the last reviewed OHLCV repair plan."""
@@ -504,14 +598,54 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 self._validation.setPlainText(self._format_repair_plan(result))
                 self._update_action_state()
                 self.statusBar().showMessage("OHLCV repair plan ready")
+            elif name == "source_correction_plan":
+                sole_checked = self._sole_checked_dataset()
+                if sole_checked is None or self._dataset_key(getattr(result, "dataset", None)) != self._dataset_key(
+                    sole_checked
+                ):
+                    self.statusBar().showMessage(
+                        "Discarded source correction plan for a dataset that is no longer checked"
+                    )
+                    continue
+                self._last_source_correction_plan = result
+                self._validation.setPlainText(self._format_source_correction_plan(result))
+                self._update_action_state()
+                self.statusBar().showMessage("OHLCV source correction plan ready")
+            elif name == "execute_source_correction":
+                self._last_repair_plan = None
+                self._last_source_correction_plan = None
+                correction_text = self._format_source_correction_execution(result)
+                self._validation.setPlainText(correction_text)
+                dataset = getattr(result, "dataset", self._selected_dataset)
+                if dataset is not None:
+                    key = self._dataset_key(dataset)
+                    self._source_invalid_repair_keys.discard(key)
+                    self._set_dataset_validation_status(
+                        dataset,
+                        self._display_validation_status(self._text(result, "validation_status")),
+                    )
+                self.statusBar().showMessage("OHLCV source correction complete")
+                if self._selected_dataset is not None:
+                    self._details.setPlainText("Refreshing selected dataset inspection...")
+                    self._start_future(
+                        "inspect",
+                        self._bridge.inspect_historical_ohlcv_dataset(**self._identity_kwargs(self._selected_dataset)),
+                    )
+                self._update_action_state()
             elif name == "execute_repair":
                 self._last_repair_plan = None
+                self._last_source_correction_plan = None
                 repair_text = self._format_repair_execution(result)
                 self._validation.setPlainText(repair_text)
                 if self._repair_progress_dialog is not None:
                     self._repair_progress_dialog.finish(result, recap=repair_text)
                 dataset = getattr(result, "dataset", self._selected_dataset)
                 if dataset is not None:
+                    key = self._dataset_key(dataset)
+                    if getattr(result, "source_invalid", False) or self._text(result, "repair_outcome") == "source_invalid":
+                        self._source_invalid_repair_keys.add(key)
+                    else:
+                        self._source_invalid_repair_keys.discard(key)
                     self._set_dataset_validation_status(
                         dataset,
                         self._display_validation_status(self._text(result, "validation_status")),
@@ -531,6 +665,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 self._update_action_state()
             elif name == "rebuild_metadata":
                 self._validation.setPlainText(self._format_metadata_rebuild(result))
+                self._last_source_correction_plan = None
                 self.statusBar().showMessage("OHLCV metadata rebuilt")
                 if self._selected_dataset is not None:
                     self._details.setPlainText("Refreshing selected dataset inspection...")
@@ -543,6 +678,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 self._details.setPlainText(self._format_delete(result))
                 self._validation.setPlainText("Dataset list refreshed after delete.")
                 self._last_repair_plan = None
+                self._last_source_correction_plan = None
                 self._selected_dataset = None
                 self.statusBar().showMessage("OHLCV dataset deleted")
                 self._request_dataset_list(select_first=False)
@@ -567,9 +703,19 @@ class OHLCVMaintenanceWindow(QMainWindow):
         elif name == "repair_plan":
             self._validation.setPlainText(f"Repair planning failed:\n{message}")
             self._last_repair_plan = None
+        elif name == "source_correction_plan":
+            self._validation.setPlainText(f"Source correction planning failed:\n{message}")
+            self._last_source_correction_plan = None
+        elif name == "execute_source_correction":
+            self._validation.setPlainText(f"Source correction execution failed:\n{message}")
+            self._last_source_correction_plan = None
         elif name == "execute_repair":
             self._validation.setPlainText(f"Repair execution failed:\n{message}")
             self._last_repair_plan = None
+            self._last_source_correction_plan = None
+            summary = self._sole_checked_dataset()
+            if summary is not None:
+                self._source_invalid_repair_keys.discard(self._dataset_key(summary))
             self._pending_repair_validation_key = None
             self._pending_repair_validation_recap = ""
             if self._repair_progress_dialog is not None:
@@ -585,6 +731,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
         datasets = tuple(result or ())  # type: ignore[arg-type]
         self._datasets = datasets
         self._last_repair_plan = None
+        self._last_source_correction_plan = None
+        self._source_invalid_repair_keys.clear()
         self._refresh_button.setEnabled(True)
         select_first = self._select_first_after_refresh
         self._select_first_after_refresh = True
@@ -885,6 +1033,162 @@ class OHLCVMaintenanceWindow(QMainWindow):
         lines.extend(["", self._text(report, "message")])
         return "\n".join(lines)
 
+    def _format_source_correction_plan(self, plan: object) -> str:
+        dataset = getattr(plan, "dataset", None)
+        lines = [
+            "Source Correction Plan",
+            f"  Dataset: {self._dataset_label(dataset)}",
+            f"  Validation status: {self._text(plan, 'status')}",
+            f"  Row count: {self._text(plan, 'row_count')}",
+            f"  Actionable: {self._yes_no(getattr(plan, 'actionable', False))}",
+            f"  Item count: {self._text(plan, 'item_count')}",
+            f"  Actionable items: {self._text(plan, 'actionable_count')}",
+            f"  Relative tolerance: {self._text(plan, 'relative_tolerance')}",
+            f"  Absolute tolerance: {self._text(plan, 'absolute_tolerance')}",
+            f"  Message: {self._text(plan, 'message')}",
+            "",
+            "Scope",
+            "  This is a read-only plan. No CSV or metadata files were changed.",
+            "  Apply Source Correction requires a separate confirmation before any local data changes.",
+        ]
+
+        items = tuple(getattr(plan, "items", ()) or ())
+        if items:
+            lines.extend(["", "Planned Items"])
+            for index, item in enumerate(items, start=1):
+                lines.extend(
+                    [
+                        f"  Item {index}",
+                        f"    ts_ms: {self._text(item, 'ts_ms') or '-'}",
+                        f"    Row index: {self._text(item, 'row_index') or '-'}",
+                        f"    Issue code: {self._text(item, 'issue_code')}",
+                        f"    Issue: {self._text(item, 'issue_message')}",
+                        f"    Action: {self._text(item, 'action')}",
+                        f"    Actionable: {self._yes_no(getattr(item, 'actionable', False))}",
+                        f"    Confidence: {self._text(item, 'confidence')}",
+                        f"    Method: {self._text(item, 'method')}",
+                        f"    Reason: {self._text(item, 'reason')}",
+                        f"    Original: {self._format_source_values(getattr(item, 'original', None))}",
+                        f"    Proposed: {self._format_source_values(getattr(item, 'proposed', None))}",
+                        f"    Context: {self._format_source_context(getattr(item, 'context', None))}",
+                    ]
+                )
+                warnings = tuple(getattr(item, "warnings", ()) or ())
+                if warnings:
+                    lines.append("    Warnings:")
+                    lines.extend(f"      - {warning}" for warning in warnings)
+        else:
+            lines.extend(["", "No source correction items."])
+
+        warnings = tuple(getattr(plan, "warnings", ()) or ())
+        if warnings:
+            lines.extend(["", "Plan Warnings"])
+            lines.extend(f"  - {warning}" for warning in warnings)
+
+        return "\n".join(lines)
+
+    def _format_source_correction_execution(self, report: object) -> str:
+        dataset = getattr(report, "dataset", None)
+        lines = [
+            "Source Correction Execution Recap",
+            f"  Dataset: {self._dataset_label(dataset)}",
+            f"  Status: {self._text(report, 'status')}",
+            f"  Validation status: {self._display_validation_status(self._text(report, 'validation_status'))}",
+            f"  Action count: {self._text(report, 'action_count')}",
+            f"  Applied: {self._text(report, 'applied_count')}",
+            f"  Skipped: {self._text(report, 'skipped_count')}",
+            f"  Failed: {self._text(report, 'failed_count')}",
+            f"  Final row count: {self._text(report, 'final_row_count')}",
+            f"  Metadata updated: {self._yes_no(getattr(report, 'metadata_updated', False))}",
+            f"  Validation metadata updated: {self._yes_no(getattr(report, 'validation_metadata_updated', False))}",
+            f"  Cache invalidated: {self._yes_no(getattr(report, 'cache_invalidated', False))}",
+            "",
+            "Files",
+            f"  CSV: {self._text(report, 'csv_path')}",
+            f"  Metadata: {self._text(report, 'metadata_path')}",
+            "",
+            "Fingerprints",
+            f"  Source size bytes: {self._text(report, 'source_csv_fingerprint_size_bytes')}",
+            f"  Source modified ms: {self._text(report, 'source_csv_fingerprint_modified_at_ms')}",
+            f"  Corrected size bytes: {self._text(report, 'corrected_csv_fingerprint_size_bytes')}",
+            f"  Corrected modified ms: {self._text(report, 'corrected_csv_fingerprint_modified_at_ms')}",
+        ]
+
+        items = tuple(getattr(report, "items", ()) or ())
+        if items:
+            lines.extend(["", "Applied Items"])
+            for index, item in enumerate(items, start=1):
+                lines.extend(
+                    [
+                        f"  Item {index}",
+                        f"    ts_ms: {self._text(item, 'ts_ms') or '-'}",
+                        f"    Row index: {self._text(item, 'row_index') or '-'}",
+                        f"    Issue code: {self._text(item, 'issue_code')}",
+                        f"    Action: {self._text(item, 'action')}",
+                        f"    Status: {self._text(item, 'status')}",
+                        f"    Original: {self._format_source_values(getattr(item, 'original', None))}",
+                        f"    Corrected: {self._format_source_values(getattr(item, 'corrected', None))}",
+                        f"    Message: {self._text(item, 'message')}",
+                    ]
+                )
+                warnings = tuple(getattr(item, "warnings", ()) or ())
+                if warnings:
+                    lines.append("    Warnings:")
+                    lines.extend(f"      - {warning}" for warning in warnings)
+
+        warnings = tuple(getattr(report, "warnings", ()) or ())
+        if warnings:
+            lines.extend(["", "Warnings"])
+            lines.extend(f"  - {warning}" for warning in warnings)
+
+        errors = tuple(getattr(report, "errors", ()) or ())
+        if errors:
+            lines.extend(["", "Errors"])
+            lines.extend(f"  - {error}" for error in errors)
+
+        lines.extend(
+            [
+                "",
+                "Modified means the dataset validates after documented local source correction.",
+                "It is not pure raw exchange truth and remains marked for future source re-check.",
+                "",
+                self._text(report, "message"),
+            ]
+        )
+        return "\n".join(lines)
+
+    def _format_source_values(self, values: object | None) -> str:
+        if values is None:
+            return "-"
+        return (
+            f"open={self._text(values, 'open')}, "
+            f"high={self._text(values, 'high')}, "
+            f"low={self._text(values, 'low')}, "
+            f"close={self._text(values, 'close')}, "
+            f"volume={self._text(values, 'volume')}"
+        )
+
+    def _format_source_context(self, context: object | None) -> str:
+        if context is None:
+            return "-"
+        fields = (
+            ("previous_close", "previous_close"),
+            ("current_open", "current_open"),
+            ("next_open", "next_open"),
+            ("current_close", "current_close"),
+            ("absolute_difference", "absolute_difference"),
+            ("tolerance", "tolerance"),
+            ("context_match", "context_match"),
+            ("previous_contiguous", "previous_contiguous"),
+            ("next_contiguous", "next_contiguous"),
+        )
+        parts = [
+            f"{label}={self._text(context, name)}"
+            for label, name in fields
+            if self._text(context, name)
+        ]
+        return ", ".join(parts) if parts else "-"
+
     def _format_delete(self, report: object) -> str:
         dataset = getattr(report, "dataset", None)
         return "\n".join(
@@ -957,6 +1261,81 @@ class OHLCVMaintenanceWindow(QMainWindow):
     def _confirm_execute_repair(self, plan: object) -> bool:
         dialog = OhlcvRepairConfirmDialog(summary=self._format_repair_confirmation(plan), parent=self)
         return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _confirm_apply_source_correction(self, plan: object) -> bool:
+        dialog = OhlcvSourceCorrectionConfirmDialog(
+            summary=self._format_source_correction_confirmation(plan),
+            parent=self,
+        )
+        return dialog.exec() == QDialog.DialogCode.Accepted
+
+    def _format_source_correction_confirmation(self, plan: object) -> str:
+        dataset = getattr(plan, "dataset", None)
+        items = tuple(getattr(plan, "items", ()) or ())
+        lines = [
+            "Dataset",
+            f"  Exchange: {self._text(dataset, 'exchange')}",
+            f"  Market type: {self._text(dataset, 'market_type')}",
+            f"  Symbol: {self._text(dataset, 'symbol')}",
+            f"  Timeframe: {self._text(dataset, 'timeframe')}",
+            "",
+            "Files affected",
+            f"  CSV: {self._text(dataset, 'csv_path')}",
+            f"  Metadata: {self._text(dataset, 'metadata_path')}",
+            "",
+            "Source correction plan summary",
+            f"  Items: {len(items)}",
+            f"  Actionable: {self._yes_no(getattr(plan, 'actionable', False))}",
+            f"  Actionable items: {self._text(plan, 'actionable_count')}",
+            f"  Validation status at planning: {self._text(plan, 'status')}",
+            f"  Row count at planning: {self._text(plan, 'row_count')}",
+            f"  Message: {self._text(plan, 'message')}",
+            "",
+            "Planned local corrections",
+        ]
+        if items:
+            for index, item in enumerate(items, start=1):
+                lines.extend(
+                    [
+                        f"  Item {index}",
+                        f"    ts_ms: {self._text(item, 'ts_ms') or '-'}",
+                        f"    Row index: {self._text(item, 'row_index') or '-'}",
+                        f"    Issue code: {self._text(item, 'issue_code')}",
+                        f"    Issue: {self._text(item, 'issue_message')}",
+                        f"    Action: {self._text(item, 'action')}",
+                        f"    Original: {self._format_source_values(getattr(item, 'original', None))}",
+                        f"    Proposed: {self._format_source_values(getattr(item, 'proposed', None))}",
+                        f"    Context: {self._format_source_context(getattr(item, 'context', None))}",
+                        f"    Reason: {self._text(item, 'reason')}",
+                    ]
+                )
+                if self._text(item, "action") == "drop_initial_invalid_bar":
+                    lines.extend(
+                        [
+                            "    Drop warning: row count will decrease.",
+                            "    Drop warning: dataset start timestamp will change.",
+                        ]
+                    )
+                warnings = tuple(getattr(item, "warnings", ()) or ())
+                if warnings:
+                    lines.append("    Warnings:")
+                    lines.extend(f"      - {warning}" for warning in warnings)
+        else:
+            lines.append("  -")
+
+        lines.extend(
+            [
+                "",
+                "Execution warnings",
+                "  - This applies local source correction and changes OHLCV data.",
+                "  - Corrected data is not pure raw exchange truth.",
+                "  - candles.csv will be rewritten through the OHLCV store.",
+                "  - candles.meta.json will record source correction provenance.",
+                "  - Validation status may become Modified if the corrected CSV has no hard errors.",
+                "  - Each correction is marked needs_source_recheck for future source verification.",
+            ]
+        )
+        return "\n".join(lines)
 
     def _format_repair_confirmation(self, plan: object) -> str:
         dataset = getattr(plan, "dataset", None)
@@ -1034,13 +1413,23 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._rebuild_metadata_button.setEnabled(checked_count == 1 and not busy)
         self._delete_button.setEnabled(checked_count == 1 and not busy)
         self._execute_repair_button.setEnabled(self._can_execute_checked_repair_plan() and not busy)
+        self._source_correction_plan_button.setEnabled(self._can_plan_source_correction() and not busy)
+        self._apply_source_correction_button.setEnabled(self._can_execute_source_correction_plan() and not busy)
         self._select_all_button.setEnabled(has_rows and not busy)
         self._deselect_all_button.setEnabled(has_rows and bool(checked) and not busy)
 
     def _actions_busy(self) -> bool:
         return self._validation_running or any(
             name in self._pending
-            for name in ("list", "repair_plan", "execute_repair", "rebuild_metadata", "delete")
+            for name in (
+                "list",
+                "repair_plan",
+                "execute_repair",
+                "source_correction_plan",
+                "execute_source_correction",
+                "rebuild_metadata",
+                "delete",
+            )
         )
 
     def _can_execute_checked_repair_plan(self) -> bool:
@@ -1059,6 +1448,27 @@ class OHLCVMaintenanceWindow(QMainWindow):
         if key not in self._current_validation_keys:
             return False
         return self._validation_status_by_key.get(key) in {"Error", "Warning"}
+
+    def _can_plan_source_correction(self) -> bool:
+        summary = self._sole_checked_dataset()
+        if summary is None:
+            return False
+        key = self._dataset_key(summary)
+        if key not in self._current_validation_keys:
+            return False
+        return self._validation_status_by_key.get(key) == "Error" and key in self._source_invalid_repair_keys
+
+    def _can_execute_source_correction_plan(self) -> bool:
+        summary = self._sole_checked_dataset()
+        if summary is None or self._last_source_correction_plan is None:
+            return False
+        if not bool(getattr(self._last_source_correction_plan, "actionable", False)):
+            return False
+        if int(getattr(self._last_source_correction_plan, "actionable_count", 0) or 0) <= 0:
+            return False
+        return self._dataset_key(getattr(self._last_source_correction_plan, "dataset", None)) == self._dataset_key(
+            summary
+        )
 
     def _checked_datasets(self) -> tuple[object, ...]:
         datasets: list[object] = []
@@ -1189,9 +1599,13 @@ class OHLCVMaintenanceWindow(QMainWindow):
             break
 
     def _clear_repair_plan(self, *, message: str | None = None) -> None:
-        if self._last_repair_plan is None:
+        if self._last_repair_plan is None and self._last_source_correction_plan is None:
             return
         self._last_repair_plan = None
+        self._last_source_correction_plan = None
+        summary = self._sole_checked_dataset()
+        if summary is not None:
+            self._source_invalid_repair_keys.discard(self._dataset_key(summary))
         if message:
             self._validation.setPlainText(message)
             self.statusBar().showMessage(message)
@@ -1213,6 +1627,8 @@ class OHLCVMaintenanceWindow(QMainWindow):
         status = str(status or "").strip().lower()
         if status == "ok":
             return "OK"
+        if status == "modified":
+            return "Modified"
         if status == "warning":
             return "Warning"
         if status == "error":
@@ -1225,6 +1641,9 @@ class OHLCVMaintenanceWindow(QMainWindow):
         bold = False
         if status == "OK":
             background = QBrush(QColor(198, 239, 206))
+            foreground = QBrush(QColor(0, 0, 0))
+        elif status == "Modified":
+            background = QBrush(QColor(189, 230, 238))
             foreground = QBrush(QColor(0, 0, 0))
         elif status == "Warning":
             background = QBrush(QColor(255, 235, 156))
@@ -1275,6 +1694,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 self._restyle_dataset_row(row)
         finally:
             self._dataset_table.blockSignals(False)
+        self._source_invalid_repair_keys.clear()
         self._clear_repair_plan(message="Repair plan cleared because checked dataset selection changed.")
         self._update_action_state()
 
@@ -1285,6 +1705,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 self._restyle_dataset_row(item.row())
             finally:
                 self._dataset_table.blockSignals(False)
+            self._source_invalid_repair_keys.clear()
             self._clear_repair_plan(message="Repair plan cleared because checked dataset selection changed.")
             self._update_action_state()
 

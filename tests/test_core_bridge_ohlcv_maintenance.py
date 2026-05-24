@@ -30,6 +30,14 @@ class _FakeMaintenanceService:
         self.calls.append(("plan_repair", dataset_id))
         return ("plan_repair", dataset_id)
 
+    def plan_ohlcv_source_correction(self, dataset_id: DatasetId) -> tuple[str, DatasetId]:
+        self.calls.append(("plan_source_correction", dataset_id))
+        return ("plan_source_correction", dataset_id)
+
+    def execute_ohlcv_source_correction(self, dataset_id: DatasetId, plan: object) -> tuple[str, DatasetId, object]:
+        self.calls.append(("execute_source_correction", dataset_id))
+        return ("execute_source_correction", dataset_id, plan)
+
     async def execute_ohlcv_repair(self, ctx: object, dataset_id: DatasetId, plan: object) -> tuple[str, DatasetId, object]:
         self.calls.append(("execute_repair", dataset_id))
         return ("execute_repair", dataset_id, plan)
@@ -49,6 +57,8 @@ class _Bridge:
     inspect_historical_ohlcv_dataset = CoreBridge.inspect_historical_ohlcv_dataset
     validate_historical_ohlcv_dataset = CoreBridge.validate_historical_ohlcv_dataset
     plan_historical_ohlcv_repair = CoreBridge.plan_historical_ohlcv_repair
+    plan_historical_ohlcv_source_correction = CoreBridge.plan_historical_ohlcv_source_correction
+    execute_historical_ohlcv_source_correction = CoreBridge.execute_historical_ohlcv_source_correction
     execute_historical_ohlcv_repair = CoreBridge.execute_historical_ohlcv_repair
     delete_historical_ohlcv_dataset = CoreBridge.delete_historical_ohlcv_dataset
     rebuild_historical_ohlcv_metadata = CoreBridge.rebuild_historical_ohlcv_metadata
@@ -126,6 +136,41 @@ def test_core_bridge_plans_ohlcv_repair_with_dataset_identity() -> None:
 
     assert kind == "plan_repair"
     assert dataset_id == DatasetId("bybit", "linear", "LINKUSDT", "1m")
+
+
+def test_core_bridge_plans_ohlcv_source_correction_with_dataset_identity() -> None:
+    service = _FakeMaintenanceService()
+    bridge = _Bridge(service)
+
+    kind, dataset_id = CoreBridge.plan_historical_ohlcv_source_correction(
+        bridge,
+        exchange="bybit",
+        market_type="linear",
+        symbol="LINKUSDT",
+        timeframe="1m",
+    ).result()
+
+    assert kind == "plan_source_correction"
+    assert dataset_id == DatasetId("bybit", "linear", "LINKUSDT", "1m")
+
+
+def test_core_bridge_executes_ohlcv_source_correction_with_dataset_identity_and_plan() -> None:
+    service = _FakeMaintenanceService()
+    bridge = _Bridge(service)
+    plan = object()
+
+    kind, dataset_id, returned_plan = CoreBridge.execute_historical_ohlcv_source_correction(
+        bridge,
+        exchange="bybit",
+        market_type="linear",
+        symbol="LINKUSDT",
+        timeframe="1m",
+        plan=plan,
+    ).result()
+
+    assert kind == "execute_source_correction"
+    assert dataset_id == DatasetId("bybit", "linear", "LINKUSDT", "1m")
+    assert returned_plan is plan
 
 
 def test_core_bridge_executes_ohlcv_repair_with_dataset_identity_and_plan() -> None:

@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from leonardo.data.historical.validator import HistoricalDatasetValidator
-
+import asyncio
+import json
 import time
 import uuid
-import asyncio
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, List, Sequence
@@ -12,10 +11,13 @@ from typing import Optional, List, Sequence
 from leonardo.core.audit import make_event
 from leonardo.core.context import AppContext
 from leonardo.core.registry_keys import SVC_EXCHANGE_REGISTRY, SVC_HISTORICAL_DATASET
-from leonardo.data.naming import MarketId, canonicalize
+from leonardo.data.historical.artifact_metadata_contracts import HistoricalCsvArtifactManifest
+from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatasetService
 from leonardo.data.historical.paths import HistoricalPaths, default_historical_root
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore, merge_idempotent
+from leonardo.data.historical.validator import HistoricalDatasetValidator
+from leonardo.data.naming import MarketId, canonicalize
 
 from leonardo.connection.exchange.base import BaseExchange
 from leonardo.connection.exchange.registry import ExchangeRegistry
@@ -400,16 +402,27 @@ class HistoricalDownloader:
 
         validation_status: str | None = None
         validation_issues: list[str] = []
+        validation_issue_count = 0
+        validation_warning_count = 0
+        validation_error_count = 0
+        timeframe_step_ms: int | None = None
         validation_rows = len(candles) if candles else result.total_rows
 
         try:
-            report = HistoricalDatasetValidator(result.market.timeframe).validate(result.file_path)
+            validator = HistoricalDatasetValidator(result.market.timeframe)
+            report = validator.validate(result.file_path)
             validation_status = report.status
             validation_rows = report.row_count
             validation_issues = [f"{issue.severity}: {issue.message}" for issue in report.issues]
+            validation_issue_count = len(report.issues)
+            validation_warning_count = sum(1 for issue in report.issues if issue.severity == "warning")
+            validation_error_count = sum(1 for issue in report.issues if issue.severity == "error")
+            timeframe_step_ms = validator.step_ms
         except Exception as e:
             validation_status = "error"
             validation_issues = [f"error: validation engine failed during batch finalization: {repr(e)}"]
+            validation_issue_count = 1
+            validation_error_count = 1
 
         return {
             "timeframe": result.market.timeframe,
@@ -421,6 +434,12 @@ class HistoricalDownloader:
             "validation_status": validation_status,
             "validation_rows": validation_rows,
             "validation_issues": validation_issues,
+            "validation_issue_count": validation_issue_count,
+            "validation_warning_count": validation_warning_count,
+            "validation_error_count": validation_error_count,
+            "metadata_validation_status": self._metadata_validation_status(result.file_path),
+            "timeframe_step_ms": timeframe_step_ms,
+            "timeframe_continuity": "variable" if timeframe_step_ms is None else "fixed",
         }
 
     async def run_with_job_id(self, ctx: AppContext, req: DownloadRequest, job_id: str) -> DownloadResult:
@@ -1046,16 +1065,25 @@ class HistoricalDownloader:
             validator = HistoricalDatasetValidator(market.timeframe)
             report = validator.validate(file_path)
             candles = self._store.read(file_path)
+            issue_count = len(report.issues)
+            warning_count = sum(1 for issue in report.issues if issue.severity == "warning")
+            error_count = sum(1 for issue in report.issues if issue.severity == "error")
 
             await self._emit(ctx, "download validated", job_id, market, extra={
                 "status": report.status,
                 "row_count": report.row_count,
                 "issues": [f"{i.severity}: {i.message}" for i in report.issues],
+                "issue_count": issue_count,
+                "warning_count": warning_count,
+                "error_count": error_count,
                 "path": str(file_path),
                 "first_ts": candles[0].ts_ms if candles else None,
                 "last_ts": candles[-1].ts_ms if candles else None,
                 "dataframe_first_ts_ms": candles[0].ts_ms if candles else None,
                 "dataframe_last_ts_ms": candles[-1].ts_ms if candles else None,
+                "metadata_validation_status": self._metadata_validation_status(file_path),
+                "timeframe_step_ms": validator.step_ms,
+                "timeframe_continuity": "variable" if validator.step_ms is None else "fixed",
             })
         except Exception as e:
             try:
@@ -1066,12 +1094,29 @@ class HistoricalDownloader:
                 "status": "error",
                 "row_count": len(candles) if candles else fallback_row_count,
                 "issues": [f"error: validation engine failed: {repr(e)}"],
+                "issue_count": 1,
+                "warning_count": 0,
+                "error_count": 1,
                 "path": str(file_path),
                 "first_ts": candles[0].ts_ms if candles else None,
                 "last_ts": candles[-1].ts_ms if candles else None,
                 "dataframe_first_ts_ms": candles[0].ts_ms if candles else None,
                 "dataframe_last_ts_ms": candles[-1].ts_ms if candles else None,
+                "metadata_validation_status": self._metadata_validation_status(file_path),
+                "timeframe_step_ms": None,
+                "timeframe_continuity": "unknown",
             })
+
+    def _metadata_validation_status(self, file_path: Path) -> str | None:
+        metadata_path = metadata_path_for_csv(file_path)
+        if not metadata_path.is_file():
+            return None
+        try:
+            with metadata_path.open("r", encoding="utf-8") as handle:
+                manifest = HistoricalCsvArtifactManifest.from_dict(json.load(handle))
+        except Exception:
+            return None
+        return manifest.validation.status
 
     async def _latest_closed_ts_ms(self, adapter: BaseExchange, timeframe: str) -> Optional[int]:
         duration_ms = self._fixed_timeframe_duration_ms(timeframe)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import sys
 import types
 
@@ -22,6 +23,8 @@ bybit_module.BybitExchange = _BybitExchange
 sys.modules.setdefault("leonardo.connection.exchange.adapters.bybit", bybit_module)
 
 from leonardo.data.historical.downloader import DownloadRequest, HistoricalDownloader
+from leonardo.data.historical.artifact_metadata_contracts import HistoricalCsvArtifactManifest
+from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.store_csv import CsvOHLCVStore
 from leonardo.data.naming import canonicalize
@@ -88,6 +91,32 @@ def _request() -> DownloadRequest:
     )
 
 
+def _custom_request(*, timeframe: str, start_ms: int, end_ms: int, limit: int) -> DownloadRequest:
+    return DownloadRequest(
+        exchange="bybit",
+        market_type="linear",
+        symbol="BTCUSDT",
+        timeframe=timeframe,
+        start_ms=start_ms,
+        end_ms=end_ms,
+        limit=limit,
+    )
+
+
+def _manifest_for(csv_path):
+    return HistoricalCsvArtifactManifest.from_dict(
+        json.loads(metadata_path_for_csv(csv_path).read_text(encoding="utf-8"))
+    )
+
+
+async def _download_validated_event(ctx: _Context):
+    events = await ctx.audit.snapshot()
+    for event in reversed(events):
+        if event.message == "download validated":
+            return event
+    raise AssertionError("download validated event was not emitted")
+
+
 def test_downloader_invalidates_dataset_service_cache_after_successful_write(tmp_path) -> None:
     probe = _DatasetServiceProbe()
     ctx = _Context(probe)
@@ -104,6 +133,109 @@ def test_downloader_invalidates_dataset_service_cache_after_successful_write(tmp
 
     assert probe.invalidated == [DatasetId("bybit", "linear", "BTCUSDT", "1m")]
     assert exchange.closed is True
+
+
+def test_downloader_keeps_download_metadata_validation_unknown_after_preliminary_ok(tmp_path) -> None:
+    probe = _DatasetServiceProbe()
+    ctx = _Context(probe)
+    exchange = _FakeExchange([
+        [Candle(ts_ms=60_000, open=1.0, high=1.0, low=1.0, close=1.0, volume=100.0)]
+    ])
+    downloader = _Downloader(tmp_path / "historical", exchange)
+
+    async def scenario() -> None:
+        result = await downloader.run_with_job_id(ctx, _request(), "job-1")
+        manifest = _manifest_for(result.file_path)
+        assert manifest.validation.status == "unknown"
+        assert manifest.quality.validation_status == "not_validated"
+
+        event = await _download_validated_event(ctx)
+        assert event.fields["status"] == "ok"
+        assert event.fields["metadata_validation_status"] == "unknown"
+        assert event.fields["timeframe_step_ms"] == 60_000
+        assert event.fields["timeframe_continuity"] == "fixed"
+
+    asyncio.run(scenario())
+
+
+def test_downloader_reports_preliminary_validation_error_without_stamping_metadata_error(tmp_path) -> None:
+    probe = _DatasetServiceProbe()
+    ctx = _Context(probe)
+    exchange = _FakeExchange([
+        [Candle(ts_ms=60_000, open=10.0, high=5.0, low=1.0, close=2.0, volume=100.0)]
+    ])
+    downloader = _Downloader(tmp_path / "historical", exchange)
+
+    async def scenario() -> None:
+        result = await downloader.run_with_job_id(ctx, _request(), "job-1")
+        manifest = _manifest_for(result.file_path)
+        assert manifest.validation.status == "unknown"
+        assert manifest.quality.validation_status == "not_validated"
+
+        event = await _download_validated_event(ctx)
+        assert event.severity == "error"
+        assert event.fields["status"] == "error"
+        assert event.fields["error_count"] >= 1
+        assert any("open out of bounds" in issue for issue in event.fields["issues"])
+
+    asyncio.run(scenario())
+
+
+def test_downloader_reports_fixed_timeframe_gap_as_preliminary_warning(tmp_path) -> None:
+    probe = _DatasetServiceProbe()
+    ctx = _Context(probe)
+    exchange = _FakeExchange([
+        [
+            Candle(ts_ms=60_000, open=1.0, high=1.0, low=1.0, close=1.0, volume=100.0),
+            Candle(ts_ms=180_000, open=1.0, high=1.0, low=1.0, close=1.0, volume=100.0),
+        ]
+    ])
+    downloader = _Downloader(tmp_path / "historical", exchange)
+
+    async def scenario() -> None:
+        await downloader.run_with_job_id(
+            ctx,
+            _custom_request(timeframe="1m", start_ms=60_000, end_ms=180_000, limit=2),
+            "job-1",
+        )
+        event = await _download_validated_event(ctx)
+        assert event.severity == "warning"
+        assert event.fields["status"] == "warning"
+        assert event.fields["warning_count"] >= 1
+        assert any("timeframe gaps detected" in issue for issue in event.fields["issues"])
+
+    asyncio.run(scenario())
+
+
+def test_downloader_preliminary_validation_uses_variable_month_timeframe(tmp_path) -> None:
+    probe = _DatasetServiceProbe()
+    ctx = _Context(probe)
+    exchange = _FakeExchange([
+        [
+            Candle(ts_ms=1_609_459_200_000, open=1.0, high=1.0, low=1.0, close=1.0, volume=100.0),
+            Candle(ts_ms=1_612_137_600_000, open=1.0, high=1.0, low=1.0, close=1.0, volume=100.0),
+        ]
+    ])
+    downloader = _Downloader(tmp_path / "historical", exchange)
+
+    async def scenario() -> None:
+        await downloader.run_with_job_id(
+            ctx,
+            _custom_request(
+                timeframe="1M",
+                start_ms=1_609_459_200_000,
+                end_ms=1_612_137_600_000,
+                limit=2,
+            ),
+            "job-1",
+        )
+        event = await _download_validated_event(ctx)
+        assert event.fields["status"] == "warning"
+        assert event.fields["timeframe_step_ms"] is None
+        assert event.fields["timeframe_continuity"] == "variable"
+        assert not any("timeframe gaps detected" in issue for issue in event.fields["issues"])
+
+    asyncio.run(scenario())
 
 
 def test_downloader_does_not_invalidate_dataset_cache_when_write_fails(tmp_path, monkeypatch) -> None:

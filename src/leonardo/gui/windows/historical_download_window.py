@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import Callable, Optional, Any
 
 from PySide6.QtCore import QTimer, Qt, Signal
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -40,6 +41,28 @@ class HistoricalDownloadForm:
     start_ms: Optional[int]
     end_ms: Optional[int]
     limit: Optional[int]
+
+
+def _bump_historical_download_widget_tree_font(widget: QWidget, points: int = 1) -> None:
+    if bool(widget.property("_historical_download_font_bump_applied")):
+        return
+
+    parent = widget.parentWidget()
+    if parent is not None and bool(parent.property("_historical_download_font_bump_applied")):
+        bumped = QFont(parent.font())
+    else:
+        bumped = QFont(widget.font())
+        point_size = bumped.pointSize()
+        if point_size > 0:
+            bumped.setPointSize(point_size + points)
+        else:
+            point_size_f = bumped.pointSizeF()
+            if point_size_f > 0:
+                bumped.setPointSizeF(point_size_f + float(points))
+
+    for target in (widget, *widget.findChildren(QWidget)):
+        target.setFont(QFont(bumped))
+    widget.setProperty("_historical_download_font_bump_applied", True)
 
 
 class DownloadPreflightConfirmDialog(QDialog):
@@ -79,6 +102,7 @@ class DownloadPreflightConfirmDialog(QDialog):
 
         self.start_btn.clicked.connect(self.accept)
         self.cancel_btn.clicked.connect(self.reject)
+        _bump_historical_download_widget_tree_font(self)
 
 
 class DownloadTaskMonitorDialog(QDialog):
@@ -167,6 +191,7 @@ class DownloadTaskMonitorDialog(QDialog):
 
         self.stop_btn.clicked.connect(self._on_stop)
         self.ok_btn.clicked.connect(self.accept)
+        _bump_historical_download_widget_tree_font(self)
 
     def set_context(
         self,
@@ -187,6 +212,7 @@ class DownloadTaskMonitorDialog(QDialog):
         self._current_timeframe = self._selected_timeframes[0] if len(self._selected_timeframes) == 1 else None
         self._timeframe_rows = {tf: {"status": "Queued"} for tf in self._selected_timeframes}
         self._batch_validation_dialog_shown = False
+        self._apply_preliminary_validation_style("ok")
         mode = "Batch" if is_batch else "Single timeframe"
         self.overall_progress.setVisible(bool(is_batch))
         self.current_progress.setFormat(f"{self._current_timeframe_label()}: waiting")
@@ -299,10 +325,16 @@ class DownloadTaskMonitorDialog(QDialog):
             elif message == "download validated":
                 status = self._fmt(fields.get("status"))
                 row.update({
-                    "status": f"Validated {status}",
+                    "status": f"Preliminary validation {status}",
                     "validation_status": fields.get("status"),
                     "validation_rows": fields.get("row_count"),
                     "validation_issues": fields.get("issues") or [],
+                    "validation_issue_count": fields.get("issue_count"),
+                    "validation_warning_count": fields.get("warning_count"),
+                    "validation_error_count": fields.get("error_count"),
+                    "metadata_validation_status": fields.get("metadata_validation_status"),
+                    "timeframe_step_ms": fields.get("timeframe_step_ms"),
+                    "timeframe_continuity": fields.get("timeframe_continuity"),
                     "path": fields.get("path") or row.get("path"),
                     "total_rows": fields.get("row_count") or row.get("total_rows"),
                     "dataframe_first_ts_ms": fields.get("dataframe_first_ts_ms") or fields.get("first_ts") or row.get("dataframe_first_ts_ms"),
@@ -330,7 +362,7 @@ class DownloadTaskMonitorDialog(QDialog):
             row = self._timeframe_rows.setdefault(batch_tf, {})
             validation_status = row.get("validation_status")
             status_text = (
-                f"Completed / Validation {self._fmt(validation_status)}"
+                f"Completed / Preliminary validation {self._fmt(validation_status)}"
                 if validation_status is not None
                 else "Completed"
             )
@@ -381,7 +413,7 @@ class DownloadTaskMonitorDialog(QDialog):
             validation_status = item.get("validation_status")
             status_text = item.get("status") or row.get("status")
             if validation_status is not None:
-                status_text = f"Completed / Validation {self._fmt(validation_status)}"
+                status_text = f"Completed / Preliminary validation {self._fmt(validation_status)}"
 
             row.update({
                 "status": status_text or "Completed",
@@ -392,6 +424,12 @@ class DownloadTaskMonitorDialog(QDialog):
                 "validation_status": validation_status if validation_status is not None else row.get("validation_status"),
                 "validation_rows": item.get("validation_rows") or row.get("validation_rows"),
                 "validation_issues": item.get("validation_issues") if isinstance(item.get("validation_issues"), list) else row.get("validation_issues", []),
+                "validation_issue_count": item.get("validation_issue_count") if item.get("validation_issue_count") is not None else row.get("validation_issue_count"),
+                "validation_warning_count": item.get("validation_warning_count") if item.get("validation_warning_count") is not None else row.get("validation_warning_count"),
+                "validation_error_count": item.get("validation_error_count") if item.get("validation_error_count") is not None else row.get("validation_error_count"),
+                "metadata_validation_status": item.get("metadata_validation_status") or row.get("metadata_validation_status"),
+                "timeframe_step_ms": item.get("timeframe_step_ms") if item.get("timeframe_step_ms") is not None else row.get("timeframe_step_ms"),
+                "timeframe_continuity": item.get("timeframe_continuity") or row.get("timeframe_continuity"),
             })
 
     def append_log(self, label: str, detail: str) -> None:
@@ -459,6 +497,8 @@ class DownloadTaskMonitorDialog(QDialog):
 
     def _render_final_recap(self, message: str, fields: dict[str, object], *, is_batch_job: bool) -> None:
         status = self._terminal_status(message, fields, is_batch_job=is_batch_job)
+        validation_severity = self._preliminary_validation_severity(message, fields, is_batch_job=is_batch_job)
+        self._apply_preliminary_validation_style(validation_severity)
         lines = [
             "Final recap",
             f"Status: {status}",
@@ -511,7 +551,7 @@ class DownloadTaskMonitorDialog(QDialog):
             ("fetched", "fetched"),
             ("downloaded", "downloaded_bars"),
             ("expected", "expected_bars"),
-            ("validation", "validation_status"),
+            ("preliminary_validation", "validation_status"),
         ):
             value = row.get(key)
             if value is not None:
@@ -549,20 +589,48 @@ class DownloadTaskMonitorDialog(QDialog):
                 f"{self._fmt_ts_ms(planned_start)} → {self._fmt_ts_ms(planned_end)}"
             )
 
+        continuity = row.get("timeframe_continuity")
+        step_ms = row.get("timeframe_step_ms")
+        if continuity == "fixed" and step_ms is not None:
+            lines.append(f"Selected timeframe check: fixed step {self._fmt(step_ms)} ms")
+        elif continuity == "variable":
+            lines.append("Selected timeframe check: variable duration; exact fixed-step continuity is skipped")
+
         validation_status = row.get("validation_status")
         issues = row.get("validation_issues")
         if validation_status is not None:
+            status_text = self._fmt_validation_status(validation_status)
+            counts = (
+                f"issues={self._fmt(row.get('validation_issue_count'), missing='0')} | "
+                f"warnings={self._fmt(row.get('validation_warning_count'), missing='0')} | "
+                f"errors={self._fmt(row.get('validation_error_count'), missing='0')}"
+            )
             if isinstance(issues, list) and issues:
                 lines.append(
-                    "Validation result: "
-                    + self._fmt(validation_status)
+                    "Preliminary validation: "
+                    + status_text
+                    + " | "
+                    + counts
                     + " | "
                     + "; ".join(str(issue) for issue in issues[:5])
                 )
             else:
-                lines.append(f"Validation result: {self._fmt(validation_status)} | No issues detected")
+                lines.append(f"Preliminary validation: {status_text} | {counts} | No issues detected")
         elif isinstance(issues, list) and issues:
-            lines.append("Validation issues: " + "; ".join(str(issue) for issue in issues[:5]))
+            lines.append("Preliminary validation issues: " + "; ".join(str(issue) for issue in issues[:5]))
+
+        metadata_status = row.get("metadata_validation_status")
+        if metadata_status is not None:
+            lines.append(f"Metadata validation.status: {self._fmt_validation_status(metadata_status)}")
+        if validation_status is not None:
+            if self._validation_severity(validation_status) in {"error", "warning"}:
+                lines.append(
+                    "User action: Open Historical > OHLCV Maintenance to inspect, validate, repair, or source-correct this dataset."
+                )
+            else:
+                lines.append(
+                    "User action: Manual OHLCV Maintenance validation is still required before this download is accepted."
+                )
 
         if row.get("error"):
             lines.append(f"Error: {self._fmt(row.get('error'))}")
@@ -573,6 +641,63 @@ class DownloadTaskMonitorDialog(QDialog):
 
         return lines
 
+    def _preliminary_validation_severity(
+        self,
+        message: str,
+        fields: dict[str, object],
+        *,
+        is_batch_job: bool,
+    ) -> str:
+        if is_batch_job:
+            severity = "ok"
+            for timeframe in self._selected_timeframes:
+                status = str(self._timeframe_rows.get(timeframe, {}).get("validation_status") or "").lower()
+                if status == "error":
+                    return "error"
+                if status == "warning":
+                    severity = "warning"
+                elif not status and message == "download batch completed":
+                    severity = "warning"
+            return severity
+
+        if message == "download validated":
+            return self._validation_severity(fields.get("status"))
+        return "ok"
+
+    def _validation_severity(self, status: object) -> str:
+        value = str(status or "").strip().lower()
+        if value == "error":
+            return "error"
+        if value == "warning":
+            return "warning"
+        return "ok"
+
+    def _fmt_validation_status(self, status: object) -> str:
+        value = str(status or "").strip().lower()
+        if value == "ok":
+            return "OK"
+        if value == "warning":
+            return "WARNING"
+        if value == "error":
+            return "ERROR"
+        if value == "unknown":
+            return "UNKNOWN"
+        return self._fmt(status)
+
+    def _apply_preliminary_validation_style(self, severity: str) -> None:
+        if severity == "error":
+            label_style = "font-weight: 700; color: #b00020;"
+            recap_style = "border: 2px solid #b00020;"
+        elif severity == "warning":
+            label_style = "font-weight: 700; color: #8a5a00;"
+            recap_style = "border: 2px solid #b8860b;"
+        else:
+            label_style = ""
+            recap_style = ""
+        self.status_lbl.setStyleSheet(label_style)
+        self.recap_title_lbl.setStyleSheet(label_style)
+        self.recap_box.setStyleSheet(recap_style)
+
     def _show_batch_validation_dialog_once(self) -> None:
         if self._batch_validation_dialog_shown:
             return
@@ -580,11 +705,11 @@ class DownloadTaskMonitorDialog(QDialog):
 
         severity, text = self._batch_validation_summary()
         if severity == "error":
-            QMessageBox.critical(self, "Validation Failed", text)
+            QMessageBox.critical(self, "Preliminary Validation Failed", text)
         elif severity == "warning":
-            QMessageBox.warning(self, "Validation Warning", text)
+            QMessageBox.warning(self, "Preliminary Validation Warning", text)
         else:
-            QMessageBox.information(self, "Validation OK", text)
+            QMessageBox.information(self, "Preliminary Validation OK", text)
 
     def _batch_validation_summary(self) -> tuple[str, str]:
         lines: list[str] = []
@@ -600,7 +725,7 @@ class DownloadTaskMonitorDialog(QDialog):
                 all_clean = False
                 if severity != "error":
                     severity = "warning"
-                lines.append(f"{timeframe}: validation result not recorded.")
+                lines.append(f"{timeframe}: preliminary validation result not recorded.")
                 continue
 
             if status == "error":
@@ -613,14 +738,18 @@ class DownloadTaskMonitorDialog(QDialog):
             if isinstance(issues, list) and issues:
                 all_clean = False
                 issue_text = "; ".join(str(issue) for issue in issues[:8])
-                lines.append(f"{timeframe}: {status} — {issue_text}")
+                lines.append(f"{timeframe}: preliminary {status} — {issue_text}")
             else:
-                lines.append(f"{timeframe}: {status} — No issues detected")
+                lines.append(f"{timeframe}: preliminary {status} — No issues detected")
 
         if severity == "ok" and all_clean:
-            return "ok", "No issues detected."
+            return (
+                "ok",
+                "Preliminary validation found no issues. Manual OHLCV Maintenance validation is still required.",
+            )
 
-        return severity, "\n".join(lines) if lines else "No validation details recorded."
+        text = "\n".join(lines) if lines else "No preliminary validation details recorded."
+        return severity, text + "\n\nOpen Historical > OHLCV Maintenance to inspect and validate the dataset."
 
     def _terminal_status(self, message: str, fields: dict[str, object], *, is_batch_job: bool) -> str:
         _ = fields
@@ -635,9 +764,9 @@ class DownloadTaskMonitorDialog(QDialog):
             if validation_status == "ok":
                 return "Completed"
             if validation_status == "warning":
-                return "Completed with validation warnings"
+                return "Completed with preliminary validation warnings"
             if validation_status == "error":
-                return "Completed with validation errors"
+                return "Completed with preliminary validation errors"
         return self._fmt(self._batch_terminal_status, missing="Completed")
 
     def _timeframe_from_fields(self, fields: dict[str, object]) -> Optional[str]:
@@ -726,7 +855,7 @@ class DownloadTaskMonitorDialog(QDialog):
                 f"fetched={fmt(fields.get('fetched'))}"
             )
         if message == "download validated":
-            return f"Validation {fmt(fields.get('status'))}: row_count={fmt(fields.get('row_count'))}"
+            return f"Preliminary validation {fmt(fields.get('status'))}: row_count={fmt(fields.get('row_count'))}"
         if message == "download cancelled":
             return "Download cancelled by user."
         if message == "download failed":
@@ -867,6 +996,7 @@ class HistoricalDownloadWindow(QMainWindow):
         layout.addLayout(btn_row)
         layout.addWidget(self.status_panel)
         root.setLayout(layout)
+        _bump_historical_download_widget_tree_font(self)
 
         # ---- Events ----
         self.exchange_cb.currentTextChanged.connect(self._refresh_markets)

@@ -23,6 +23,36 @@ def test_historical_download_window_status_uses_read_only_message_panel() -> Non
     assert "self.status_lbl.text().startswith" not in source
 
 
+def test_historical_download_window_reports_preliminary_validation_without_certifying_metadata() -> None:
+    source = Path("src/leonardo/gui/windows/historical_download_window.py").read_text(encoding="utf-8")
+
+    assert "Preliminary validation:" in source
+    assert "Metadata validation.status:" in source
+    assert "Manual OHLCV Maintenance validation is still required" in source
+    assert "Open Historical > OHLCV Maintenance" in source
+    assert "font-weight: 700; color: #b00020;" in source
+    assert "font-weight: 700; color: #8a5a00;" in source
+    assert "Preliminary Validation Failed" in source
+    assert "Preliminary Validation Warning" in source
+    assert "record_validation_result" not in source
+    assert "HistoricalDatasetValidator" not in source
+
+
+def test_historical_download_window_applies_local_font_bump_to_download_surfaces() -> None:
+    source = Path("src/leonardo/gui/windows/historical_download_window.py").read_text(encoding="utf-8")
+
+    assert "def _bump_historical_download_widget_tree_font" in source
+    assert "point_size + points" in source
+    assert "point_size_f + float(points)" in source
+    assert "target.setFont(QFont(bumped))" in source
+    assert "DownloadPreflightConfirmDialog" in source
+    assert "DownloadTaskMonitorDialog" in source
+    assert "_bump_historical_download_widget_tree_font(self)" in source
+    assert "QPlainTextEdit" in source
+    assert "QProgressBar" in source
+    assert "QApplication.setFont" not in source
+
+
 def test_historical_download_window_exposes_ohlcv_maintenance_intent_only() -> None:
     source = Path("src/leonardo/gui/windows/historical_download_window.py").read_text(encoding="utf-8")
 

@@ -49,6 +49,7 @@ def test_ohlcv_write_atomic_creates_metadata_sidecar(tmp_path: Path):
     assert manifest.quality.timeline_status == "verified"
     assert manifest.quality.monotonic_ts_ms is True
     assert manifest.quality.duplicate_ts_ms is False
+    assert manifest.quality.validation_status == "not_validated"
     assert manifest.validation.status == "unknown"
     assert [column.name for column in manifest.columns] == list(CsvOHLCVStore.HEADER)
 

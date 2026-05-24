@@ -479,7 +479,6 @@ class CsvOHLCVStore:
         duplicate_ts = len(ts_values) != len(set(ts_values))
         monotonic_ts = all(left < right for left, right in zip(ts_values, ts_values[1:]))
         timeline_status = "verified" if (not duplicate_ts and monotonic_ts) else "error"
-        validation_status = "ok" if timeline_status == "verified" else "error"
         validation_notes: tuple[str, ...] = ()
         if duplicate_ts:
             validation_notes += ("duplicate ts_ms values detected",)
@@ -529,7 +528,7 @@ class CsvOHLCVStore:
                 timeline_status=timeline_status,  # type: ignore[arg-type]
                 monotonic_ts_ms=monotonic_ts,
                 duplicate_ts_ms=duplicate_ts,
-                validation_status=validation_status,  # type: ignore[arg-type]
+                validation_status="not_validated",
                 validation_notes=validation_notes,
             ),
         )

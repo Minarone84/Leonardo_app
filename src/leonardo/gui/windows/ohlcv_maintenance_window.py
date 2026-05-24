@@ -6,8 +6,9 @@ from concurrent.futures import Future
 from typing import Optional
 
 from PySide6.QtCore import QTimer, Qt
-from PySide6.QtGui import QBrush, QColor, QFont
+from PySide6.QtGui import QBrush, QColor, QFont, QShowEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QGroupBox,
@@ -268,10 +269,12 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._repair_progress_dialog: OhlcvRepairProgressDialog | None = None
         self._pending_repair_validation_key: tuple[str, str, str, str] | None = None
         self._pending_repair_validation_recap = ""
+        self._initial_geometry_applied = False
 
         self.setWindowTitle("OHLCV Maintenance")
         self.resize(1160, 720)
-        self.setMinimumSize(940, 560)
+        self.setMinimumSize(640, 560)
+        self._apply_window_font_bump()
         self.statusBar().showMessage("Ready")
 
         root = QWidget(self)
@@ -378,7 +381,60 @@ class OHLCVMaintenanceWindow(QMainWindow):
         self._dataset_table.itemSelectionChanged.connect(self._on_selection_changed)
         self._dataset_table.itemChanged.connect(self._on_dataset_item_changed)
 
+        self._apply_maintenance_widget_fonts()
         self.refresh_datasets()
+
+    def showEvent(self, event: QShowEvent) -> None:
+        """Apply one-time opening geometry when a screen is available."""
+        super().showEvent(event)
+        self._apply_initial_screen_geometry()
+
+    def _apply_initial_screen_geometry(self) -> None:
+        if self._initial_geometry_applied:
+            return
+        screen = None
+        parent = self.parentWidget()
+        if parent is not None:
+            screen = parent.screen()
+        if screen is None:
+            screen = self.screen()
+        if screen is None:
+            app = QApplication.instance()
+            if app is not None:
+                screen = app.primaryScreen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+        if not available.isValid():
+            return
+        width = max(self.minimumWidth(), available.width() // 3)
+        width = min(width, available.width())
+        height = available.height()
+        self.setGeometry(available.left(), available.top(), width, height)
+        self._initial_geometry_applied = True
+
+    def _apply_window_font_bump(self) -> None:
+        font = QFont(self.font())
+        point_size = font.pointSize()
+        if point_size > 0:
+            font.setPointSize(point_size + 1)
+        else:
+            point_size_f = font.pointSizeF()
+            if point_size_f > 0:
+                font.setPointSizeF(point_size_f + 1.0)
+        self._maintenance_font = QFont(font)
+        self.setFont(font)
+
+    def _apply_maintenance_widget_fonts(self) -> None:
+        font = QFont(self._maintenance_font)
+        self.setFont(font)
+        self.statusBar().setFont(font)
+        for widget_type in (QLabel, QPushButton, QPlainTextEdit, QTableWidget, QGroupBox):
+            for widget in self.findChildren(widget_type):
+                widget.setFont(font)
+        self._dataset_table.horizontalHeader().setFont(font)
+        self._dataset_table.verticalHeader().setFont(font)
 
     def refresh_datasets(self) -> None:
         """Request the current read-only OHLCV dataset catalog."""
@@ -1659,7 +1715,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
                 continue
             item.setBackground(background)
             item.setForeground(foreground)
-            font = QFont(item.font())
+            font = QFont(self._dataset_table.font())
             font.setBold(bold)
             item.setFont(font)
         self._apply_checkbox_cell_style(row)
@@ -1672,7 +1728,7 @@ class OHLCVMaintenanceWindow(QMainWindow):
             return
         item.setBackground(QBrush(QColor(224, 224, 224)))
         item.setForeground(QBrush(QColor(0, 0, 0)))
-        font = QFont(item.font())
+        font = QFont(self._dataset_table.font())
         font.setBold(False)
         item.setFont(font)
 

@@ -144,6 +144,34 @@ def test_ohlcv_maintenance_window_centralizes_action_state_and_row_styling() -> 
     assert "font.setBold(bold)" in source
 
 
+def test_ohlcv_maintenance_window_uses_local_opening_geometry_and_font_bump() -> None:
+    source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
+
+    assert "def showEvent" in source
+    assert "def _apply_initial_screen_geometry" in source
+    assert "parent.screen()" in source
+    assert "app.primaryScreen()" in source
+    assert "screen.availableGeometry()" in source
+    assert "available.width() // 3" in source
+    assert "height = available.height()" in source
+    assert "self.setGeometry(available.left(), available.top(), width, height)" in source
+    assert "showFullScreen" not in source
+    assert "showMaximized" not in source
+    assert "WindowStaysOnTopHint" not in source
+
+    assert "def _apply_window_font_bump" in source
+    assert "point_size + 1" in source
+    assert "point_size_f + 1.0" in source
+    assert "def _apply_maintenance_widget_fonts" in source
+    assert "self.setFont(font)" in source
+    assert "self.statusBar().setFont(font)" in source
+    assert "QPlainTextEdit" in source
+    assert "QTableWidget" in source
+    assert "QPushButton" in source
+    assert "QLabel" in source
+    assert "QApplication.setFont" not in source
+
+
 def test_ohlcv_maintenance_window_requires_current_validation_before_repair_planning() -> None:
     source = Path("src/leonardo/gui/windows/ohlcv_maintenance_window.py").read_text(encoding="utf-8")
 

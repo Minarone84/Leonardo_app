@@ -19,7 +19,7 @@ from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatase
 from leonardo.data.historical.downloader import DownloadRequest, HistoricalDownloader
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
-from leonardo.data.historical.validator import HistoricalDatasetValidator
+from leonardo.data.historical.validator import HistoricalDatasetValidator, ValidationIssue
 from leonardo.data.naming import MarketId, canonicalize
 
 
@@ -104,6 +104,11 @@ class OhlcvValidationIssue:
 
     severity: str
     message: str
+    code: str | None = None
+    row_index: int | None = None
+    ts_ms: int | None = None
+    column: str | None = None
+    repairable: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -290,7 +295,7 @@ class HistoricalOhlcvMaintenanceService:
             status=report.status,
             row_count=report.row_count,
             issues=tuple(
-                OhlcvValidationIssue(severity=issue.severity, message=issue.message)
+                self._ohlcv_validation_issue(issue)
                 for issue in report.issues
             ),
             metadata_updated=metadata_updated,
@@ -308,7 +313,7 @@ class HistoricalOhlcvMaintenanceService:
         report = validator.validate(summary.csv_path)
         row_timestamps = self._store.read_ts_ms_by_row(summary.csv_path)
         issues = tuple(
-            OhlcvValidationIssue(severity=issue.severity, message=issue.message)
+            self._ohlcv_validation_issue(issue)
             for issue in report.issues
         )
         ranges, warnings = self._repair_ranges_from_validation(
@@ -571,15 +576,14 @@ class HistoricalOhlcvMaintenanceService:
 
         for issue in issues:
             row_index = self._row_index_for_issue(issue)
-            if row_index is None:
-                warnings.append(f"Issue has no row timestamp anchor: {issue.message}")
-                continue
-            if row_index < 0 or row_index >= len(row_timestamps):
-                warnings.append(f"Issue row is outside the CSV timestamp map: {issue.message}")
-                continue
-
-            ts_ms = row_timestamps[row_index]
+            ts_ms = self._ts_ms_for_issue(issue, row_timestamps)
             if ts_ms is None:
+                if row_index is None:
+                    warnings.append(f"Issue has no row timestamp anchor: {issue.message}")
+                    continue
+                if row_index < 0 or row_index >= len(row_timestamps):
+                    warnings.append(f"Issue row is outside the CSV timestamp map: {issue.message}")
+                    continue
                 warnings.append(f"Issue row has an unreadable ts_ms value: {issue.message}")
                 continue
 
@@ -600,7 +604,7 @@ class HistoricalOhlcvMaintenanceService:
                 (
                     start_ts_ms,
                     end_ts_ms,
-                    (row_index,),
+                    () if row_index is None else (row_index,),
                     (ts_ms,),
                     (f"{issue.severity}: {issue.message}",),
                 )
@@ -744,10 +748,7 @@ class HistoricalOhlcvMaintenanceService:
     ) -> dict[int, tuple[str, ...]]:
         messages_by_ts: dict[int, list[str]] = {}
         for issue in issues:
-            row_index = self._row_index_for_issue(issue)
-            if row_index is None or row_index < 0 or row_index >= len(row_timestamps):
-                continue
-            ts_ms = row_timestamps[row_index]
+            ts_ms = self._ts_ms_for_issue(issue, row_timestamps)
             if ts_ms is None:
                 continue
             messages_by_ts.setdefault(ts_ms, []).append(f"{issue.severity}: {issue.message}")
@@ -784,10 +785,40 @@ class HistoricalOhlcvMaintenanceService:
         return f"Repair executed, but post-repair validation still failed for {dataset}."
 
     def _row_index_for_issue(self, issue: OhlcvValidationIssue) -> int | None:
+        if issue.row_index is not None:
+            return int(issue.row_index)
         match = _VALIDATION_ROW_RE.search(issue.message)
         if match is None:
             return None
         return int(match.group(1))
+
+    def _ts_ms_for_issue(
+        self,
+        issue: OhlcvValidationIssue,
+        row_timestamps: tuple[int | None, ...],
+    ) -> int | None:
+        if issue.ts_ms is not None:
+            return int(issue.ts_ms)
+
+        row_index = self._row_index_for_issue(issue)
+        if row_index is None or row_index < 0 or row_index >= len(row_timestamps):
+            return None
+        ts_ms = row_timestamps[row_index]
+        if ts_ms is None:
+            return None
+        return int(ts_ms)
+
+    @staticmethod
+    def _ohlcv_validation_issue(issue: ValidationIssue) -> OhlcvValidationIssue:
+        return OhlcvValidationIssue(
+            severity=issue.severity,
+            message=issue.message,
+            code=issue.code,
+            row_index=issue.row_index,
+            ts_ms=issue.ts_ms,
+            column=issue.column,
+            repairable=issue.repairable,
+        )
 
     def _dataset_key(self, summary: OhlcvDatasetSummary) -> tuple[str, str, str, str]:
         return (summary.exchange, summary.market_type, summary.symbol, summary.timeframe)

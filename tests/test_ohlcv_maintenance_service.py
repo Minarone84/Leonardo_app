@@ -10,6 +10,7 @@ from leonardo.data.historical.dataset_service import DatasetId, HistoricalDatase
 from leonardo.data.historical.ohlcv_maintenance import HistoricalOhlcvMaintenanceService
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
+from leonardo.data.historical.validator import ValidationIssue
 from leonardo.data.naming import canonicalize
 
 
@@ -157,6 +158,100 @@ def test_maintenance_service_plans_timestamp_anchored_repair_without_metadata_mu
     assert plan.csv_fingerprint_size_bytes is not None
     assert plan.csv_fingerprint_modified_at_ms is not None
     assert metadata_path.read_text(encoding="utf-8") == before_metadata
+
+
+def test_maintenance_service_repair_plan_prefers_structured_issue_timestamp(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    CsvOHLCVStore().write_atomic(
+        csv_path,
+        [
+            Candle(60_000, 1.0, 2.0, 0.5, 1.5, 10.0),
+            Candle(120_000, 1.0, 2.0, 0.5, 1.5, 11.0),
+        ],
+        market=market,
+    )
+
+    class _FakeValidator:
+        step_ms = 60_000
+
+        def __init__(self, _timeframe: str) -> None:
+            pass
+
+        def validate(self, _path: Path):
+            return SimpleNamespace(
+                status="error",
+                row_count=2,
+                issues=[
+                    ValidationIssue(
+                        severity="error",
+                        message="structured open issue without row text",
+                        code="open_out_of_bounds",
+                        row_index=1,
+                        ts_ms=120_000,
+                        column="open",
+                        repairable=True,
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("leonardo.data.historical.ohlcv_maintenance.HistoricalDatasetValidator", _FakeValidator)
+
+    plan = _service(tmp_path).plan_ohlcv_repair(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    assert plan.actionable is True
+    assert len(plan.ranges) == 1
+    assert plan.ranges[0].rows == (1,)
+    assert plan.ranges[0].anchor_ts_ms == (120_000,)
+    assert "structured open issue without row text" in plan.ranges[0].reason
+    assert not any("no row timestamp anchor" in warning for warning in plan.warnings)
+
+
+def test_maintenance_service_repair_plan_keeps_legacy_row_message_fallback(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    market = canonicalize("bybit", "linear", "LINKUSDT", "1m")
+    paths = HistoricalPaths(root=tmp_path / "historical")
+    csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
+    CsvOHLCVStore().write_atomic(
+        csv_path,
+        [
+            Candle(60_000, 1.0, 2.0, 0.5, 1.5, 10.0),
+            Candle(120_000, 1.0, 2.0, 0.5, 1.5, 11.0),
+        ],
+        market=market,
+    )
+
+    class _FakeValidator:
+        step_ms = 60_000
+
+        def __init__(self, _timeframe: str) -> None:
+            pass
+
+        def validate(self, _path: Path):
+            return SimpleNamespace(
+                status="error",
+                row_count=2,
+                issues=[
+                    ValidationIssue(
+                        severity="error",
+                        message="legacy open issue at row 1",
+                    )
+                ],
+            )
+
+    monkeypatch.setattr("leonardo.data.historical.ohlcv_maintenance.HistoricalDatasetValidator", _FakeValidator)
+
+    plan = _service(tmp_path).plan_ohlcv_repair(DatasetId("bybit", "linear", "LINKUSDT", "1m"))
+
+    assert plan.actionable is True
+    assert plan.ranges[0].rows == (1,)
+    assert plan.ranges[0].anchor_ts_ms == (120_000,)
 
 
 def test_maintenance_service_repair_plan_keeps_unanchored_issues_read_only(tmp_path: Path) -> None:

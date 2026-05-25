@@ -450,16 +450,29 @@ Implemented baseline:
   - Blocked current OHLCV blocks recovery actionability.
   - `ArtifactRecoveryRegenerator` continues delegating through `ArtifactRecipeExecutor`.
   - `AnalysisDatabaseStore.materialization_source_ohlcv_drift_report(...)` exposes read-only materialization source-drift reporting.
-  - Update Manager remains future work.
+  - Dataset-wide update orchestration remains future work.
+
+- M16 Data Manager recipe-collection update workflow is accepted:
+  - D1 added `DataManagerUpdateService`, `DataManagerUpdatePlan`, items, actions, and blockers for read-only recipe-collection update planning.
+  - D2 added `execute_update_plan(...)` for controlled selected-action and all-actionable execution from an existing plan.
+  - D3 added the Data Manager `Plan Updates...` recipe-collection UI entry point, update-plan dialog, execution report display, and post-execution saved-artifact / Analysis Database refresh.
+  - D4 was a validation-only release-readiness pass with no code, test, or documentation changes.
+  - Plans map `ArtifactRecoveryPlanner` statuses into update items/actions/blockers and include linked Analysis Database materialization source-drift checks when `source_database_id` is present.
+  - Artifact regeneration remains delegated through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`.
+  - Linked Analysis Database rebuild remains delegated through `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`, and rebuild actions depend on planned artifact regeneration actions.
+  - GUI displays service-produced plan/report data and does not parse `source_ohlcv.snapshot` or classify source drift.
+  - Dataset-wide scanning, arbitrary dependency graph inference, background task/progress integration, and broader Update Manager entry points remain future work.
 
 Next direction:
 
 - Treat the current Historical Download Manager M7/M13 behavior as the accepted OHLCV ingestion and preliminary-validation baseline.
 - Treat OHLCV Maintenance as the explicit acceptance workflow for OHLCV validation, repair, source-invalid handling, source correction, and modified status.
 - Treat the current historical chart/study M8 behavior plus M12 apply/save/recovery hardening as the accepted chart-session and artifact-calculation baseline.
-- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates, M14 source OHLCV provenance snapshots, and M15 source-drift classification as the accepted analysis-database baseline.
+- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates, M14 source OHLCV provenance snapshots, M15 source-drift classification, and M16 recipe-collection update workflow as the accepted analysis-database baseline.
 - Integrate GUI release checks into CI/build packaging so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files and preserve Data Manager ownership boundaries.
-- Design Data Manager Update Manager / update orchestration using the existing Patch C/Patch C2 provenance and recovery surfaces. The future Update Manager should plan and execute user-confirmed updates through `ArtifactRecoveryPlanner`, `ArtifactRecoveryRegenerator`, `ArtifactRecoveryDatabaseRebuilder`, and store services without moving classification into GUI.
+- Design broader Data Manager update expansion for dataset-wide, artifact-specific, and database-specific entry points using the existing provenance, recovery, update-plan, regenerator, rebuilder, and store services without moving classification into GUI.
+- Consider background task/progress integration for long update executions, while preserving explicit user confirmation and data-layer ownership.
+- Consider arbitrary dependency graph inference only as a future expansion beyond recipe collection order.
 - Consider adding recipe-hash lineage into saved artifact sidecars in a future migration so recovery can prove exact recipe-hash freshness instead of metadata-level consistency only.
 - A partition-level artifact index may later cache summaries for faster listing/search, while sidecars remain the metadata source of truth.
 
@@ -525,7 +538,9 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
-v0.22: Recovery source-drift classification. Documents Patch C2 implementation: source OHLCV snapshot comparison helpers, ArtifactRecoveryPlanner source-drift classification, legacy missing snapshot compatibility, blocked current-OHLCV actionability behavior, existing recovery execution delegation, and AnalysisDatabaseStore read-only materialization source-drift reporting. Update Manager remains future work.
+v0.23: Data Manager recipe-collection update workflow. Documents D1-D4 implementation: read-only update planning, controlled selected/all actionable execution, recipe-collection `Plan Updates...` UI, execution reports, linked Analysis Database rebuild planning/execution through existing services, post-execution refresh, and validation-only D4. Dataset-wide scanning, arbitrary dependency inference, background task/progress integration, and broader Update Manager entry points remain future work.
+
+v0.22: Recovery source-drift classification. Documents Patch C2 implementation: source OHLCV snapshot comparison helpers, ArtifactRecoveryPlanner source-drift classification, legacy missing snapshot compatibility, blocked current-OHLCV actionability behavior, existing recovery execution delegation, and AnalysisDatabaseStore read-only materialization source-drift reporting. Recipe-collection update workflow was added later in v0.23.
 
 v0.21: Data Manager source OHLCV lineage hardening. Documents Patch C implementation: derived artifact sidecars and Analysis Database materialization metadata now record `source_ohlcv.snapshot` with source dataset identity, validation status, fingerprints, capture timestamp, and source-correction provenance. Rebuild refreshes materialization source provenance. Recovery/source-drift classification was added later in v0.22.
 

@@ -455,7 +455,7 @@ Save-only artifact calculation through Data Manager requires accepted OHLCV befo
 
 Data Manager lineage hardening is implemented for save-only artifact calculation. Saved derived artifact sidecars record the accepted source OHLCV provenance under `source_ohlcv.snapshot`, including source validation status, quality status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. The source snapshot is not part of tool identity, naming, params, bindings, or recipe identity. Recovery planning can compare the recorded snapshot against current accepted OHLCV truth and classify source-drifted artifacts as stale. Regeneration remains an explicit recovery action through the existing planner/regenerator/executor path; source-drift classification does not change financial-tool identity, recipe identity, or apply/save semantics.
 
-A future Update Manager may orchestrate broader update workflows.
+Data Manager recipe-collection update planning now consumes that recovery classification for saved recipe collections. `DataManagerUpdateService` may plan and execute selected/all actionable regeneration actions, but regeneration still flows through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`, preserving the Apply vs Save boundary and the normal save-only artifact calculation path. Broader dataset-wide update orchestration remains future work.
 
 Restore-only metadata backfill may recreate missing/corrupt sidecars from existing CSV files, but it must not rewrite the CSV value artifact and must not become the normal save path.
 

@@ -178,6 +178,7 @@ Analysis Database folder lifecycle is owned by the historical data layer. `Analy
 Generated derived artifacts and Analysis Database materializations record accepted source OHLCV provenance under `source_ohlcv.snapshot` when they are created from loadable OHLCV. Recovery planning can compare that recorded snapshot against current accepted OHLCV truth to classify source drift, and Analysis Database materializations expose a read-only source-drift report through the store. This is downstream lineage metadata only: downloaded OHLCV still starts as `unknown` / `not_validated`, and OHLCV Maintenance remains the manual acceptance workflow.
 
 Artifact recipe lifecycle is separate from saved artifact value storage. `ArtifactRecipeStore` owns reusable single-recipe JSON files, while `ArtifactRecipeCollectionStore` owns ordered collection JSON files with embedded recipe snapshots and optional dependency/source-database metadata. Recovery services may inspect these files to plan or request regeneration, but CSV artifact writing remains owned by the calculation/persistence path and Analysis Database materialization remains store-owned.
+The Data Manager recipe-collection update workflow can plan and execute selected/all actionable artifact regeneration and linked Analysis Database rebuild actions after OHLCV is accepted. It uses the existing recovery and rebuild services; ingestion/download workflows do not execute those updates.
 
 ------------------------------------------------------------
 3. Core Historical Downloader
@@ -362,6 +363,7 @@ artifact_recipe_collections/{collection_id}.json
 ```
 
 Recipe recovery follows strict ownership: the planner inspects, including source-drift checks from recorded `source_ohlcv.snapshot`; the regenerator delegates recipe execution; and the database rebuilder delegates materialization to `AnalysisDatabaseStore`. Status checks remain read-only and do not regenerate artifacts or rebuild databases.
+The recipe-collection update workflow wraps those same services into `DataManagerUpdateService` plans and confirmed executions. Its scope remains saved recipe collections, not dataset-wide update scanning or background update tasks.
 
 ------------------------------------------------------------
 7. GUI — Historical Download Window

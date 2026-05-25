@@ -267,6 +267,7 @@ Responsibilities include:
 - explicitly editing Analysis Database components through `Edit Selected Database Components...`;
 - saving full-dataset artifact recipes and recipe collections through the save-only financial-tool workflow;
 - checking recipe-collection recovery status, regenerating planner-actionable artifacts, and rebuilding linked Analysis Databases through data-layer recovery services;
+- planning and executing recipe-collection-scoped updates through `Plan Updates...` and `DataManagerUpdateService`;
 - previewing tabular artifacts in a read-only dataframe view;
 - exposing explicit data-check / metadata-restore workflows.
 
@@ -308,6 +309,9 @@ Current artifact recipe / recovery UI behavior:
 - `Check Recovery Status` displays planner-owned status for expected artifacts without executing anything;
 - `Recover Actionable Artifacts` delegates regeneration to the recovery regenerator and executor, and only planner-actionable recipes are attempted;
 - `Rebuild Linked Database` delegates linked Analysis Database materialization through the recovery database rebuilder and `AnalysisDatabaseStore`;
+- `Plan Updates...` opens a recipe-collection update dialog backed by `DataManagerUpdateService`;
+- the update dialog displays service-produced plan items, actions, blockers, warnings, and execution reports;
+- update execution supports selected actions and all actionable actions, reports completed/skipped/failed/blocked results including partial failures, and refreshes saved artifact and Analysis Database lists after execution;
 - Data Manager refreshes artifact and database lists after successful recovery/rebuild, but it does not classify artifact freshness or materialize dataframes itself.
 
 Current OHLCV loadability behavior:
@@ -335,9 +339,9 @@ It must not:
 
 Data Manager maintenance actions such as metadata backfill are restore-only operations. They may recreate missing or unreadable `.meta.json` sidecars from existing CSV files, but they must not rewrite CSV data and must not be treated as the normal save path. Analysis Database create, rename, delete, build, rebuild, and explicit component-edit operations must go through the appropriate data-layer service, because `manifest.json` is the metadata-sidecar equivalent for the folder-backed `dataframe.csv` artifact. GUI release checks enforce that Database Builder does not consume artifact selections, does not call feature-replacement rebuild APIs, keeps build/rebuild separate and manifest-driven, and keeps main Data Manager actions in the shared right-side button rack layout.
 
-Data Manager lineage hardening and source-drift classification are data-layer owned. Generated derived artifact sidecars and Analysis Database materialization metadata receive `source_ohlcv.snapshot` through the save/materialization services, including source validation, fingerprint, and source-correction provenance when applicable. `ArtifactRecoveryPlanner` and Analysis Database store surfaces may report source-drift status to GUI recovery/status views, but the GUI does not parse, create, display, or classify this snapshot.
+Data Manager lineage hardening, source-drift classification, and update planning are data-layer owned. Generated derived artifact sidecars and Analysis Database materialization metadata receive `source_ohlcv.snapshot` through the save/materialization services, including source validation, fingerprint, and source-correction provenance when applicable. `ArtifactRecoveryPlanner`, `AnalysisDatabaseStore`, and `DataManagerUpdateService` may report source-drift and update-plan status to GUI recovery/update views, but the GUI does not parse, create, display, compare, or classify this snapshot.
 
-A future Update Manager may consume these data-layer surfaces.
+The implemented update UI is recipe-collection scoped and follows the existing `ToolCalculationWidget` local data-layer service pattern rather than adding CoreBridge update-plan APIs. It is not a dataset-wide Update Manager dashboard, arbitrary dependency graph workflow, or background task/progress monitor.
 
 
 ## Historical Workspace Model

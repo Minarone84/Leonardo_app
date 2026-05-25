@@ -628,8 +628,13 @@ Artifact recovery is intentionally split into narrow data-layer responsibilities
 - `ArtifactRecoveryRegenerator` owns recovery orchestration for planner-actionable recipes only. It delegates execution to `ArtifactRecipeExecutor` and does not calculate directly.
 - `ArtifactRecipeExecutor` owns recipe execution order/reporting and delegates full-dataset computation/saves to `ArtifactCalculationService`.
 - `ArtifactRecoveryDatabaseRebuilder` gates linked Analysis Database materialization after clean recovery and delegates dataframe rebuilding to `AnalysisDatabaseStore`.
+- `DataManagerUpdateService` owns recipe-collection-scoped update planning and confirmed action execution. It consumes recovery planner and Analysis Database drift reports, but delegates artifact regeneration and linked database rebuilds through the existing recovery services.
 
 Source-drifted artifacts are classified as stale and become planner-actionable only when current OHLCV is loadable and the normal recipe execution blockers are clear. Legacy artifacts missing `source_ohlcv.snapshot` remain compatible as `freshness_unknown` / lineage unknown. Current OHLCV that is blocked or not loadable blocks actionability. No recovery layer may manually write CSV artifacts, rewrite `.meta.json` sidecars, repair Analysis Database manifests, regenerate during status checks, or duplicate calculation/materialization semantics owned by another layer.
+
+`DataManagerUpdateService` builds read-only `DataManagerUpdatePlan` records from recipe collections. Plans map recovery statuses into items, actions, blockers, and warnings; include linked Analysis Database materialization source-drift checks when the collection has `source_database_id`; and preserve recipe collection order for artifact action ordering. `execute_update_plan(...)` executes selected actions or all actionable actions from an existing plan, respects action dependencies, skips blocked/review/none actions, reports completed/skipped/failed/blocked results, and does not perform low-level CSV, sidecar, manifest, or dataframe writes directly. Artifact regeneration remains delegated through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`; linked Analysis Database rebuild remains delegated through `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`.
+
+The current update workflow targets recipe collections only. It is not a dataset-wide update scan, arbitrary dependency graph inference engine, background task runner, or CoreBridge API surface.
 
 ### Artifact identity fields
 

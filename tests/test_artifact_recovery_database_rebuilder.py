@@ -25,8 +25,14 @@ from leonardo.data.historical.artifact_recovery_database_rebuilder import (
 from leonardo.data.historical.artifact_recovery_regenerator import (
     ArtifactRecoveryRegenerationReport,
 )
+from leonardo.data.historical.artifact_metadata_contracts import ArtifactMetadataEntry
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SOURCE_OHLCV_PROVENANCE_KEY,
+    SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+    build_source_ohlcv_provenance_snapshot,
+)
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
@@ -101,6 +107,16 @@ def _save_rsi_artifact(root: Path, recipe: ArtifactRecipe) -> Path:
         params_status="explicit",
         bindings={},
         bindings_status="unknown",
+        metadata=(
+            ArtifactMetadataEntry(
+                namespace=SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+                key=SOURCE_OHLCV_PROVENANCE_KEY,
+                value=build_source_ohlcv_provenance_snapshot(
+                    historical_root=root,
+                    market=recipe.market,
+                ),
+            ),
+        ),
     )
 
 

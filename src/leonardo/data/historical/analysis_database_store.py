@@ -17,7 +17,10 @@ from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.historical.source_ohlcv_provenance import (
     SOURCE_OHLCV_PROVENANCE_KEY,
     SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+    SourceOhlcvDriftReport,
+    build_source_ohlcv_drift_report,
     build_source_ohlcv_provenance_snapshot,
+    extract_source_ohlcv_snapshot,
 )
 from leonardo.data.naming import MarketId, canonicalize
 
@@ -266,6 +269,33 @@ class AnalysisDatabaseStore:
         if not path.exists():
             raise FileNotFoundError(f"Analysis database dataframe not found: {path}")
         return pd.read_csv(path)
+
+    def materialization_source_ohlcv_drift_report(
+        self,
+        *,
+        market: MarketId,
+        database_id: str,
+    ) -> SourceOhlcvDriftReport:
+        """
+        Compare materialized source OHLCV provenance with current OHLCV truth.
+
+        The method is read-only. It does not rebuild the dataframe, repair the
+        manifest, or backfill missing legacy source provenance.
+        """
+        manifest = self.load_manifest(market=market, database_id=database_id)
+        if manifest.materialization is None:
+            return SourceOhlcvDriftReport(
+                matches=False,
+                status="unknown",
+                reasons=("missing_recorded_source_ohlcv_snapshot",),
+                actionable=True,
+            )
+        recorded_snapshot = extract_source_ohlcv_snapshot(manifest.materialization.metadata)
+        return build_source_ohlcv_drift_report(
+            historical_root=self._historical_root,
+            market=manifest.market,
+            recorded_snapshot=recorded_snapshot,
+        )
 
     def rename_database(self, *, market: MarketId, database_id: str, new_display_name: str) -> AnalysisDatabaseManifest:
         """Rename a database by mutating display_name only.

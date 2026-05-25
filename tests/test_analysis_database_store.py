@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import pandas as pd
@@ -302,6 +303,151 @@ def test_materialize_database_allows_modified_ohlcv(tmp_path: Path) -> None:
     assert snapshot["source_correction"]["record_count"] == 1  # type: ignore[index]
     records = snapshot["source_correction"]["records"]  # type: ignore[index]
     assert records[0]["ts_ms"] == 1000  # type: ignore[index]
+
+
+def test_materialization_source_ohlcv_drift_report_is_current_for_matching_snapshot(
+    tmp_path: Path,
+) -> None:
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    _write_ohlcv(tmp_path, market)
+    _write_feature_artifact(
+        tmp_path,
+        market,
+        family="oscillators",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+        values=[45.0, 55.0, 65.0],
+    )
+    store = AnalysisDatabaseStore(historical_root=tmp_path)
+    rsi = _feature(
+        family="oscillators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+    )
+    draft = _draft(store, market, display_name="BTCUSDT_30m_source_current", feature=rsi)
+    materialized = store.materialize_database(market=market, database_id=draft.database_id)
+
+    report = store.materialization_source_ohlcv_drift_report(
+        market=market,
+        database_id=materialized.database_id,
+    )
+
+    assert report.status == "current"
+    assert report.matches is True
+    assert report.reasons == ()
+
+
+def test_materialization_source_ohlcv_drift_report_detects_source_drift(
+    tmp_path: Path,
+) -> None:
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    _write_ohlcv(tmp_path, market)
+    _write_feature_artifact(
+        tmp_path,
+        market,
+        family="oscillators",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+        values=[45.0, 55.0, 65.0],
+    )
+    store = AnalysisDatabaseStore(historical_root=tmp_path)
+    rsi = _feature(
+        family="oscillators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+    )
+    draft = _draft(store, market, display_name="BTCUSDT_30m_source_drift", feature=rsi)
+    materialized = store.materialize_database(market=market, database_id=draft.database_id)
+    _write_ohlcv(tmp_path, market, validation_status="ok", price_offset=1_000_000.0)
+
+    report = store.materialization_source_ohlcv_drift_report(
+        market=market,
+        database_id=materialized.database_id,
+    )
+
+    assert report.status == "source_drift"
+    assert report.matches is False
+    assert "source_csv_fingerprint_changed" in report.reasons
+
+
+def test_materialization_source_ohlcv_drift_report_keeps_legacy_missing_snapshot_compatible(
+    tmp_path: Path,
+) -> None:
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    _write_ohlcv(tmp_path, market)
+    _write_feature_artifact(
+        tmp_path,
+        market,
+        family="oscillators",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+        values=[45.0, 55.0, 65.0],
+    )
+    store = AnalysisDatabaseStore(historical_root=tmp_path)
+    rsi = _feature(
+        family="oscillators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+    )
+    draft = _draft(store, market, display_name="BTCUSDT_30m_source_legacy", feature=rsi)
+    materialized = store.materialize_database(market=market, database_id=draft.database_id)
+    assert materialized.materialization is not None
+    legacy = replace(
+        materialized,
+        materialization=replace(materialized.materialization, metadata=()),
+    )
+    store.save_manifest(legacy)
+
+    report = store.materialization_source_ohlcv_drift_report(
+        market=market,
+        database_id=materialized.database_id,
+    )
+
+    assert report.status == "unknown"
+    assert "missing_recorded_source_ohlcv_snapshot" in report.reasons
+    assert report.actionable is True
+
+
+def test_materialization_source_ohlcv_drift_report_blocks_when_current_ohlcv_is_not_loadable(
+    tmp_path: Path,
+) -> None:
+    market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
+    _write_ohlcv(tmp_path, market)
+    _write_feature_artifact(
+        tmp_path,
+        market,
+        family="oscillators",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+        values=[45.0, 55.0, 65.0],
+    )
+    store = AnalysisDatabaseStore(historical_root=tmp_path)
+    rsi = _feature(
+        family="oscillators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi__default__period-14",
+        column_name="rsi_14",
+    )
+    draft = _draft(store, market, display_name="BTCUSDT_30m_source_blocked", feature=rsi)
+    materialized = store.materialize_database(market=market, database_id=draft.database_id)
+    _write_ohlcv(tmp_path, market, validation_status="unknown", price_offset=1_000_000.0)
+
+    report = store.materialization_source_ohlcv_drift_report(
+        market=market,
+        database_id=materialized.database_id,
+    )
+
+    assert report.status == "blocked"
+    assert report.matches is False
+    assert "current_source_ohlcv_not_loadable" in report.reasons
+    assert report.actionable is False
 
 
 @pytest.mark.parametrize("status", ["unknown", "error", "warning"])

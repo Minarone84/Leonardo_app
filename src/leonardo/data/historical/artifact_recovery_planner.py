@@ -24,6 +24,11 @@ from leonardo.data.historical.dataset_service import (
 )
 from leonardo.data.historical.derived_store_csv import DerivedKind, DerivedCsvStore
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SourceOhlcvDriftReport,
+    build_source_ohlcv_drift_report,
+    extract_source_ohlcv_snapshot,
+)
 from leonardo.data.historical.store_csv import CsvOHLCVStore
 from leonardo.data.historical.utc_dependency_sources import utc_peak_trough_columns
 from leonardo.data.naming import MarketId
@@ -296,6 +301,8 @@ class ArtifactRecoveryPlanner:
         if status != "up_to_date" and blocked_reasons:
             notes = (*notes, f"Artifact status before recalculation blockers: {status}.")
             status = "blocked"
+        if status == "blocked":
+            can_recalculate = False
 
         return ArtifactRecoveryItemReport(
             recipe_id=recipe.recipe_id,
@@ -350,25 +357,104 @@ class ArtifactRecoveryPlanner:
                 (f"Expected metadata sidecar could not be loaded: {expected_metadata_path}",),
             )
 
-        stale_reasons = self._metadata_mismatch_reasons(
+        stale_reasons = list(
+            self._metadata_mismatch_reasons(
+                recipe=recipe,
+                kind=kind,
+                expected_instance_key=expected_instance_key,
+                expected_csv_path=expected_csv_path,
+                csv_columns=csv_columns,
+                manifest=manifest,
+            )
+        )
+        notes: list[str] = []
+
+        source_drift_report = self._source_ohlcv_drift_report(
             recipe=recipe,
-            kind=kind,
-            expected_instance_key=expected_instance_key,
-            expected_csv_path=expected_csv_path,
-            csv_columns=csv_columns,
             manifest=manifest,
         )
+        source_drift_messages = self._source_ohlcv_report_messages(source_drift_report)
+        if source_drift_report.status == "blocked":
+            return "blocked", tuple(stale_reasons), source_drift_messages
+        if source_drift_report.status == "source_drift":
+            stale_reasons.extend(source_drift_messages)
+        elif source_drift_report.status == "unknown":
+            notes.extend(source_drift_messages)
+
         if stale_reasons:
-            return "stale", stale_reasons, ()
+            return "stale", tuple(stale_reasons), tuple(notes)
 
         freshness_notes = self._freshness_unknown_reasons(
             expected_csv_path=expected_csv_path,
             manifest=manifest,
         )
-        if freshness_notes:
-            return "freshness_unknown", (), freshness_notes
+        notes.extend(freshness_notes)
+        if notes:
+            return "freshness_unknown", (), tuple(notes)
 
         return "up_to_date", (), ()
+
+    def _source_ohlcv_drift_report(
+        self,
+        *,
+        recipe: ArtifactRecipe,
+        manifest: HistoricalCsvArtifactManifest,
+    ) -> SourceOhlcvDriftReport:
+        recorded_snapshot = extract_source_ohlcv_snapshot(manifest.metadata)
+        return build_source_ohlcv_drift_report(
+            historical_root=self._historical_root,
+            market=recipe.market,
+            recorded_snapshot=recorded_snapshot,
+        )
+
+    def _source_ohlcv_report_messages(
+        self,
+        report: SourceOhlcvDriftReport,
+    ) -> tuple[str, ...]:
+        messages = {
+            "missing_recorded_source_ohlcv_snapshot": (
+                "Source OHLCV provenance snapshot is missing from artifact metadata."
+            ),
+            "invalid_recorded_source_ohlcv_snapshot": (
+                "Source OHLCV provenance snapshot in artifact metadata is malformed."
+            ),
+            "source_dataset_identity_mismatch": (
+                "Recorded source OHLCV dataset identity differs from the current source."
+            ),
+            "current_source_ohlcv_not_loadable": (
+                "Current source OHLCV is not accepted/loadable for regeneration."
+            ),
+            "source_validation_status_changed": (
+                "Recorded source OHLCV validation status differs from the current source."
+            ),
+            "source_quality_status_changed": (
+                "Recorded source OHLCV quality validation status differs from the current source."
+            ),
+            "source_validation_fingerprint_changed": (
+                "Recorded source OHLCV validation fingerprint differs from the current source."
+            ),
+            "source_csv_fingerprint_changed": (
+                "Recorded source OHLCV CSV fingerprint differs from the current source."
+            ),
+            "source_correction_record_count_changed": (
+                "Recorded source-correction count differs from the current source."
+            ),
+            "source_correction_records_changed": (
+                "Recorded source-correction provenance differs from the current source."
+            ),
+            "source_needs_recheck_changed": (
+                "Recorded source recheck flag differs from the current source."
+            ),
+        }
+        result: list[str] = []
+        for reason in report.reasons:
+            message = messages.get(reason, "Source OHLCV provenance differs from the current source.")
+            if reason == "current_source_ohlcv_not_loadable":
+                loadability_reason = report.current_summary.get("loadability_reason")
+                if loadability_reason:
+                    message = f"{message} {loadability_reason}"
+            result.append(f"{reason}: {message}")
+        return tuple(result)
 
     def _metadata_mismatch_reasons(
         self,

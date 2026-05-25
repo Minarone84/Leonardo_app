@@ -6,6 +6,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from leonardo.data.historical.artifact_metadata_contracts import ArtifactMetadataEntry
 from leonardo.data.historical.artifact_recipe_collection_store import ArtifactRecipeCollectionStore
 from leonardo.data.historical.artifact_recipe_executor import ArtifactRecipeExecutor
 from leonardo.data.historical.artifact_recipe_store import ArtifactRecipe, ArtifactRecipeStore
@@ -13,6 +14,11 @@ from leonardo.data.historical.artifact_recovery_planner import ArtifactRecoveryP
 from leonardo.data.historical.artifact_recovery_regenerator import ArtifactRecoveryRegenerator
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SOURCE_OHLCV_PROVENANCE_KEY,
+    SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+    build_source_ohlcv_provenance_snapshot,
+)
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
@@ -46,7 +52,21 @@ def _market():
     return canonicalize("bybit", "linear", "BTCUSDT", "30m")
 
 
-def _write_ohlcv(root: Path, *, rows: int = 20):
+def _issues_for_status(status: str) -> tuple[tuple[str, str], ...]:
+    if status == "error":
+        return (("error", "test validation error"),)
+    if status == "warning":
+        return (("warning", "test validation warning"),)
+    return ()
+
+
+def _write_ohlcv(
+    root: Path,
+    *,
+    rows: int = 20,
+    validation_status: str = "ok",
+    price_offset: float = 0.0,
+):
     market = _market()
     paths = HistoricalPaths(root=root)
     csv_path = CsvOHLCVStore().file_path(paths.ensure_ohlcv_dir(market))
@@ -54,10 +74,10 @@ def _write_ohlcv(root: Path, *, rows: int = 20):
     candles = [
         Candle(
             ts_ms=start + idx * 1_800_000,
-            open=100.0 + idx,
-            high=101.0 + idx,
-            low=99.0 + idx,
-            close=100.5 + idx,
+            open=100.0 + idx + price_offset,
+            high=101.0 + idx + price_offset,
+            low=99.0 + idx + price_offset,
+            close=100.5 + idx + price_offset,
             volume=10.0 + idx,
         )
         for idx in range(rows)
@@ -67,9 +87,9 @@ def _write_ohlcv(root: Path, *, rows: int = 20):
     store.record_validation_result(
         csv_path,
         market=market,
-        status="ok",
+        status=validation_status,
         row_count=len(candles),
-        issues=(),
+        issues=_issues_for_status(validation_status),
         validator="HistoricalDatasetValidator",
     )
     return market, csv_path
@@ -146,6 +166,16 @@ def _save_artifact(root: Path, recipe: ArtifactRecipe):
         params_status="explicit",
         bindings={},
         bindings_status="unknown",
+        metadata=(
+            ArtifactMetadataEntry(
+                namespace=SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+                key=SOURCE_OHLCV_PROVENANCE_KEY,
+                value=build_source_ohlcv_provenance_snapshot(
+                    historical_root=root,
+                    market=recipe.market,
+                ),
+            ),
+        ),
     )
 
 
@@ -182,6 +212,48 @@ def test_regenerator_executes_only_planner_actionable_recipes(tmp_path: Path) ->
     assert report.execution_report is not None
     assert report.execution_report.requested_recipe_ids == (missing.recipe_id,)
     assert [call["_test_recipe_id"] for call in service.calls] == [missing.recipe_id]
+
+
+def test_regenerator_executes_source_drifted_artifacts_through_executor(
+    tmp_path: Path,
+) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, period=14)
+    _save_artifact(tmp_path, recipe)
+    _write_ohlcv(tmp_path, validation_status="ok", price_offset=1_000_000.0)
+    collection = _collection(tmp_path, recipe)
+    service = FakeCalculationService()
+
+    report = _regenerator(tmp_path, service).regenerate_collection(
+        collection,
+        replan_after=False,
+    )
+
+    assert report.pre_recovery_report.stale_count == 1
+    assert report.actionable_recipe_ids == (recipe.recipe_id,)
+    assert report.execution_attempted is True
+    assert [call["_test_recipe_id"] for call in service.calls] == [recipe.recipe_id]
+
+
+def test_regenerator_skips_source_drifted_artifacts_when_current_ohlcv_is_blocked(
+    tmp_path: Path,
+) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, period=14)
+    _save_artifact(tmp_path, recipe)
+    _write_ohlcv(tmp_path, validation_status="unknown", price_offset=1_000_000.0)
+    collection = _collection(tmp_path, recipe)
+    service = FakeCalculationService()
+
+    report = _regenerator(tmp_path, service).regenerate_collection(
+        collection,
+        replan_after=False,
+    )
+
+    assert report.pre_recovery_report.blocked_count == 1
+    assert report.actionable_recipe_ids == ()
+    assert report.execution_attempted is False
+    assert service.calls == []
 
 
 def test_regenerator_noops_when_collection_is_already_up_to_date(tmp_path: Path) -> None:

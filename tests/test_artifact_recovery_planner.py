@@ -5,11 +5,17 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from leonardo.data.historical.artifact_metadata_contracts import ArtifactMetadataEntry
 from leonardo.data.historical.artifact_recovery_planner import ArtifactRecoveryPlanner
 from leonardo.data.historical.artifact_recipe_collection_store import ArtifactRecipeCollectionStore
 from leonardo.data.historical.artifact_recipe_store import ArtifactRecipe, ArtifactRecipeStore
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SOURCE_OHLCV_PROVENANCE_KEY,
+    SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+    build_source_ohlcv_provenance_snapshot,
+)
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
@@ -32,6 +38,7 @@ def _write_ohlcv(
     rows: int = 20,
     validation_status: str = "ok",
     write_metadata: bool = True,
+    price_offset: float = 0.0,
 ):
     market = _market()
     paths = HistoricalPaths(root=root)
@@ -40,10 +47,10 @@ def _write_ohlcv(
     candles = [
         Candle(
             ts_ms=start + idx * 1_800_000,
-            open=100.0 + idx,
-            high=101.0 + idx,
-            low=99.0 + idx,
-            close=100.5 + idx,
+            open=100.0 + idx + price_offset,
+            high=101.0 + idx + price_offset,
+            low=99.0 + idx + price_offset,
+            close=100.5 + idx + price_offset,
             volume=10.0 + idx,
         )
         for idx in range(rows)
@@ -176,7 +183,26 @@ def _collection(root: Path, *recipes: ArtifactRecipe):
     )
 
 
-def _save_rsi_artifact(root: Path, recipe: ArtifactRecipe, *, params: dict[str, object] | None = None):
+def _source_ohlcv_metadata(root: Path, market) -> tuple[ArtifactMetadataEntry, ...]:
+    return (
+        ArtifactMetadataEntry(
+            namespace=SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+            key=SOURCE_OHLCV_PROVENANCE_KEY,
+            value=build_source_ohlcv_provenance_snapshot(
+                historical_root=root,
+                market=market,
+            ),
+        ),
+    )
+
+
+def _save_rsi_artifact(
+    root: Path,
+    recipe: ArtifactRecipe,
+    *,
+    params: dict[str, object] | None = None,
+    include_source_snapshot: bool = True,
+):
     planner = ArtifactRecoveryPlanner(historical_root=root)
     instance_key = planner.expected_instance_key(recipe)
     period = int(recipe.params["period"])
@@ -196,6 +222,7 @@ def _save_rsi_artifact(root: Path, recipe: ArtifactRecipe, *, params: dict[str, 
         params_status="explicit",
         bindings={},
         bindings_status="unknown",
+        metadata=_source_ohlcv_metadata(root, market) if include_source_snapshot else (),
     )
 
 
@@ -278,6 +305,79 @@ def test_recovery_planner_reports_stale_when_metadata_params_do_not_match(tmp_pa
     assert item.status == "stale"
     assert item.can_recalculate is True
     assert "params" in item.stale_reasons[0]
+
+
+def test_recovery_planner_reports_source_drift_when_ohlcv_fingerprint_changes(
+    tmp_path: Path,
+) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, _rsi_payload(period=14))
+    _save_rsi_artifact(tmp_path, recipe)
+    _write_ohlcv(tmp_path, validation_status="ok", price_offset=1_000_000.0)
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    assert report.stale_count == 1
+    assert report.actionable_recipe_ids == (recipe.recipe_id,)
+    item = report.items[0]
+    assert item.status == "stale"
+    assert item.can_recalculate is True
+    assert any("source_csv_fingerprint_changed" in reason for reason in item.stale_reasons)
+
+
+def test_recovery_planner_blocks_source_drift_recovery_when_current_ohlcv_is_not_loadable(
+    tmp_path: Path,
+) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, _rsi_payload(period=14))
+    _save_rsi_artifact(tmp_path, recipe)
+    _write_ohlcv(tmp_path, validation_status="unknown", price_offset=1_000_000.0)
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    assert report.blocked_count == 1
+    assert report.actionable_recipe_ids == ()
+    item = report.items[0]
+    assert item.status == "blocked"
+    assert item.can_recalculate is False
+    assert any("not loadable" in reason for reason in item.blocked_reasons)
+
+
+def test_recovery_planner_keeps_legacy_missing_source_snapshot_recalculable(
+    tmp_path: Path,
+) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, _rsi_payload(period=14))
+    _save_rsi_artifact(tmp_path, recipe, include_source_snapshot=False)
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    assert report.freshness_unknown_count == 1
+    assert report.actionable_recipe_ids == (recipe.recipe_id,)
+    item = report.items[0]
+    assert item.status == "freshness_unknown"
+    assert item.can_recalculate is True
+    assert any("missing_recorded_source_ohlcv_snapshot" in note for note in item.notes)
+
+
+def test_recovery_planner_preserves_recipe_stale_reason_with_source_drift(
+    tmp_path: Path,
+) -> None:
+    _write_ohlcv(tmp_path)
+    recipe = _recipe(tmp_path, _rsi_payload(period=14))
+    _save_rsi_artifact(tmp_path, recipe, params={"period": 21})
+    _write_ohlcv(tmp_path, validation_status="ok", price_offset=1_000_000.0)
+    collection = _collection(tmp_path, recipe)
+
+    report = ArtifactRecoveryPlanner(historical_root=tmp_path).plan_collection(collection)
+
+    item = report.items[0]
+    assert item.status == "stale"
+    assert any("params" in reason for reason in item.stale_reasons)
+    assert any("source_csv_fingerprint_changed" in reason for reason in item.stale_reasons)
 
 
 def test_recovery_planner_blocks_recovery_when_ohlcv_is_missing(tmp_path: Path) -> None:

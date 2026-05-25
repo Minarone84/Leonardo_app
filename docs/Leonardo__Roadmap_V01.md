@@ -434,14 +434,23 @@ Implemented baseline:
   - Data Manager Patch A added data-layer gates through `evaluate_ohlcv_dataset_loadability(...)`, `require_ohlcv_dataset_loadable(...)`, `format_ohlcv_loadability_error(...)`, `ArtifactCalculationService`, `AnalysisDatabaseStore`, and `ArtifactRecoveryPlanner`.
   - Data Manager Patch B moved selector and OHLCV preview behavior onto CoreBridge/data-layer loadable catalog surfaces, labels modified datasets, and shows OHLCV Maintenance guidance when no validated datasets are available.
 
+- M14 Data Manager metadata/lineage hardening is accepted:
+  - `build_source_ohlcv_provenance_snapshot(...)` records accepted source OHLCV identity, relative CSV/metadata paths, validation status, quality status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable.
+  - Derived artifact sidecars store the source snapshot under `source_ohlcv.snapshot`.
+  - Analysis Database materialization metadata stores the source snapshot under `source_ohlcv.snapshot`.
+  - Analysis Database rebuild refreshes materialization source provenance instead of preserving stale source metadata.
+  - Modified source snapshots preserve source-correction provenance and `needs_source_recheck`.
+  - Existing legacy sidecars/manifests without source snapshots remain loadable through existing metadata extension behavior.
+  - Recovery/source-drift classification from recorded source OHLCV fingerprints remains future work.
+
 Next direction:
 
 - Treat the current Historical Download Manager M7/M13 behavior as the accepted OHLCV ingestion and preliminary-validation baseline.
 - Treat OHLCV Maintenance as the explicit acceptance workflow for OHLCV validation, repair, source-invalid handling, source correction, and modified status.
 - Treat the current historical chart/study M8 behavior plus M12 apply/save/recovery hardening as the accepted chart-session and artifact-calculation baseline.
-- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates as the accepted analysis-database baseline.
+- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates and M14 source OHLCV provenance snapshots as the accepted analysis-database baseline.
 - Integrate GUI release checks into CI/build packaging so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files and preserve Data Manager ownership boundaries.
-- Harden Data Manager metadata/lineage in a future patch so derived artifact sidecars and Analysis Database materialization metadata record source OHLCV validation status, fingerprint, and source-correction provenance snapshots.
+- Add recovery/source-drift classification using stored `source_ohlcv.snapshot` in a future patch.
 - Consider adding recipe-hash lineage into saved artifact sidecars in a future migration so recovery can prove exact recipe-hash freshness instead of metadata-level consistency only.
 - A partition-level artifact index may later cache summaries for faster listing/search, while sidecars remain the metadata source of truth.
 
@@ -507,7 +516,9 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
-v0.20: OHLCV acceptance and loadability sync. Documents Download Manager preliminary validation with default unknown/not_validated metadata, OHLCV Maintenance validation/repair/source-correction workflow, `modified` status, ok/modified loadability policy, Historical Data Manager load gating, Data Manager Patch A/B gates and selector messaging, and future Data Manager source-OHLCV lineage hardening.
+v0.21: Data Manager source OHLCV lineage hardening. Documents Patch C implementation: derived artifact sidecars and Analysis Database materialization metadata now record `source_ohlcv.snapshot` with source dataset identity, validation status, fingerprints, capture timestamp, and source-correction provenance. Rebuild refreshes materialization source provenance. Recovery/source-drift classification remains future work.
+
+v0.20: OHLCV acceptance and loadability sync. Documents Download Manager preliminary validation with default unknown/not_validated metadata, OHLCV Maintenance validation/repair/source-correction workflow, `modified` status, ok/modified loadability policy, Historical Data Manager load gating, Data Manager Patch A/B gates and selector messaging, and the pre-M14 Data Manager source-OHLCV lineage gap.
 
 v0.19: Historical apply/save/recovery hardening. Documents Historical Download command-boundary cleanup, TaskManager terminal cleanup, timeline-first runtime projection alignment, sidecar-driven saved-source selection, shared `result_to_save_dataframe(...)` save conversion, shared UTC dependency preparation, and recovery planner UTC dependency-intent parity with read-only join-key blocker checks.
 

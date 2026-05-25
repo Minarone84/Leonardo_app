@@ -151,10 +151,13 @@ The sidecar may include:
 - per-column source-selection metadata such as `selectable`, `renderable`, and `analysis_usable` when available;
 - canonical names and saved identity from `ft_naming.py`;
 - params and bindings with explicit/inferred/unknown status;
-- lineage, fingerprint, quality, and namespaced extension metadata.
+- lineage, fingerprint, quality, and namespaced extension metadata;
+- source OHLCV provenance under `source_ohlcv.snapshot` for generated derived artifacts when available.
 - OHLCV validation metadata when the artifact is `ohlcv/candles.csv`.
 
 Sidecars are consumers of contract data. They must not define new tool behavior, compute logic, render defaults, or naming templates. Valid sidecar column metadata is also the source-selection truth for saved artifacts: non-renderable but analysis-usable/selectable outputs may be selected as analytical sources, while non-selectable utility columns must not be exposed merely because they exist in the CSV header.
+
+The `source_ohlcv.snapshot` entry is metadata/lineage only. It records the accepted OHLCV source used for calculation, including source validation/fingerprint and source-correction provenance where applicable. It does not change canonical artifact naming, params, bindings, recipe identity, or tool behavior.
 
 For OHLCV, validation metadata is an acceptance contract owned by the historical data layer. `ok` and `modified` are loadable; `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, metadata mismatch, stale fingerprints, missing validation fingerprints, and missing CSV are blocked. Download-time validation is preliminary reporting only and does not certify a dataset as accepted.
 

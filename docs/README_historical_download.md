@@ -175,6 +175,8 @@ Currently active:
 
 Analysis Database folder lifecycle is owned by the historical data layer. `AnalysisDatabaseStore` owns database pathing, manifest persistence, visible-name validation for draft creation and rename, duplicate visible-name rejection for create/rename, rename/delete operations, and manifest-driven materialization/rebuild. Build/rebuild targets the selected existing `database_id`, preserves the same folder/display name/feature recipe, rewrites `dataframe.csv`, and updates materialization metadata. Explicit add/remove/replace component edits are separate component-editor operations that intentionally change the manifest recipe and reset materialization before a later build. GUI code must not manually rewrite `manifest.json`, move/remove database folders, or add/remove/replace database components during build/rebuild.
 
+Generated derived artifacts and Analysis Database materializations record accepted source OHLCV provenance under `source_ohlcv.snapshot` when they are created from loadable OHLCV. This is downstream lineage metadata only: downloaded OHLCV still starts as `unknown` / `not_validated`, and OHLCV Maintenance remains the manual acceptance workflow.
+
 Artifact recipe lifecycle is separate from saved artifact value storage. `ArtifactRecipeStore` owns reusable single-recipe JSON files, while `ArtifactRecipeCollectionStore` owns ordered collection JSON files with embedded recipe snapshots and optional dependency/source-database metadata. Recovery services may inspect these files to plan or request regeneration, but CSV artifact writing remains owned by the calculation/persistence path and Analysis Database materialization remains store-owned.
 
 ------------------------------------------------------------
@@ -350,7 +352,7 @@ analysis_databases/{database_id}/manifest.json
 analysis_databases/{database_id}/dataframe.csv
 ```
 
-The folder name is the immutable `database_id`. User-facing rename updates `display_name` in `manifest.json` without moving the folder. Deleting an Analysis Database removes the whole `analysis_databases/{database_id}/` folder. Build/rebuild materializes the existing saved manifest recipe for that same `database_id`, rewrites `dataframe.csv`, and updates materialization metadata without creating another database or replacing artifact components. Explicit component editing may change `feature_sources` and `feature_columns`, but it is a separate recipe-editing workflow, not rebuild.
+The folder name is the immutable `database_id`. User-facing rename updates `display_name` in `manifest.json` without moving the folder. Deleting an Analysis Database removes the whole `analysis_databases/{database_id}/` folder. Build/rebuild materializes the existing saved manifest recipe for that same `database_id`, rewrites `dataframe.csv`, and updates materialization metadata without creating another database or replacing artifact components. Materialization metadata records `source_ohlcv.snapshot` and refreshes that source provenance on rebuild. Explicit component editing may change `feature_sources` and `feature_columns`, but it is a separate recipe-editing workflow, not rebuild.
 
 Artifact recipe and collection JSON paths are deterministic partition-local records, not data value artifacts:
 

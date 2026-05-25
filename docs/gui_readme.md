@@ -335,7 +335,7 @@ It must not:
 
 Data Manager maintenance actions such as metadata backfill are restore-only operations. They may recreate missing or unreadable `.meta.json` sidecars from existing CSV files, but they must not rewrite CSV data and must not be treated as the normal save path. Analysis Database create, rename, delete, build, rebuild, and explicit component-edit operations must go through the appropriate data-layer service, because `manifest.json` is the metadata-sidecar equivalent for the folder-backed `dataframe.csv` artifact. GUI release checks enforce that Database Builder does not consume artifact selections, does not call feature-replacement rebuild APIs, keeps build/rebuild separate and manifest-driven, and keeps main Data Manager actions in the shared right-side button rack layout.
 
-Future Data Manager metadata/lineage hardening is not implemented yet. Derived artifact sidecars and Analysis Database materialization metadata should eventually record source OHLCV validation status, fingerprint, and source-correction provenance snapshots.
+Data Manager lineage hardening is data-layer owned. Generated derived artifact sidecars and Analysis Database materialization metadata receive `source_ohlcv.snapshot` through the save/materialization services, including source validation, fingerprint, and source-correction provenance when applicable. The GUI does not parse, create, display, or classify this snapshot. Recovery/source-drift classification from the recorded snapshot remains future work.
 
 
 ## Historical Workspace Model

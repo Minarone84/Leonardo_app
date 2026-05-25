@@ -296,6 +296,8 @@ with:
 
 `database_id` is the folder-backed persistence identity. A user-facing rename changes `display_name` in `manifest.json`; it must not move the folder or recompute `database_id`.
 
+Generated outputs capture source OHLCV provenance in data-layer metadata. Derived artifact sidecars may include `source_ohlcv.snapshot`, and Analysis Database materialization metadata records `source_ohlcv.snapshot` for the `dataframe.csv` build. The snapshot records source dataset identity, relative CSV/metadata paths, accepted validation status, quality validation status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. Legacy sidecars and manifests without this extension remain readable.
+
 ### Dataset identity
 
 A dataset is uniquely defined by:
@@ -613,6 +615,8 @@ A recipe stores a reproducible full-dataset financial-tool calculation intent. A
 GUI code may collect a new database name and checked artifact columns for `Database seed creator`, or one checked database for `Database Builder`, but it must call data-layer APIs for durable mutation. GUI code must not manually rewrite `manifest.json`, move folders, delete database files, materialize dataframes outside the store boundary, or add/remove/replace Analysis Database artifact components during build/rebuild.
 
 Data Manager materialization uses accepted OHLCV only. `ArtifactCalculationService._load_full_dataset_dataframe(...)` and `AnalysisDatabaseStore._load_selected_ohlcv_dataframe(...)` call the shared OHLCV loadability gate before reading `candles.csv`. `ArtifactRecoveryPlanner._recalculation_blockers(...)` reports a blocker when source OHLCV exists but is not accepted/loadable. The shared helpers are `evaluate_ohlcv_dataset_loadability(...)`, `require_ohlcv_dataset_loadable(...)`, and `format_ohlcv_loadability_error(...)`.
+
+`ArtifactCalculationService` writes the source OHLCV snapshot into saved derived artifact sidecars under `source_ohlcv.snapshot`. `AnalysisDatabaseStore` writes the same snapshot namespace into materialization metadata and refreshes it on rebuild. Recovery/source-drift classification from recorded source OHLCV fingerprints remains future work.
 
 ### Artifact recipe and recovery orchestration semantics
 

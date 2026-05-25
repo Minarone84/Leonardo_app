@@ -84,7 +84,7 @@ GUI code collects user selections and presents dialogs. It must not manually rew
 
 Saved artifact source selection in chart/Data Manager workflows consumes `.meta.json` column metadata when available. Valid sidecar `selectable` / `analysis_usable` metadata is the source-selection truth; CSV-header fallback is retained only for legacy, missing, or malformed sidecars.
 
-Future Data Manager metadata/lineage hardening remains open: derived artifact metadata and Analysis Database materialization metadata should eventually record source OHLCV validation status, fingerprint, and source-correction provenance snapshots.
+Data Manager metadata/lineage hardening is implemented for generated outputs. Derived artifact sidecars and Analysis Database materialization metadata record source OHLCV provenance under `source_ohlcv.snapshot`, including source dataset identity, CSV/metadata paths, validation status, quality status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. Analysis Database rebuild refreshes the materialization source snapshot instead of preserving stale source metadata. Future recovery/source-drift classification can use this metadata, but recovery does not yet classify artifacts or databases as source-drifted from the snapshot.
 
 ## Current Historical Chart / Study workflow — 2026-05-25
 

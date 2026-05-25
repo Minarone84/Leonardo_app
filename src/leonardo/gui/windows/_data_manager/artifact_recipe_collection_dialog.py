@@ -38,6 +38,7 @@ class ArtifactRecipeCollectionDialog(QDialog):
     recovery_plan_requested = Signal(object, object)  # ArtifactRecipeCollection, tuple[str, ...] | None
     recovery_regeneration_requested = Signal(object, object)  # ArtifactRecipeCollection, tuple[str, ...] | None
     database_rebuild_requested = Signal(object)  # ArtifactRecipeCollection
+    update_plan_requested = Signal(object, object)  # ArtifactRecipeCollection, tuple[str, ...] | None
     collection_deleted = Signal(object)  # collection_id str
     status_message = Signal(str)
 
@@ -161,6 +162,11 @@ class ArtifactRecipeCollectionDialog(QDialog):
         self._rebuild_database_button.setToolTip("Asks the data layer to rebuild the Analysis Database linked to the highlighted collection.")
         self._rebuild_database_button.clicked.connect(self._rebuild_linked_database)
         recovery_row.addWidget(self._rebuild_database_button)
+
+        self._update_plan_button = QPushButton("Plan Updates...", detail_group)
+        self._update_plan_button.setToolTip("Builds a recipe-collection update plan through the Data Manager update service.")
+        self._update_plan_button.clicked.connect(self._plan_updates)
+        recovery_row.addWidget(self._update_plan_button)
 
         body.addWidget(detail_group, 5)
 
@@ -379,6 +385,27 @@ class ArtifactRecipeCollectionDialog(QDialog):
             f"Rebuilding linked Analysis Database: {collection.source_database_id}"
         )
 
+    def _plan_updates(self) -> None:
+        collection = self._current_collection
+        if collection is None:
+            QMessageBox.information(
+                self,
+                "Data Manager Update",
+                "Select a recipe collection before planning updates.",
+            )
+            return
+
+        selected_recipe_ids = self._selected_recovery_recipe_ids()
+        self.update_plan_requested.emit(collection, selected_recipe_ids)
+        if selected_recipe_ids:
+            self.status_message.emit(
+                f"Planning updates for {len(selected_recipe_ids)} checked recipe(s)"
+            )
+        else:
+            self.status_message.emit(
+                f"Planning updates for full collection: {collection.display_name}"
+            )
+
     def _delete_selected_collection(self) -> None:
         collection = self._current_collection
         if collection is None:
@@ -427,6 +454,7 @@ class ArtifactRecipeCollectionDialog(QDialog):
         self._recovery_plan_button.setEnabled(has_collection)
         self._recover_actionable_button.setEnabled(has_collection)
         self._rebuild_database_button.setEnabled(has_linked_database)
+        self._update_plan_button.setEnabled(has_collection)
 
     def _collection_details(self, collection: ArtifactRecipeCollection) -> str:
         source_database = collection.source_database_id or "(none)"

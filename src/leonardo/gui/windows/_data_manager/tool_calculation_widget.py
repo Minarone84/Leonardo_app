@@ -42,6 +42,11 @@ from leonardo.data.historical.artifact_recipe_store import (
     ArtifactRecipe,
     ArtifactRecipeStore,
 )
+from leonardo.data.historical.data_manager_update_service import (
+    DataManagerUpdateExecutionReport,
+    DataManagerUpdatePlan,
+    DataManagerUpdateService,
+)
 from leonardo.data.naming import MarketId
 from leonardo.gui.windows._data_manager.artifact_recipe_collection_dialog import (
     ArtifactRecipeCollectionDialog,
@@ -50,6 +55,9 @@ from leonardo.gui.windows._data_manager.artifact_recipe_dialog import (
     ArtifactRecipeDialog,
 )
 from leonardo.gui.windows._data_manager.button_rack import make_button_rack
+from leonardo.gui.windows._data_manager.update_manager_dialog import (
+    DataManagerUpdatePlanDialog,
+)
 from leonardo.gui.windows.financial_tools_manager_window import (
     FinancialToolsManagerWindow,
 )
@@ -66,6 +74,7 @@ class ToolCalculationWidget(QGroupBox):
 
     artifact_saved = Signal(object)  # ArtifactCalculationResult
     database_rebuilt = Signal(object)  # ArtifactRecoveryDatabaseRebuildReport
+    update_execution_finished = Signal(object)  # DataManagerUpdateExecutionReport
     preview_requested = Signal(object, str)  # Path, title
     status_message = Signal(str)
 
@@ -81,6 +90,7 @@ class ToolCalculationWidget(QGroupBox):
         self._tool_window: Optional[FinancialToolsManagerWindow] = None
         self._recipe_dialog: Optional[ArtifactRecipeDialog] = None
         self._collection_dialog: Optional[ArtifactRecipeCollectionDialog] = None
+        self._update_dialog: Optional[DataManagerUpdatePlanDialog] = None
         self._service = ArtifactCalculationService(
             historical_root=self._historical_root
         )
@@ -108,6 +118,13 @@ class ToolCalculationWidget(QGroupBox):
             historical_root=self._historical_root,
             planner=self._recovery_planner,
             collection_store=self._collection_store,
+        )
+        self._update_service = DataManagerUpdateService(
+            historical_root=self._historical_root,
+            collection_store=self._collection_store,
+            recovery_planner=self._recovery_planner,
+            recovery_regenerator=self._recovery_regenerator,
+            database_rebuilder=self._database_rebuilder,
         )
 
         root = QHBoxLayout(self)
@@ -271,6 +288,7 @@ class ToolCalculationWidget(QGroupBox):
         dialog.recovery_plan_requested.connect(self._recovery_plan_requested)
         dialog.recovery_regeneration_requested.connect(self._recovery_regeneration_requested)
         dialog.database_rebuild_requested.connect(self._database_rebuild_requested)
+        dialog.update_plan_requested.connect(self._update_plan_requested)
         dialog.collection_deleted.connect(
             lambda _collection_id: self.status_message.emit("Artifact recipe collection deleted")
         )
@@ -282,6 +300,9 @@ class ToolCalculationWidget(QGroupBox):
 
     def _on_collection_dialog_destroyed(self, _obj: object = None) -> None:
         self._collection_dialog = None
+
+    def _on_update_dialog_destroyed(self, _obj: object = None) -> None:
+        self._update_dialog = None
 
     def _recipe_requested(self, payload: object) -> None:
         if not isinstance(payload, dict):
@@ -468,6 +489,113 @@ class ToolCalculationWidget(QGroupBox):
             return
 
         self._handle_database_rebuild_report(report)
+
+    def _update_plan_requested(
+        self,
+        collection_obj: object,
+        selected_recipe_ids_obj: object,
+    ) -> None:
+        if not isinstance(collection_obj, ArtifactRecipeCollection):
+            return
+
+        selected_recipe_ids = self._normalize_selected_recipe_ids(selected_recipe_ids_obj)
+        try:
+            plan = self._update_service.plan_recipe_collection_update(
+                collection_obj,
+                selected_recipe_ids=selected_recipe_ids,
+            )
+        except Exception as exc:
+            message = f"Failed to build Data Manager update plan: {exc!r}"
+            self.status_message.emit(message)
+            QMessageBox.critical(self, "Data Manager Update Plan Failed", message)
+            return
+
+        self._open_update_plan_dialog(plan)
+
+    def _open_update_plan_dialog(self, plan: DataManagerUpdatePlan) -> None:
+        if self._update_dialog is not None:
+            try:
+                self._update_dialog.close()
+            except RuntimeError:
+                pass
+            self._update_dialog = None
+
+        dialog = DataManagerUpdatePlanDialog(plan=plan, parent=self.window())
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.execute_selected_requested.connect(
+            lambda action_ids, dialog=dialog: self._execute_update_plan_requested(
+                dialog=dialog,
+                selected_action_ids_obj=action_ids,
+            )
+        )
+        dialog.execute_all_requested.connect(
+            lambda dialog=dialog: self._execute_update_plan_requested(
+                dialog=dialog,
+                selected_action_ids_obj=None,
+            )
+        )
+        dialog.status_message.connect(self.status_message.emit)
+        dialog.destroyed.connect(self._on_update_dialog_destroyed)
+
+        self._update_dialog = dialog
+        dialog.show()
+        self.status_message.emit("Data Manager update plan ready")
+
+    def _execute_update_plan_requested(
+        self,
+        *,
+        dialog: DataManagerUpdatePlanDialog,
+        selected_action_ids_obj: object,
+    ) -> None:
+        selected_action_ids: tuple[str, ...] | None
+        if selected_action_ids_obj is None:
+            selected_action_ids = None
+        else:
+            selected_action_ids = self._normalize_selected_recipe_ids(selected_action_ids_obj)
+            if not selected_action_ids:
+                QMessageBox.information(
+                    self,
+                    "Data Manager Update",
+                    "No executable update actions selected.",
+                )
+                return
+
+        try:
+            report = self._update_service.execute_update_plan(
+                dialog.plan(),
+                selected_action_ids=selected_action_ids,
+            )
+        except Exception as exc:
+            message = f"Failed to execute Data Manager update plan: {exc!r}"
+            self.status_message.emit(message)
+            QMessageBox.critical(self, "Data Manager Update Failed", message)
+            return
+
+        dialog.set_execution_report(report)
+        self._handle_update_execution_report(report)
+
+    def _handle_update_execution_report(
+        self,
+        report: DataManagerUpdateExecutionReport,
+    ) -> None:
+        if self._collection_dialog is not None:
+            self._collection_dialog.refresh()
+
+        summary = self._update_execution_report_summary(report)
+        self.status_message.emit(self._update_execution_status_line(report))
+        if report.completed_action_ids:
+            self.update_execution_finished.emit(report)
+            if report.failed_action_ids or report.skipped_action_ids or report.blocked_action_ids:
+                QMessageBox.warning(self, "Data Manager Update Finished", summary)
+                return
+            QMessageBox.information(self, "Data Manager Update Complete", summary)
+            return
+
+        if report.failed_action_ids or report.blocked_action_ids:
+            QMessageBox.warning(self, "Data Manager Update Not Completed", summary)
+            return
+
+        QMessageBox.information(self, "Data Manager Update", summary)
 
     def _handle_collection_execution_report(self, report: ArtifactRecipeExecutionReport) -> None:
         last_result: ArtifactCalculationResult | None = None
@@ -675,6 +803,41 @@ class ToolCalculationWidget(QGroupBox):
             lines.extend(["", "Blocked reasons:", *[f"- {reason}" for reason in report.blocked_reasons]])
         if report.error_text:
             lines.extend(["", f"Error: {report.error_text}"])
+        return "\n".join(lines)
+
+    def _update_execution_status_line(
+        self,
+        report: DataManagerUpdateExecutionReport,
+    ) -> str:
+        return (
+            "Data Manager update: "
+            f"{report.summary.get('completed', 0)} completed, "
+            f"{report.summary.get('failed', 0)} failed, "
+            f"{report.summary.get('skipped', 0)} skipped, "
+            f"{report.summary.get('blocked', 0)} blocked"
+        )
+
+    def _update_execution_report_summary(
+        self,
+        report: DataManagerUpdateExecutionReport,
+    ) -> str:
+        lines = [
+            f"Plan ID: {report.plan_id}",
+            "",
+            f"Requested actions: {report.summary.get('requested', 0)}",
+            f"Completed: {report.summary.get('completed', 0)}",
+            f"Skipped: {report.summary.get('skipped', 0)}",
+            f"Failed: {report.summary.get('failed', 0)}",
+            f"Blocked: {report.summary.get('blocked', 0)}",
+        ]
+        if report.results:
+            lines.extend(["", "Action results:"])
+            for result in report.results[:10]:
+                lines.append(f"- {result.action_id}: {result.status} - {result.message}")
+                if result.error:
+                    lines.append(f"  Error: {result.error}")
+            if len(report.results) > 10:
+                lines.append(f"... {len(report.results) - 10} more action result(s)")
         return "\n".join(lines)
 
     def _save_requested(self, payload: object) -> None:

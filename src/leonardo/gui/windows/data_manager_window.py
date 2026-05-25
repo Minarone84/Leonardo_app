@@ -132,6 +132,7 @@ class DataManagerWindow(QMainWindow):
         self._metadata_tools.status_message.connect(self.statusBar().showMessage)
         self._tool_calculation.artifact_saved.connect(self._on_tool_artifact_saved)
         self._tool_calculation.database_rebuilt.connect(self._on_recovery_database_rebuilt)
+        self._tool_calculation.update_execution_finished.connect(self._on_update_execution_finished)
         self._tool_calculation.preview_requested.connect(self._preview.load_csv_path)
         self._tool_calculation.status_message.connect(self.statusBar().showMessage)
         self._database_list.database_materialized.connect(self._on_analysis_database_materialized)
@@ -310,3 +311,11 @@ class DataManagerWindow(QMainWindow):
         manifest = getattr(report, "manifest", None)
         display_name = getattr(manifest, "display_name", "linked analysis database")
         self.statusBar().showMessage(f"Linked analysis database rebuilt: {display_name}")
+
+    def _on_update_execution_finished(self, report: object) -> None:
+        self._artifact_selector.refresh()
+        self._database_list.refresh()
+        completed = getattr(report, "completed_action_ids", ())
+        self.statusBar().showMessage(
+            f"Data Manager update completed {len(tuple(completed))} action(s)"
+        )

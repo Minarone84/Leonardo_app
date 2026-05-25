@@ -339,6 +339,64 @@ def test_data_manager_opens_build_dialog_from_database_builder_intent() -> None:
     assert "self._database_list.refresh()" in _function_source(path, "_on_build_dialog_database_materialized")
 
 
+def test_recipe_collection_dialog_exposes_update_plan_intent_only() -> None:
+    path = DATA_MANAGER / "artifact_recipe_collection_dialog.py"
+    source = _source(path)
+    plan_source = _function_source(path, "_plan_updates")
+
+    assert "update_plan_requested = Signal(object, object)" in source
+    assert "Plan Updates..." in source
+    assert "self._update_plan_button.setEnabled(has_collection)" in source
+    assert "update_plan_requested.emit(collection, selected_recipe_ids)" in plan_source
+    assert "DataManagerUpdateService" not in source
+    assert "execute_update_plan" not in source
+
+
+def test_update_plan_dialog_is_display_and_confirmation_surface() -> None:
+    path = DATA_MANAGER / "update_manager_dialog.py"
+    source = _source(path)
+
+    assert "class DataManagerUpdatePlanDialog" in source
+    assert "execute_selected_requested = Signal(object)" in source
+    assert "execute_all_requested = Signal()" in source
+    assert "selected_action_ids" in source
+    assert "set_execution_report" in source
+    assert "DataManagerUpdateService" not in source
+    assert "ArtifactRecoveryRegenerator" not in source
+    assert "ArtifactRecoveryDatabaseRebuilder" not in source
+    assert "compare_source" not in source
+    assert "write_text" not in source
+    assert "to_csv" not in source
+    assert "json.dump" not in source
+
+
+def test_tool_calculation_widget_routes_update_execution_through_update_service() -> None:
+    path = DATA_MANAGER / "tool_calculation_widget.py"
+    source = _source(path)
+    plan_source = _function_source(path, "_update_plan_requested")
+    execute_source = _function_source(path, "_execute_update_plan_requested")
+
+    assert "DataManagerUpdateService" in source
+    assert "self._update_service = DataManagerUpdateService(" in source
+    assert "dialog.update_plan_requested.connect(self._update_plan_requested)" in source
+    assert "plan_recipe_collection_update(" in plan_source
+    assert "execute_update_plan(" in execute_source
+    assert "DataManagerUpdatePlanDialog" in source
+    assert "update_execution_finished = Signal(object)" in source
+    assert "source_ohlcv" not in source
+    assert "compare_source" not in source
+
+
+def test_data_manager_refreshes_lists_after_update_execution() -> None:
+    path = WINDOWS / "data_manager_window.py"
+    source = _source(path)
+    refresh_source = _function_source(path, "_on_update_execution_finished")
+
+    assert "self._tool_calculation.update_execution_finished.connect(self._on_update_execution_finished)" in source
+    assert "self._artifact_selector.refresh()" in refresh_source
+    assert "self._database_list.refresh()" in refresh_source
+
+
 
 def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
     """Main Data Manager widgets should keep actions in a right-side vertical rack."""

@@ -710,7 +710,9 @@ class HistoricalChartPanelStudyApplyMixin:
             saved_artifact_ref=saved_artifact_ref,
         )
         if edited_study is not None:
-            study = study.with_style(edited_study.style)
+            study = study.with_style(edited_study.style).with_user_metadata(
+                edited_study.user_metadata
+            )
             self._study_registry.add(study)
 
         self._register_study_projection_key(

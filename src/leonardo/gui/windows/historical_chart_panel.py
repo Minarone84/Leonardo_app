@@ -28,6 +28,7 @@ from leonardo.gui.chart.model import Series, SeriesStyle
 from leonardo.gui.chart.study_serialization import (
     deserialize_chart_study_payload,
     deserialize_study_style_payload,
+    deserialize_study_user_metadata_payload,
     serialize_chart_study,
     validate_serialized_chart_study,
 )
@@ -790,11 +791,16 @@ class HistoricalChartPanel(
         style = deserialize_study_style_payload(
             style_payload if isinstance(style_payload, Mapping) else {}
         )
+        metadata_payload = study_payload.get("user_metadata", {})
+        user_metadata = deserialize_study_user_metadata_payload(
+            metadata_payload if isinstance(metadata_payload, Mapping) else {}
+        )
         display_name = str(study_payload.get("display_name", "") or "").strip()
         restored = replace(
             study,
             display_name=display_name or study.display_name,
             style=style,
+            user_metadata=user_metadata,
         )
         self._study_registry.add(restored)
 
@@ -1029,6 +1035,13 @@ class HistoricalChartPanel(
             except Exception:
                 pass
 
+        metadata_signal = getattr(price_pane, "study_metadata_requested", None)
+        if metadata_signal is not None:
+            try:
+                metadata_signal.connect(self._on_price_pane_study_metadata_requested)
+            except Exception:
+                pass
+
         remove_signal = getattr(price_pane, "study_remove_requested", None)
         if remove_signal is not None:
             try:
@@ -1062,6 +1075,13 @@ class HistoricalChartPanel(
         if edit_signal is not None:
             try:
                 edit_signal.connect(self._on_oscillator_pane_study_edit_requested)
+            except Exception:
+                pass
+
+        metadata_signal = getattr(pane, "study_metadata_requested", None)
+        if metadata_signal is not None:
+            try:
+                metadata_signal.connect(self._on_oscillator_pane_study_metadata_requested)
             except Exception:
                 pass
 

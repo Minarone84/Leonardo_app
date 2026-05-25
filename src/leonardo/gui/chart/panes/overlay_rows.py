@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QLabel, QHBoxLayout, QToolButton, QWidget
 class _StudyRow(QWidget):
     style_requested = Signal(str)
     edit_requested = Signal(str)
+    metadata_requested = Signal(str)
     remove_requested = Signal(str)
     value_toggled = Signal(str, bool)
 
@@ -35,6 +36,11 @@ class _StudyRow(QWidget):
         self._edit_btn.setToolTip("Edit computation parameters")
         self._edit_btn.clicked.connect(self._emit_edit)
 
+        self._metadata_btn = QToolButton(self)
+        self._metadata_btn.setText("M")
+        self._metadata_btn.setToolTip("Edit study metadata")
+        self._metadata_btn.clicked.connect(self._emit_metadata)
+
         self._value_toggle_btn = QToolButton(self)
         self._value_toggle_btn.setText("V")
         self._value_toggle_btn.setToolTip("Show or hide current values")
@@ -52,6 +58,7 @@ class _StudyRow(QWidget):
         layout.addWidget(self._label, 1)
         layout.addWidget(self._value_toggle_btn, 0)
         layout.addWidget(self._style_btn, 0)
+        layout.addWidget(self._metadata_btn, 0)
         layout.addWidget(self._edit_btn, 0)
         layout.addWidget(self._remove_btn, 0)
 
@@ -93,6 +100,9 @@ class _StudyRow(QWidget):
 
     def _emit_edit(self) -> None:
         self.edit_requested.emit(self._action_id)
+
+    def _emit_metadata(self) -> None:
+        self.metadata_requested.emit(self._action_id)
 
     def _emit_value_toggle(self, checked: bool = False) -> None:
         self.value_toggled.emit(self._row_key, self._value_toggle_btn.isChecked())

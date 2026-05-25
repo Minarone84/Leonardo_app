@@ -30,6 +30,11 @@ def _study_payload(*, tool_key: str = "ema", period: int = 20) -> dict:
         "input_binding_meta": {"source": {"column_name": "close"}},
         "required_inputs": ["source"],
         "saved_artifact_ref": None,
+        "user_metadata": {
+            "important": True,
+            "description": "Main trend study.",
+            "dataset_role": "supporting_indicator",
+        },
         "style": {
             "signal_styles": {
                 f"{tool_key}_{period}": {
@@ -121,6 +126,11 @@ def test_create_save_load_round_trip_preserves_workspace_charts_and_studies(
     assert loaded.charts[0]["position"] == 1
     assert loaded.charts[0]["dataset"]["symbol"] == "BTCUSDT"
     assert loaded.charts[0]["studies"][0]["tool_key"] == "ema"
+    assert loaded.charts[0]["studies"][0]["user_metadata"] == {
+        "important": True,
+        "description": "Main trend study.",
+        "dataset_role": "supporting_indicator",
+    }
 
 
 def test_summary_listing_contains_dialog_ready_metadata(tmp_path: Path) -> None:

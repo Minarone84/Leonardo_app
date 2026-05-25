@@ -11,6 +11,12 @@ HDM = WINDOWS / "historical_data_manager_window.py"
 WORKSPACE = WINDOWS / "historical_workspace_widget.py"
 PANEL = WINDOWS / "historical_chart_panel.py"
 DIALOGS = WINDOWS / "_historical_data_manager" / "study_setup_dialogs.py"
+STYLE_MIXIN = WINDOWS / "_historical_chart_panel" / "historical_chart_panel_style.py"
+STUDY_APPLY_MIXIN = WINDOWS / "_historical_chart_panel" / "historical_chart_panel_study_apply.py"
+METADATA_DIALOG = WINDOWS / "_historical_chart_panel" / "study_metadata_dialog.py"
+OVERLAY_ROWS = ROOT / "src" / "leonardo" / "gui" / "chart" / "panes" / "overlay_rows.py"
+PRICE_PANE = ROOT / "src" / "leonardo" / "gui" / "chart" / "panes" / "price_pane.py"
+OSCILLATOR_PANE = ROOT / "src" / "leonardo" / "gui" / "chart" / "panes" / "oscillator_pane.py"
 
 
 def _source(path: Path) -> str:
@@ -102,8 +108,37 @@ def test_chart_panel_exports_and_loads_serialized_studies_through_panel_owner() 
     assert "normalized_mode == \"replace\"" in apply_body
     assert "remove_study_instance" in apply_body
     assert "deserialize_study_style_payload" in restore_body
+    assert "deserialize_study_user_metadata_payload" in restore_body
+    assert "user_metadata=user_metadata" in restore_body
     assert "_reapply_study_render_series" in restore_body
     assert "runtime.render_keys" not in apply_body
+
+
+def test_study_metadata_dialog_and_actions_are_chart_local() -> None:
+    panel_source = _source(PANEL)
+    apply_source = _source(STUDY_APPLY_MIXIN)
+    dialog_source = _source(METADATA_DIALOG)
+    overlay_source = _source(OVERLAY_ROWS)
+    price_source = _source(PRICE_PANE)
+    oscillator_source = _source(OSCILLATOR_PANE)
+    metadata_body = _function_source(STYLE_MIXIN, "_open_study_metadata_dialog")
+
+    assert "class StudyMetadataDialog" in dialog_source
+    assert "_important_check" in dialog_source
+    assert "_role_combo" in dialog_source
+    assert "_description_edit" in dialog_source
+    assert "StudyUserMetadata" in dialog_source
+
+    assert "metadata_requested = Signal(str)" in overlay_source
+    assert "study_metadata_requested = Signal(str)" in price_source
+    assert "study_metadata_requested = Signal(str)" in oscillator_source
+    assert "_on_price_pane_study_metadata_requested" in panel_source
+    assert "_on_oscillator_pane_study_metadata_requested" in panel_source
+
+    assert "StudyMetadataDialog" in metadata_body
+    assert "_apply_study_user_metadata" in metadata_body
+    assert "apply_financial_tool" not in metadata_body
+    assert "with_user_metadata" in apply_source
 
 
 def test_data_manager_save_and_load_paths_use_store_and_panel_helpers() -> None:

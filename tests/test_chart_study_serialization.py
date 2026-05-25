@@ -10,6 +10,7 @@ from leonardo.gui.chart.studies import (
     ChartStudyInstance,
     ChartStudyRuntimeState,
     PANE_TARGET_PRICE,
+    STUDY_DATASET_ROLE_UNSPECIFIED,
     STUDY_FAMILY_INDICATOR,
     STUDY_RUNTIME_ERROR,
     StudyComputationConfig,
@@ -17,6 +18,8 @@ from leonardo.gui.chart.studies import (
     StudyFillStyle,
     StudySignalStyle,
     StudyStyleModuleState,
+    StudyUserMetadata,
+    normalize_study_dataset_role,
 )
 from leonardo.gui.chart.study_serialization import (
     deserialize_chart_study_payload,
@@ -92,6 +95,11 @@ def _sample_study() -> ChartStudyInstance:
             error_text="runtime-only",
             render_keys=["runtime|render|sma_20"],
         ),
+        user_metadata=StudyUserMetadata(
+            important=True,
+            description="Main short-term trend study.",
+            dataset_role="supporting_indicator",
+        ),
     )
 
 
@@ -102,6 +110,33 @@ def test_study_computation_config_exposes_durable_binding_fields() -> None:
     assert "input_binding_meta" in field_names
     assert "required_inputs" in field_names
     assert "saved_artifact_ref" in field_names
+
+
+def test_study_user_metadata_defaults_and_role_normalization() -> None:
+    metadata = StudyUserMetadata()
+
+    assert metadata.important is False
+    assert metadata.description == ""
+    assert metadata.dataset_role == STUDY_DATASET_ROLE_UNSPECIFIED
+    assert normalize_study_dataset_role("UTC") == "utc"
+    assert normalize_study_dataset_role("not-a-role") == STUDY_DATASET_ROLE_UNSPECIFIED
+    assert StudyUserMetadata(important="false", dataset_role="visual only").important is False
+    assert StudyUserMetadata(important="true", dataset_role="visual only").dataset_role == "visual_only"
+
+
+def test_chart_study_instance_has_default_user_metadata() -> None:
+    study = ChartStudyInstance(
+        instance_id="study_1",
+        dataset_id="binance_spot_btcusdt_1h",
+        pane_target=PANE_TARGET_PRICE,
+        display_name="SMA 20",
+        computation=StudyComputationConfig(
+            family=STUDY_FAMILY_INDICATOR,
+            tool_key="sma",
+        ),
+    )
+
+    assert study.user_metadata == StudyUserMetadata()
 
 
 def test_chart_apply_registration_preserves_payload_binding_fields() -> None:
@@ -160,6 +195,12 @@ def test_serialize_chart_study_includes_durable_intent_style_and_bindings() -> N
     assert style["style_modules"][0]["module_key"] == "conditional_line_color"
     assert style["style_modules"][0]["config"]["levels"] == [1, 2]
 
+    assert payload["user_metadata"] == {
+        "important": True,
+        "description": "Main short-term trend study.",
+        "dataset_role": "supporting_indicator",
+    }
+
 
 def test_serialized_chart_study_is_json_safe() -> None:
     payload = serialize_chart_study(_sample_study())
@@ -197,4 +238,57 @@ def test_deserialize_chart_study_payload_normalizes_json_safe_structure() -> Non
     assert normalized["tool_key"] == "sma"
     assert normalized["required_inputs"] == ["source"]
     assert normalized["style"]["signal_styles"]["sma_20"]["color"] == "#22C55E"
+    assert normalized["user_metadata"] == {
+        "important": True,
+        "description": "Main short-term trend study.",
+        "dataset_role": "supporting_indicator",
+    }
     json.dumps(normalized)
+
+
+def test_deserialize_chart_study_payload_defaults_missing_user_metadata() -> None:
+    payload = serialize_chart_study(_sample_study())
+    payload.pop("user_metadata")
+
+    normalized = deserialize_chart_study_payload(payload)
+
+    assert normalized["user_metadata"] == {
+        "important": False,
+        "description": "",
+        "dataset_role": STUDY_DATASET_ROLE_UNSPECIFIED,
+    }
+
+
+def test_deserialize_chart_study_payload_normalizes_partial_user_metadata() -> None:
+    payload = serialize_chart_study(_sample_study())
+    payload["user_metadata"] = {
+        "important": "false",
+        "dataset_role": "unknown-role",
+    }
+
+    normalized = deserialize_chart_study_payload(payload)
+
+    assert normalized["user_metadata"] == {
+        "important": False,
+        "description": "",
+        "dataset_role": STUDY_DATASET_ROLE_UNSPECIFIED,
+    }
+
+
+def test_user_metadata_does_not_change_computation_or_style_payload() -> None:
+    study = _sample_study()
+    changed = study.with_user_metadata(
+        StudyUserMetadata(
+            important=False,
+            description="Different semantic note.",
+            dataset_role="experimental",
+        )
+    )
+
+    original_payload = serialize_chart_study(study)
+    changed_payload = serialize_chart_study(changed)
+
+    assert changed_payload["params"] == original_payload["params"]
+    assert changed_payload["input_bindings"] == original_payload["input_bindings"]
+    assert changed_payload["style"] == original_payload["style"]
+    assert changed_payload["user_metadata"]["dataset_role"] == "experimental"

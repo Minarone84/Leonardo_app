@@ -12,6 +12,8 @@ from leonardo.gui.chart.studies import (
     StudyFillStyle,
     StudySignalStyle,
     StudyStyleModuleState,
+    StudyUserMetadata,
+    normalize_study_dataset_role,
 )
 
 
@@ -46,6 +48,7 @@ def serialize_chart_study(study: ChartStudyInstance) -> dict[str, Any]:
             else None
         ),
         "style": serialize_study_style(study.style),
+        "user_metadata": serialize_study_user_metadata(study.user_metadata),
     }
 
 
@@ -120,6 +123,29 @@ def deserialize_study_style_payload(payload: Mapping[str, Any]) -> StudyDisplayS
     )
 
 
+def serialize_study_user_metadata(metadata: StudyUserMetadata) -> dict[str, Any]:
+    """Return JSON-safe semantic user metadata for one chart study."""
+
+    resolved = metadata if isinstance(metadata, StudyUserMetadata) else StudyUserMetadata()
+    return {
+        "important": bool(resolved.important),
+        "description": _json_safe(resolved.description),
+        "dataset_role": normalize_study_dataset_role(resolved.dataset_role),
+    }
+
+
+def deserialize_study_user_metadata_payload(payload: Mapping[str, Any]) -> StudyUserMetadata:
+    """Normalize serialized semantic user metadata into a StudyUserMetadata instance."""
+
+    data = _mapping_or_empty(payload)
+    description = "" if data.get("description") is None else str(data.get("description", ""))
+    return StudyUserMetadata(
+        important=data.get("important", False),
+        description=description,
+        dataset_role=normalize_study_dataset_role(data.get("dataset_role")),
+    )
+
+
 def validate_serialized_chart_study(payload: Mapping[str, Any]) -> list[str]:
     """Return structural validation errors for a serialized chart study."""
 
@@ -152,6 +178,10 @@ def validate_serialized_chart_study(payload: Mapping[str, Any]) -> list[str]:
     if saved_artifact_ref is not None and not isinstance(saved_artifact_ref, Mapping):
         errors.append("saved_artifact_ref must be a mapping or null.")
 
+    user_metadata = payload.get("user_metadata")
+    if user_metadata is not None and not isinstance(user_metadata, Mapping):
+        errors.append("user_metadata must be a mapping.")
+
     style = payload.get("style", {})
     if isinstance(style, Mapping):
         signal_styles = style.get("signal_styles", {})
@@ -180,6 +210,9 @@ def deserialize_chart_study_payload(payload: Mapping[str, Any]) -> dict[str, Any
         raise ValueError("Invalid serialized chart study: " + "; ".join(errors))
 
     style = deserialize_study_style_payload(_mapping_or_empty(payload.get("style")))
+    user_metadata = deserialize_study_user_metadata_payload(
+        _mapping_or_empty(payload.get("user_metadata"))
+    )
     family = str(payload.get("family", "") or "").strip().lower()
     tool_key = str(payload.get("tool_key", "") or "").strip().lower()
     display_name = str(payload.get("display_name", "") or "").strip() or tool_key
@@ -203,6 +236,7 @@ def deserialize_chart_study_payload(payload: Mapping[str, Any]) -> dict[str, Any
             else None
         ),
         "style": serialize_study_style(style),
+        "user_metadata": serialize_study_user_metadata(user_metadata),
     }
 
 
@@ -287,7 +321,9 @@ __all__ = [
     "CHART_STUDY_SERIALIZATION_SCHEMA_VERSION",
     "deserialize_chart_study_payload",
     "deserialize_study_style_payload",
+    "deserialize_study_user_metadata_payload",
     "serialize_chart_study",
     "serialize_study_style",
+    "serialize_study_user_metadata",
     "validate_serialized_chart_study",
 ]

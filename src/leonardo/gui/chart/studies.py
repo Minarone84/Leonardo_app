@@ -20,6 +20,101 @@ STUDY_RUNTIME_ERROR = "error"
 PANE_TARGET_PRICE = "price"
 PANE_TARGET_OSCILLATOR = "oscillator"
 
+STUDY_DATASET_ROLE_UNSPECIFIED = "unspecified"
+STUDY_DATASET_ROLE_CORE_GEOGRAPHY = "core_geography"
+STUDY_DATASET_ROLE_VOLUME = "volume"
+STUDY_DATASET_ROLE_BRAID = "braid"
+STUDY_DATASET_ROLE_PEAKS_TROUGHS = "peaks_troughs"
+STUDY_DATASET_ROLE_UTC = "utc"
+STUDY_DATASET_ROLE_SUPPORTING_INDICATOR = "supporting_indicator"
+STUDY_DATASET_ROLE_SUPPORTING_OSCILLATOR = "supporting_oscillator"
+STUDY_DATASET_ROLE_SUPPORTING_CONSTRUCT = "supporting_construct"
+STUDY_DATASET_ROLE_HELPER_DEPENDENCY = "helper_dependency"
+STUDY_DATASET_ROLE_EXPERIMENTAL = "experimental"
+STUDY_DATASET_ROLE_VISUAL_ONLY = "visual_only"
+
+STUDY_DATASET_ROLE_VALUES: Tuple[str, ...] = (
+    STUDY_DATASET_ROLE_UNSPECIFIED,
+    STUDY_DATASET_ROLE_CORE_GEOGRAPHY,
+    STUDY_DATASET_ROLE_VOLUME,
+    STUDY_DATASET_ROLE_BRAID,
+    STUDY_DATASET_ROLE_PEAKS_TROUGHS,
+    STUDY_DATASET_ROLE_UTC,
+    STUDY_DATASET_ROLE_SUPPORTING_INDICATOR,
+    STUDY_DATASET_ROLE_SUPPORTING_OSCILLATOR,
+    STUDY_DATASET_ROLE_SUPPORTING_CONSTRUCT,
+    STUDY_DATASET_ROLE_HELPER_DEPENDENCY,
+    STUDY_DATASET_ROLE_EXPERIMENTAL,
+    STUDY_DATASET_ROLE_VISUAL_ONLY,
+)
+
+
+def normalize_study_dataset_role(value: object) -> str:
+    """
+    Normalize a persisted or user-provided study dataset role.
+
+    Dataset roles are semantic user metadata. Unknown, empty, or missing values
+    default to ``unspecified`` so older saved study payloads remain loadable.
+    """
+
+    if value is None:
+        return STUDY_DATASET_ROLE_UNSPECIFIED
+
+    normalized = str(value).strip().lower().replace("-", "_").replace(" ", "_")
+    if not normalized:
+        return STUDY_DATASET_ROLE_UNSPECIFIED
+    if normalized in STUDY_DATASET_ROLE_VALUES:
+        return normalized
+    return STUDY_DATASET_ROLE_UNSPECIFIED
+
+
+def normalize_study_metadata_important(value: object) -> bool:
+    """
+    Normalize a persisted important flag without treating arbitrary text as true.
+    """
+
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "y", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "n", "off", ""}:
+            return False
+        return False
+    if isinstance(value, (int, float)):
+        return bool(value)
+    return False
+
+
+@dataclass(frozen=True)
+class StudyUserMetadata:
+    """
+    Human-authored semantic metadata attached to a chart-local study.
+
+    The metadata is persisted with study setup and workspace snapshot payloads.
+    It does not participate in computation, rendering, styling, or artifact
+    identity decisions.
+    """
+
+    important: bool = False
+    description: str = ""
+    dataset_role: str = STUDY_DATASET_ROLE_UNSPECIFIED
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "important",
+            normalize_study_metadata_important(self.important),
+        )
+        description = "" if self.description is None else str(self.description)
+        object.__setattr__(self, "description", description)
+        object.__setattr__(
+            self,
+            "dataset_role",
+            normalize_study_dataset_role(self.dataset_role),
+        )
+
 
 @dataclass(frozen=True)
 class StudyComputationConfig:
@@ -340,6 +435,7 @@ class ChartStudyInstance:
     computation: StudyComputationConfig
     style: StudyDisplayStyle = field(default_factory=StudyDisplayStyle)
     runtime: ChartStudyRuntimeState = field(default_factory=ChartStudyRuntimeState)
+    user_metadata: StudyUserMetadata = field(default_factory=StudyUserMetadata)
 
     def __post_init__(self) -> None:
         family = str(self.computation.family).strip().lower()
@@ -372,6 +468,9 @@ class ChartStudyInstance:
 
     def with_runtime(self, runtime: ChartStudyRuntimeState) -> "ChartStudyInstance":
         return replace(self, runtime=runtime)
+
+    def with_user_metadata(self, user_metadata: StudyUserMetadata) -> "ChartStudyInstance":
+        return replace(self, user_metadata=user_metadata)
 
     def is_renderable(self) -> bool:
         return bool(self.runtime.render_keys)
@@ -579,6 +678,16 @@ class ChartStudyRegistry:
             runtime = replace(runtime, render_keys=list(render_keys))
 
         updated = study.with_runtime(runtime)
+        self._items[instance_id] = updated
+        return updated
+
+    def update_user_metadata(
+        self,
+        instance_id: str,
+        user_metadata: StudyUserMetadata,
+    ) -> ChartStudyInstance:
+        study = self.require(instance_id)
+        updated = study.with_user_metadata(user_metadata)
         self._items[instance_id] = updated
         return updated
 

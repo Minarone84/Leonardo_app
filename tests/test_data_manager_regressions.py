@@ -686,6 +686,26 @@ def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
     assert "rack.addWidget(button)" in helper_source
 
 
+def test_data_manager_has_study_setup_recipe_export_entry_point() -> None:
+    source = _source(DATA_MANAGER / "tool_calculation_widget.py")
+    dialog_source = _source(DATA_MANAGER / "study_setup_recipe_export_dialog.py")
+
+    assert "StudySetupRecipeExportDialog" in source
+    assert '"Create Recipes from Study Setup..."' in source
+    assert "_open_study_setup_recipe_export_dialog" in source
+    assert "_study_setup_recipes_persisted" in source
+    assert "self._recipe_dialog.refresh()" in source
+    assert "self._collection_dialog.refresh()" in source
+
+    assert "StudySetupRecipeExportPlanner" in dialog_source
+    assert "StudySetupRecipeExportPersistenceService" in dialog_source
+    assert "persist_export_plan(" in dialog_source
+    assert "ArtifactRecipeExecutor" not in dialog_source
+    assert "calculate_and_save" not in dialog_source
+    assert "save_recipe(" not in dialog_source
+    assert "save_collection(" not in dialog_source
+
+
 
 def test_saved_recipe_dialogs_use_expanded_readable_list_areas() -> None:
     recipe_source = _source(DATA_MANAGER / "artifact_recipe_dialog.py")

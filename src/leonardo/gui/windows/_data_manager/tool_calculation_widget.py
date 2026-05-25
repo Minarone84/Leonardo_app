@@ -42,6 +42,9 @@ from leonardo.data.historical.artifact_recipe_store import (
     ArtifactRecipe,
     ArtifactRecipeStore,
 )
+from leonardo.data.historical.study_setup_recipe_export_planner import (
+    StudySetupRecipeExportPersistenceReport,
+)
 from leonardo.data.historical.data_manager_update_service import (
     DataManagerUpdateExecutionReport,
     DataManagerUpdatePlan,
@@ -55,6 +58,9 @@ from leonardo.gui.windows._data_manager.artifact_recipe_dialog import (
     ArtifactRecipeDialog,
 )
 from leonardo.gui.windows._data_manager.button_rack import make_button_rack
+from leonardo.gui.windows._data_manager.study_setup_recipe_export_dialog import (
+    StudySetupRecipeExportDialog,
+)
 from leonardo.gui.windows._data_manager.update_manager_dialog import (
     DataManagerUpdatePlanDialog,
 )
@@ -90,6 +96,7 @@ class ToolCalculationWidget(QGroupBox):
         self._tool_window: Optional[FinancialToolsManagerWindow] = None
         self._recipe_dialog: Optional[ArtifactRecipeDialog] = None
         self._collection_dialog: Optional[ArtifactRecipeCollectionDialog] = None
+        self._study_setup_export_dialog: Optional[StudySetupRecipeExportDialog] = None
         self._update_dialog: Optional[DataManagerUpdatePlanDialog] = None
         self._service = ArtifactCalculationService(
             historical_root=self._historical_root
@@ -161,11 +168,21 @@ class ToolCalculationWidget(QGroupBox):
         self._collections_button.setEnabled(False)
         self._collections_button.clicked.connect(self._open_collection_dialog)
 
+        self._study_setup_export_button = QPushButton(
+            "Create Recipes from Study Setup...",
+            self,
+        )
+        self._study_setup_export_button.setEnabled(False)
+        self._study_setup_export_button.clicked.connect(
+            self._open_study_setup_recipe_export_dialog
+        )
+
         root.addLayout(
             make_button_rack(
                 self._button,
                 self._recipes_button,
                 self._collections_button,
+                self._study_setup_export_button,
             ),
             0,
         )
@@ -179,6 +196,7 @@ class ToolCalculationWidget(QGroupBox):
         self._button.setEnabled(enabled)
         self._recipes_button.setEnabled(enabled)
         self._collections_button.setEnabled(enabled)
+        self._study_setup_export_button.setEnabled(enabled)
 
         if market is None:
             self._selected_dataset.setText("Selected dataset: none")
@@ -195,6 +213,7 @@ class ToolCalculationWidget(QGroupBox):
             "_tool_window",
             "_recipe_dialog",
             "_collection_dialog",
+            "_study_setup_export_dialog",
             "_update_dialog",
         ):
             widget = getattr(self, attr_name)
@@ -319,6 +338,38 @@ class ToolCalculationWidget(QGroupBox):
     def _on_collection_dialog_destroyed(self, _obj: object = None) -> None:
         self._collection_dialog = None
 
+    def _open_study_setup_recipe_export_dialog(self) -> None:
+        market = self._market
+        if market is None:
+            self.status_message.emit(
+                "Select a dataset before creating recipes from a Study Setup"
+            )
+            return
+
+        if self._activate_existing_window(self._study_setup_export_dialog):
+            return
+        self._study_setup_export_dialog = None
+
+        dialog = StudySetupRecipeExportDialog(
+            historical_root=self._historical_root,
+            study_setup_root=self._study_setup_store_root(),
+            target_market=market,
+            parent=self.window(),
+        )
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.recipes_persisted.connect(self._study_setup_recipes_persisted)
+        dialog.status_message.connect(self.status_message.emit)
+        dialog.destroyed.connect(self._on_study_setup_export_dialog_destroyed)
+
+        self._study_setup_export_dialog = dialog
+        dialog.show()
+
+    def _on_study_setup_export_dialog_destroyed(self, _obj: object = None) -> None:
+        self._study_setup_export_dialog = None
+
+    def _study_setup_store_root(self) -> Path:
+        return self._historical_root.parent / "chart_presets" / "study_setups"
+
     def _on_update_dialog_destroyed(self, _obj: object = None) -> None:
         self._update_dialog = None
 
@@ -398,6 +449,25 @@ class ToolCalculationWidget(QGroupBox):
         )
         self.status_message.emit(message)
         QMessageBox.information(self, "Recipe Collection Saved", message)
+
+    def _study_setup_recipes_persisted(
+        self,
+        report: StudySetupRecipeExportPersistenceReport,
+    ) -> None:
+        if self._recipe_dialog is not None:
+            self._recipe_dialog.refresh()
+        if self._collection_dialog is not None:
+            self._collection_dialog.refresh()
+
+        saved_count = len(report.saved_recipe_ids)
+        collection_text = (
+            ", collection saved"
+            if report.saved_collection_id
+            else ""
+        )
+        self.status_message.emit(
+            f"Study Setup export saved {saved_count} recipe(s){collection_text}"
+        )
 
     def _load_recipe_requested(self, recipe_obj: object) -> None:
         if not isinstance(recipe_obj, ArtifactRecipe):

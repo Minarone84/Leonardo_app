@@ -215,6 +215,7 @@ class AnalysisDatabaseStore:
             display_name=manifest.display_name,
             exclude_database_id=manifest.database_id,
         )
+        target.parent.mkdir(parents=True, exist_ok=True)
         self._atomic_write_json(manifest.to_dict(), target)
         return target
 
@@ -791,7 +792,7 @@ class AnalysisDatabaseStore:
             encoding="utf-8",
             newline="",
             suffix=".tmp",
-            prefix="analysis_database_",
+            prefix="adb_",
             dir=str(target_path.parent),
             delete=False,
         ) as tmp:
@@ -815,7 +816,7 @@ class AnalysisDatabaseStore:
             encoding="utf-8",
             newline="",
             suffix=".tmp",
-            prefix="analysis_dataframe_",
+            prefix="adf_",
             dir=str(target_path.parent),
             delete=False,
         ) as tmp:

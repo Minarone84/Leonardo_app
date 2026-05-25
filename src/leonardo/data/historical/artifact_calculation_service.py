@@ -6,11 +6,17 @@ from typing import Any, Dict, Iterable, Literal, Mapping
 
 import pandas as pd
 
+from leonardo.data.historical.artifact_metadata_contracts import ArtifactMetadataEntry
 from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.artifact_result_conversion import result_to_save_dataframe
 from leonardo.data.historical.dataset_service import require_ohlcv_dataset_loadable
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore, DerivedKind
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SOURCE_OHLCV_PROVENANCE_KEY,
+    SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+    build_source_ohlcv_provenance_snapshot,
+)
 from leonardo.data.historical.store_csv import CsvOHLCVStore
 from leonardo.data.historical.utc_dependency_sources import prepare_utc_peak_trough_dependencies
 from leonardo.data.naming import MarketId, canonicalize
@@ -101,6 +107,10 @@ class ArtifactCalculationService:
 
         market = self._market_from_payload(payload)
         full_df = self._load_full_dataset_dataframe(market)
+        source_ohlcv_snapshot = build_source_ohlcv_provenance_snapshot(
+            historical_root=self._historical_root,
+            market=market,
+        )
 
         if tool_type == "construct":
             full_df = self._resolve_construct_sources_into_dataframe(
@@ -135,6 +145,7 @@ class ArtifactCalculationService:
             params_status="explicit",
             bindings=input_bindings,
             bindings_status="explicit" if input_bindings else "unknown",
+            metadata=(self._source_ohlcv_metadata_entry(source_ohlcv_snapshot),),
             source_artifacts=tuple(self._lineage_source_artifacts(payload)),
         )
 
@@ -182,6 +193,21 @@ class ArtifactCalculationService:
         if df.empty:
             raise ValueError(f"OHLCV candles file is empty: {ohlcv_path}")
         return self._normalize_full_dataset_dataframe(df=df, market=market)
+
+    def _source_ohlcv_metadata_entry(
+        self,
+        snapshot: dict[str, object],
+    ) -> ArtifactMetadataEntry:
+        return ArtifactMetadataEntry(
+            namespace=SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+            key=SOURCE_OHLCV_PROVENANCE_KEY,
+            value=snapshot,
+            label="Source OHLCV provenance",
+            description="Accepted OHLCV source snapshot used for this calculation.",
+            tags=("source_ohlcv", "lineage"),
+            searchable=False,
+            identity_affecting=False,
+        )
 
     def _normalize_full_dataset_dataframe(self, *, df: pd.DataFrame, market: MarketId) -> pd.DataFrame:
         required_cols = ["ts_ms", "open", "high", "low", "close", "volume"]

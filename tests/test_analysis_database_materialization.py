@@ -13,6 +13,10 @@ from leonardo.data.historical.analysis_database_naming import (
 )
 from leonardo.data.historical.analysis_database_store import AnalysisDatabaseStore
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SOURCE_OHLCV_PROVENANCE_KEY,
+    SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+)
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
@@ -115,6 +119,16 @@ def test_analysis_database_materializes_dataframe_csv(tmp_path):
     assert materialized.materialization.first_ts_ms == 1000
     assert materialized.materialization.last_ts_ms == 3000
     assert materialized.materialization.dataframe_sha256
+    source_snapshot = next(
+        entry.value
+        for entry in materialized.materialization.metadata
+        if (
+            entry.namespace == SOURCE_OHLCV_PROVENANCE_NAMESPACE
+            and entry.key == SOURCE_OHLCV_PROVENANCE_KEY
+        )
+    )
+    assert source_snapshot["dataset"]["symbol"] == "BTCUSDT"
+    assert source_snapshot["validation"]["status"] == "ok"
     assert "oscillator__rsi__rsi_default_period_14__rsi_14" in dataframe.columns
     assert dataframe["oscillator__rsi__rsi_default_period_14__rsi_14"].tolist() == [45.0, 55.0, 65.0]
 

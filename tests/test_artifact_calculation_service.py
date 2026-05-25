@@ -10,6 +10,10 @@ from leonardo.data.historical.artifact_calculation_service import ArtifactCalcul
 from leonardo.data.historical.artifact_metadata_contracts import HistoricalCsvArtifactManifest
 from leonardo.data.historical.artifact_metadata_naming import metadata_path_for_csv
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SOURCE_OHLCV_PROVENANCE_KEY,
+    SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+)
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
@@ -78,6 +82,46 @@ def _load_manifest(csv_path: Path) -> HistoricalCsvArtifactManifest:
         return HistoricalCsvArtifactManifest.from_dict(json.load(handle))
 
 
+def _source_ohlcv_snapshot(manifest: HistoricalCsvArtifactManifest) -> dict[str, object]:
+    for entry in manifest.metadata:
+        if (
+            entry.namespace == SOURCE_OHLCV_PROVENANCE_NAMESPACE
+            and entry.key == SOURCE_OHLCV_PROVENANCE_KEY
+        ):
+            assert isinstance(entry.value, dict)
+            return entry.value
+    raise AssertionError("source OHLCV provenance snapshot metadata entry was not written")
+
+
+def _record_source_correction(path: Path, market) -> None:
+    store = CsvOHLCVStore()
+    fingerprint = store.file_fingerprint(path).to_dict()
+    store.record_source_corrections(
+        path,
+        market=market,
+        records=(
+            {
+                "ts_ms": 1_700_000_000_000,
+                "row_index": 0,
+                "issue_code": "open_out_of_bounds",
+                "issue_message": "open out of bounds at row 0",
+                "action": "correct_open",
+                "method": "test_context",
+                "confidence": "high",
+                "needs_source_recheck": True,
+                "original": {"open": 105.0, "high": 101.0, "low": 99.0, "close": 100.5},
+                "corrected": {"open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5},
+                "context": {"previous_close": None, "next_open": 101.0},
+                "source": "test",
+                "corrected_at_ms": 1_700_000_060_000,
+                "corrected_at": "2023-11-14T22:14:20Z",
+                "source_csv_fingerprint": fingerprint,
+                "corrected_csv_fingerprint": fingerprint,
+            },
+        ),
+    )
+
+
 def test_artifact_calculation_service_saves_single_oscillator_with_metadata(tmp_path):
     market, _ohlcv_path = _write_ohlcv(tmp_path)
     service = ArtifactCalculationService(historical_root=tmp_path)
@@ -114,6 +158,20 @@ def test_artifact_calculation_service_saves_single_oscillator_with_metadata(tmp_
     assert manifest.tool.params == {"period": 14}
     assert manifest.tool.params_status == "explicit"
     assert manifest.tool.bindings_status == "unknown"
+    snapshot = _source_ohlcv_snapshot(manifest)
+    assert snapshot["kind"] == "source_ohlcv_provenance"
+    assert snapshot["dataset"] == {
+        "exchange": market.exchange,
+        "market_type": market.market_type,
+        "symbol": market.symbol,
+        "timeframe": market.timeframe,
+    }
+    assert snapshot["validation"]["status"] == "ok"  # type: ignore[index]
+    assert snapshot["validation"]["fingerprint_fresh"] is True  # type: ignore[index]
+    assert snapshot["validation"]["csv_fingerprint"]["size_bytes"] is not None  # type: ignore[index]
+    assert snapshot["fingerprint"]["size_bytes"] is not None  # type: ignore[index]
+    assert snapshot["source_correction"]["is_modified"] is False  # type: ignore[index]
+    assert snapshot["source_correction"]["record_count"] == 0  # type: ignore[index]
 
 
 def test_artifact_calculation_service_saves_volume_oscillator_with_configurable_mean_metadata(tmp_path):
@@ -182,12 +240,21 @@ def test_artifact_calculation_service_requires_existing_ohlcv(tmp_path):
 
 
 def test_artifact_calculation_service_allows_modified_ohlcv(tmp_path: Path) -> None:
-    market, _ohlcv_path = _write_ohlcv(tmp_path, validation_status="modified")
+    market, ohlcv_path = _write_ohlcv(tmp_path, validation_status="modified")
+    _record_source_correction(ohlcv_path, market)
     service = ArtifactCalculationService(historical_root=tmp_path)
 
     result = service.calculate_and_save(_payload(market))
 
     assert result.saved_path.exists()
+    manifest = _load_manifest(result.saved_path)
+    snapshot = _source_ohlcv_snapshot(manifest)
+    assert snapshot["validation"]["status"] == "modified"  # type: ignore[index]
+    assert snapshot["source_correction"]["is_modified"] is True  # type: ignore[index]
+    assert snapshot["source_correction"]["needs_source_recheck"] is True  # type: ignore[index]
+    assert snapshot["source_correction"]["record_count"] == 1  # type: ignore[index]
+    records = snapshot["source_correction"]["records"]  # type: ignore[index]
+    assert records[0]["ts_ms"] == 1_700_000_000_000  # type: ignore[index]
 
 
 @pytest.mark.parametrize("status", ["unknown", "error", "warning"])

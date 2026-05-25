@@ -14,6 +14,11 @@ import pandas as pd
 
 from leonardo.data.historical.dataset_service import require_ohlcv_dataset_loadable
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SOURCE_OHLCV_PROVENANCE_KEY,
+    SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+    build_source_ohlcv_provenance_snapshot,
+)
 from leonardo.data.naming import MarketId, canonicalize
 
 from .analysis_database_contracts import (
@@ -376,6 +381,10 @@ class AnalysisDatabaseStore:
             raise FileExistsError(f"Analysis database dataframe already exists: {target}")
 
         dataframe = self._build_materialized_dataframe(manifest)
+        source_ohlcv_snapshot = build_source_ohlcv_provenance_snapshot(
+            historical_root=self._historical_root,
+            market=manifest.market,
+        )
         self._atomic_write_dataframe(dataframe, target)
         dataframe_sha256 = self._sha256_file(target)
 
@@ -392,7 +401,10 @@ class AnalysisDatabaseStore:
             dataframe_sha256=dataframe_sha256,
             created_at_ms=created_at_ms,
             updated_at_ms=now_ms,
-            metadata=() if existing_materialization is None else existing_materialization.metadata,
+            metadata=self._materialization_metadata_with_source_ohlcv(
+                existing=() if existing_materialization is None else existing_materialization.metadata,
+                snapshot=source_ohlcv_snapshot,
+            ),
         )
 
         description = replace(
@@ -472,6 +484,33 @@ class AnalysisDatabaseStore:
             )
         )
         return tuple(columns)
+
+    def _materialization_metadata_with_source_ohlcv(
+        self,
+        *,
+        existing: Iterable[AnalysisMetadataEntry],
+        snapshot: dict[str, object],
+    ) -> tuple[AnalysisMetadataEntry, ...]:
+        retained = tuple(
+            entry
+            for entry in existing
+            if not (
+                entry.namespace == SOURCE_OHLCV_PROVENANCE_NAMESPACE
+                and entry.key == SOURCE_OHLCV_PROVENANCE_KEY
+            )
+        )
+        return retained + (
+            AnalysisMetadataEntry(
+                namespace=SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+                key=SOURCE_OHLCV_PROVENANCE_KEY,
+                value=snapshot,
+                label="Source OHLCV provenance",
+                description="Accepted OHLCV source snapshot used for this materialization.",
+                tags=("source_ohlcv", "lineage"),
+                searchable=False,
+                identity_affecting=False,
+            ),
+        )
 
     def _build_materialized_dataframe(self, manifest: AnalysisDatabaseManifest) -> pd.DataFrame:
         result = self._load_selected_ohlcv_dataframe(manifest)

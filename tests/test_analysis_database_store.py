@@ -5,10 +5,18 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from leonardo.data.historical.analysis_database_contracts import AnalysisDatabaseColumn, AnalysisFeatureSource
+from leonardo.data.historical.analysis_database_contracts import (
+    AnalysisDatabaseColumn,
+    AnalysisDatabaseManifest,
+    AnalysisFeatureSource,
+)
 from leonardo.data.historical.analysis_database_naming import build_database_column_name, build_feature_source_id
 from leonardo.data.historical.analysis_database_store import AnalysisDatabaseStore
 from leonardo.data.historical.paths import HistoricalPaths
+from leonardo.data.historical.source_ohlcv_provenance import (
+    SOURCE_OHLCV_PROVENANCE_KEY,
+    SOURCE_OHLCV_PROVENANCE_NAMESPACE,
+)
 from leonardo.data.historical.store_csv import Candle, CsvOHLCVStore
 from leonardo.data.naming import canonicalize
 
@@ -27,14 +35,15 @@ def _write_ohlcv(
     *,
     validation_status: str = "ok",
     write_metadata: bool = True,
+    price_offset: float = 0.0,
 ) -> Path:
     paths = HistoricalPaths(root=root)
     store = CsvOHLCVStore()
     path = store.file_path(paths.ensure_ohlcv_dir(market))
     candles = [
-        Candle(1000, 1.0, 1.5, 0.5, 1.2, 10.0),
-        Candle(2000, 2.0, 2.5, 1.5, 2.2, 20.0),
-        Candle(3000, 3.0, 3.5, 2.5, 3.2, 30.0),
+        Candle(1000, 1.0 + price_offset, 1.5 + price_offset, 0.5 + price_offset, 1.2 + price_offset, 10.0),
+        Candle(2000, 2.0 + price_offset, 2.5 + price_offset, 1.5 + price_offset, 2.2 + price_offset, 20.0),
+        Candle(3000, 3.0 + price_offset, 3.5 + price_offset, 2.5 + price_offset, 3.2 + price_offset, 30.0),
     ]
     store.write_atomic(path, candles, market=market, write_metadata=write_metadata)
     if write_metadata:
@@ -47,6 +56,47 @@ def _write_ohlcv(
             validator="HistoricalDatasetValidator",
         )
     return path
+
+
+def _source_ohlcv_snapshot(manifest: AnalysisDatabaseManifest) -> dict[str, object]:
+    assert manifest.materialization is not None
+    for entry in manifest.materialization.metadata:
+        if (
+            entry.namespace == SOURCE_OHLCV_PROVENANCE_NAMESPACE
+            and entry.key == SOURCE_OHLCV_PROVENANCE_KEY
+        ):
+            assert isinstance(entry.value, dict)
+            return entry.value
+    raise AssertionError("source OHLCV provenance snapshot metadata entry was not written")
+
+
+def _record_source_correction(path: Path, market) -> None:
+    store = CsvOHLCVStore()
+    fingerprint = store.file_fingerprint(path).to_dict()
+    store.record_source_corrections(
+        path,
+        market=market,
+        records=(
+            {
+                "ts_ms": 1000,
+                "row_index": 0,
+                "issue_code": "open_out_of_bounds",
+                "issue_message": "open out of bounds at row 0",
+                "action": "correct_open",
+                "method": "test_context",
+                "confidence": "high",
+                "needs_source_recheck": True,
+                "original": {"open": 2.0, "high": 1.5, "low": 0.5, "close": 1.2},
+                "corrected": {"open": 1.0, "high": 1.5, "low": 0.5, "close": 1.2},
+                "context": {"previous_close": None, "next_open": 2.0},
+                "source": "test",
+                "corrected_at_ms": 1_700_000_060_000,
+                "corrected_at": "2023-11-14T22:14:20Z",
+                "source_csv_fingerprint": fingerprint,
+                "corrected_csv_fingerprint": fingerprint,
+            },
+        ),
+    )
 
 
 def _write_feature_artifact(root: Path, market, *, family: str, instance_key: str, column_name: str, values) -> Path:
@@ -178,11 +228,13 @@ def test_materialize_database_rebuild_preserves_identity_recipe_and_updates_data
 
     first = store.materialize_database(market=market, database_id=draft.database_id)
     first_dataframe = store.load_dataframe(market=market, database_id=draft.database_id)
+    first_snapshot = _source_ohlcv_snapshot(first)
     assert first_dataframe["oscillator__rsi__rsi_default_period_14__rsi_14"].tolist() == [45.0, 55.0, 65.0]
 
     # Simulate updated source data or a damaged/outdated dataframe.csv. A rebuild
     # must reuse the saved manifest recipe and rewrite dataframe.csv for the
     # same database, not create another database or replace feature components.
+    _write_ohlcv(tmp_path, market, validation_status="ok", price_offset=1_000_000.0)
     pd.DataFrame(
         {
             "ts_ms": [1000, 2000, 3000],
@@ -202,12 +254,26 @@ def test_materialize_database_rebuild_preserves_identity_recipe_and_updates_data
     assert first.materialization is not None
     assert rebuilt.materialization.created_at_ms == first.materialization.created_at_ms
     assert rebuilt.materialization.updated_at_ms >= first.materialization.updated_at_ms
+    rebuilt_snapshot = _source_ohlcv_snapshot(rebuilt)
+    assert rebuilt_snapshot["dataset"] == first_snapshot["dataset"]
+    assert rebuilt_snapshot["fingerprint"]["size_bytes"] != first_snapshot["fingerprint"]["size_bytes"]  # type: ignore[index]
+    assert len(
+        [
+            entry
+            for entry in rebuilt.materialization.metadata
+            if (
+                entry.namespace == SOURCE_OHLCV_PROVENANCE_NAMESPACE
+                and entry.key == SOURCE_OHLCV_PROVENANCE_KEY
+            )
+        ]
+    ) == 1
     assert rebuilt_dataframe["oscillator__rsi__rsi_default_period_14__rsi_14"].tolist() == [40.0, 50.0, 60.0]
 
 
 def test_materialize_database_allows_modified_ohlcv(tmp_path: Path) -> None:
     market = canonicalize("bybit", "linear", "BTCUSDT", "30m")
-    _write_ohlcv(tmp_path, market, validation_status="modified")
+    ohlcv_path = _write_ohlcv(tmp_path, market, validation_status="modified")
+    _record_source_correction(ohlcv_path, market)
     _write_feature_artifact(
         tmp_path,
         market,
@@ -229,6 +295,13 @@ def test_materialize_database_allows_modified_ohlcv(tmp_path: Path) -> None:
     materialized = store.materialize_database(market=market, database_id=draft.database_id)
 
     assert materialized.status == "materialized"
+    snapshot = _source_ohlcv_snapshot(materialized)
+    assert snapshot["validation"]["status"] == "modified"  # type: ignore[index]
+    assert snapshot["source_correction"]["is_modified"] is True  # type: ignore[index]
+    assert snapshot["source_correction"]["needs_source_recheck"] is True  # type: ignore[index]
+    assert snapshot["source_correction"]["record_count"] == 1  # type: ignore[index]
+    records = snapshot["source_correction"]["records"]  # type: ignore[index]
+    assert records[0]["ts_ms"] == 1000  # type: ignore[index]
 
 
 @pytest.mark.parametrize("status", ["unknown", "error", "warning"])

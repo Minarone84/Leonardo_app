@@ -1,14 +1,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Mapping, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QStatusBar, QVBoxLayout, QWidget
 
 from leonardo.core.context import AppContext
-from leonardo.data.historical.paths import HistoricalPaths
-from leonardo.data.historical.store_csv import CsvOHLCVStore
 from leonardo.data.naming import MarketId
 from leonardo.gui.core_bridge import CoreBridge
 from leonardo.gui.windows._data_manager.analysis_database_builder_widget import AnalysisDatabaseBuilderWidget
@@ -100,6 +98,7 @@ class DataManagerWindow(QMainWindow):
 
         self._dataset_selector = DatasetSelectorWidget(
             historical_root=self._historical_root,
+            core_bridge=self._core,
             parent=root_widget,
         )
         self._artifact_selector = SavedArtifactSelectorWidget(
@@ -229,11 +228,64 @@ class DataManagerWindow(QMainWindow):
             self.statusBar().showMessage("No dataset selected")
             return
 
-        paths = HistoricalPaths(root=self._historical_root)
-        ohlcv_path = CsvOHLCVStore().file_path(paths.ohlcv_dir(market))
+        try:
+            loadability = self._dataset_loadability(market)
+        except Exception as exc:
+            self._preview.clear()
+            self.statusBar().showMessage(f"Could not verify selected OHLCV dataset: {exc!r}")
+            return
+
+        if not self._loadability_is_loadable(loadability):
+            reason = self._loadability_reason(loadability)
+            self._preview.clear()
+            self.statusBar().showMessage(
+                reason
+                or (
+                    "Selected OHLCV dataset is not accepted for Data Manager preview. "
+                    "Open Historical \u2192 OHLCV Maintenance to analyze, repair, or source-correct it."
+                )
+            )
+            return
+
+        ohlcv_path = self._loadability_csv_path(loadability)
+        if ohlcv_path is None:
+            self._preview.clear()
+            self.statusBar().showMessage("Selected OHLCV dataset cannot be previewed from the accepted catalog")
+            return
         title = f"OHLCV · {market.exchange} / {market.market_type} / {market.symbol} / {market.timeframe}"
         self._preview.load_csv_path(ohlcv_path, title)
         self.statusBar().showMessage("Previewing OHLCV candles")
+
+    def _dataset_loadability(self, market: MarketId) -> object:
+        return self._core.historical_dataset_loadability(
+            exchange=market.exchange,
+            market_type=market.market_type,
+            symbol=market.symbol,
+            timeframe=market.timeframe,
+        )
+
+    @staticmethod
+    def _loadability_is_loadable(loadability: object) -> bool:
+        if isinstance(loadability, Mapping):
+            return bool(loadability.get("loadable"))
+        return bool(getattr(loadability, "loadable", False))
+
+    @staticmethod
+    def _loadability_reason(loadability: object) -> str:
+        if isinstance(loadability, Mapping):
+            value = loadability.get("reason")
+        else:
+            value = getattr(loadability, "reason", "")
+        return str(value or "").strip()
+
+    @staticmethod
+    def _loadability_csv_path(loadability: object) -> Optional[Path]:
+        if isinstance(loadability, Mapping):
+            value = loadability.get("csv_path")
+        else:
+            value = getattr(loadability, "csv_path", "")
+        text = str(value or "").strip()
+        return Path(text) if text else None
 
     def _on_analysis_draft_saved(self, manifest: object) -> None:
         self._database_list.refresh()
@@ -258,4 +310,3 @@ class DataManagerWindow(QMainWindow):
         manifest = getattr(report, "manifest", None)
         display_name = getattr(manifest, "display_name", "linked analysis database")
         self.statusBar().showMessage(f"Linked analysis database rebuilt: {display_name}")
-

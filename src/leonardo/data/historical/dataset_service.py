@@ -535,6 +535,15 @@ class HistoricalDatasetService:
                         )
         return datasets
 
+    def list_loadable_dataset_loadabilities(self) -> List[DatasetLoadability]:
+        """Return accepted OHLCV dataset loadability reports in catalog order."""
+        loadabilities: List[DatasetLoadability] = []
+        for dataset_id in self.list_dataset_ids():
+            loadability = self.dataset_loadability(dataset_id)
+            if loadability.loadable:
+                loadabilities.append(loadability)
+        return loadabilities
+
     def dataset_exists(self, dataset_id: DatasetId) -> bool:
         """Compatibility alias for the strict dataset-catalog validation API."""
         return self.has_dataset(dataset_id)

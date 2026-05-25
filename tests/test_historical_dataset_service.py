@@ -99,6 +99,22 @@ def test_dataset_service_loadability_accepts_ok_and_modified_metadata(tmp_path) 
     assert service.list_loadable_dataset_symbols("bybit", "linear") == ["BTCUSDT", "ETHUSDT"]
 
 
+def test_dataset_service_lists_only_loadable_dataset_reports(tmp_path) -> None:
+    ok_dataset = DatasetId("bybit", "linear", "BTCUSDT", "1m")
+    modified_dataset = DatasetId("bybit", "linear", "ETHUSDT", "1m")
+    unknown_dataset = DatasetId("bybit", "linear", "XRPUSDT", "1m")
+    _write_dataset(tmp_path, ok_dataset, [1.0, 2.0], validation_status="ok")
+    _write_dataset(tmp_path, modified_dataset, [3.0, 4.0], validation_status="modified")
+    _write_dataset(tmp_path, unknown_dataset, [5.0, 6.0], validation_status="unknown")
+    service = HistoricalDatasetService(tmp_path)
+
+    reports = service.list_loadable_dataset_loadabilities()
+
+    assert [report.dataset_id for report in reports] == [ok_dataset, modified_dataset]
+    assert [report.validation_status for report in reports] == ["ok", "modified"]
+    assert all(report.loadable for report in reports)
+
+
 @pytest.mark.parametrize("status", ["unknown", "error", "warning"])
 def test_dataset_service_loadability_blocks_unaccepted_validation_statuses(tmp_path, status: str) -> None:
     dataset = DatasetId("bybit", "linear", f"{status.upper()}USDT", "1m")

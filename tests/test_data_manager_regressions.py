@@ -2,12 +2,19 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from types import SimpleNamespace
+
+from leonardo.gui.windows._data_manager.dataset_selector_widget import (
+    _dataset_label,
+    _options_from_loadability_reports,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "leonardo"
 DATA_MANAGER = SRC / "gui" / "windows" / "_data_manager"
 WINDOWS = SRC / "gui" / "windows"
+CORE_BRIDGE = SRC / "gui" / "core_bridge.py"
 
 
 def _source(path: Path) -> str:
@@ -25,6 +32,90 @@ def _function_source(path: Path, function_name: str) -> str:
         if isinstance(node, ast.FunctionDef) and node.name == function_name:
             return ast.get_source_segment(source, node) or ""
     raise AssertionError(f"Function {function_name!r} not found in {path}")
+
+
+def test_dataset_selector_options_keep_only_core_loadable_reports_and_label_modified() -> None:
+    reports = [
+        SimpleNamespace(
+            dataset_id=SimpleNamespace(
+                exchange="bybit",
+                market_type="linear",
+                symbol="BTCUSDT",
+                timeframe="1m",
+            ),
+            loadable=True,
+            validation_status="ok",
+            reason="Dataset is manually validated and loadable.",
+        ),
+        SimpleNamespace(
+            dataset_id=SimpleNamespace(
+                exchange="bybit",
+                market_type="linear",
+                symbol="ETHUSDT",
+                timeframe="1m",
+            ),
+            loadable=True,
+            validation_status="modified",
+            reason="Modified: valid after documented source correction.",
+        ),
+        SimpleNamespace(
+            dataset_id=SimpleNamespace(
+                exchange="bybit",
+                market_type="linear",
+                symbol="XRPUSDT",
+                timeframe="1m",
+            ),
+            loadable=False,
+            validation_status="error",
+            reason="This OHLCV dataset failed validation.",
+        ),
+    ]
+
+    options = _options_from_loadability_reports(reports)
+
+    assert [option.market.symbol for option in options] == ["BTCUSDT", "ETHUSDT"]
+    assert [_dataset_label(option) for option in options] == [
+        "bybit / linear / BTCUSDT / 1m",
+        "bybit / linear / ETHUSDT / 1m (Modified)",
+    ]
+
+
+def test_data_manager_dataset_selector_uses_core_loadable_catalog_not_raw_storage() -> None:
+    path = DATA_MANAGER / "dataset_selector_widget.py"
+    source = _source(path)
+
+    assert "list_loadable_historical_ohlcv_datasets" in source
+    assert "historical_dataset_loadability" in source
+    assert "No validated OHLCV datasets available" in source
+    assert "Open Historical \\u2192 OHLCV Maintenance" in source
+    assert "(Modified)" in source
+    assert "root.glob" not in source
+    assert "ohlcv/candles.csv" not in source
+    assert "candles.meta" not in source
+    assert "json.load" not in source
+    assert "read_text" not in source
+    assert "LOADABLE_OHLCV_VALIDATION_STATUSES" not in source
+
+
+def test_data_manager_window_passes_core_bridge_to_selector_and_checks_preview_loadability() -> None:
+    path = WINDOWS / "data_manager_window.py"
+    source = _source(path)
+    preview_source = _function_source(path, "_preview_current_ohlcv")
+
+    assert "core_bridge=self._core" in source
+    assert "historical_dataset_loadability" in source
+    assert "_loadability_csv_path" in preview_source
+    assert "Selected OHLCV dataset is not accepted for Data Manager preview" in preview_source
+    assert "HistoricalPaths" not in source
+    assert "CsvOHLCVStore" not in source
+
+
+def test_core_bridge_exposes_data_manager_loadable_ohlcv_catalog_boundary() -> None:
+    source = _source(CORE_BRIDGE)
+
+    assert "def list_loadable_historical_ohlcv_datasets" in source
+    assert "list_loadable_dataset_loadabilities()" in source
+    assert "LOADABLE_OHLCV_VALIDATION_STATUSES" not in source
 
 
 def test_analysis_database_feature_builder_helper_is_gui_owned_shared_mapper() -> None:

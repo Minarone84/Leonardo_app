@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QPlainTextEdit, QPushButton, QSizePolicy, QWidget
 
 from leonardo.data.historical.artifact_metadata_backfill import (
     ArtifactMetadataBackfill,
@@ -31,30 +31,44 @@ class MetadataToolsWidget(QGroupBox):
         self._historical_root = Path(historical_root)
         self._market: Optional[MarketId] = None
 
-        root = QHBoxLayout(self)
+        root = QGridLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
         root.setSpacing(8)
-
-        content = QVBoxLayout()
-        content.setSpacing(8)
-        root.addLayout(content, 1)
+        root.setColumnStretch(0, 1)
+        root.setColumnStretch(1, 0)
+        root.setRowStretch(1, 1)
 
         self._summary = QLabel(
             "Select a dataset to check and restore missing or unreadable CSV metadata sidecars.",
             self,
         )
         self._summary.setWordWrap(True)
-        content.addWidget(self._summary)
+        root.addWidget(self._summary, 0, 0)
 
         self._report = QPlainTextEdit(self)
         self._report.setReadOnly(True)
         self._report.setPlaceholderText("Run metadata restore to see scanned, restored, skipped, and failed counts.")
-        content.addWidget(self._report, 1)
+        self._report.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self._increase_report_font()
+        root.addWidget(self._report, 1, 0, 1, 2)
 
         self._restore_button = QPushButton("Check / Restore Missing or Corrupt Metadata", self)
         self._restore_button.setEnabled(False)
         self._restore_button.clicked.connect(self._restore_selected_dataset_metadata)
-        root.addLayout(make_button_rack(self._restore_button), 0)
+        root.addLayout(make_button_rack(self._restore_button), 0, 1)
+
+    def _increase_report_font(self) -> None:
+        font = self._report.font()
+        point_size = font.pointSize()
+        if point_size > 0:
+            font.setPointSize(point_size + 1)
+        else:
+            point_size_f = font.pointSizeF()
+            if point_size_f > 0:
+                font.setPointSizeF(point_size_f + 1.0)
+            else:
+                font.setPointSize(10)
+        self._report.setFont(font)
 
     def set_market(self, market: Optional[MarketId]) -> None:
         self._market = market

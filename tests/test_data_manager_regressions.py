@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QComboBox, QPushButton
+from PySide6.QtWidgets import QApplication, QComboBox, QGridLayout, QPushButton, QSizePolicy
 
 from leonardo.gui.windows._data_manager.dataframe_preview_widget import DataFramePreviewWidget
 from leonardo.gui.windows._data_manager.dataset_selector_widget import (
@@ -15,6 +15,7 @@ from leonardo.gui.windows._data_manager.dataset_selector_widget import (
     _dataset_label,
     _options_from_loadability_reports,
 )
+from leonardo.gui.windows._data_manager.metadata_tools_widget import MetadataToolsWidget
 from leonardo.gui.windows.data_manager_window import DataManagerWindow
 
 
@@ -452,6 +453,29 @@ def test_dataframe_preview_header_layout_keeps_clear_button_under_summary(tmp_pa
     assert widget._last_timestamp_summary.text() == ""
 
 
+def test_metadata_tools_report_spans_full_width_and_uses_larger_font(tmp_path: Path) -> None:
+    _qapp()
+    widget = MetadataToolsWidget(historical_root=tmp_path)
+
+    layout = widget.layout()
+    assert isinstance(layout, QGridLayout)
+    report_index = layout.indexOf(widget._report)
+    assert report_index >= 0
+    assert layout.getItemPosition(report_index) == (1, 0, 1, 2)
+    assert widget._report.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+
+    base_point_size = widget.font().pointSize()
+    report_point_size = widget._report.font().pointSize()
+    if base_point_size > 0:
+        assert report_point_size == base_point_size + 1
+    else:
+        assert widget._report.font().pointSizeF() > widget.font().pointSizeF()
+
+    widget._report.setPlainText("Metadata restore report\nScanned CSVs: 1")
+
+    assert widget._report.toPlainText() == "Metadata restore report\nScanned CSVs: 1"
+
+
 def test_database_builder_component_edit_is_explicit_intent_only() -> None:
     """Database Builder may expose component-edit intent, but rebuild must stay manifest-only."""
     path = DATA_MANAGER / "analysis_database_list_widget.py"
@@ -602,7 +626,6 @@ def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
     """Main Data Manager widgets should keep actions in a right-side vertical rack."""
     widget_files = (
         "dataset_selector_widget.py",
-        "metadata_tools_widget.py",
         "tool_calculation_widget.py",
         "analysis_database_builder_widget.py",
         "saved_artifact_selector_widget.py",
@@ -619,6 +642,11 @@ def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
     assert "button_rack import make_button_rack" not in preview_source
     assert "make_button_rack(" not in preview_source
     assert "summary_area.addWidget(self._clear_button" in preview_source
+
+    metadata_source = _source(DATA_MANAGER / "metadata_tools_widget.py")
+    assert "button_rack import make_button_rack" in metadata_source
+    assert "root = QGridLayout(self)" in metadata_source
+    assert "root.addLayout(make_button_rack(self._restore_button), 0, 1)" in metadata_source
 
     helper_source = _source(DATA_MANAGER / "button_rack.py")
     assert "def make_button_rack" in helper_source

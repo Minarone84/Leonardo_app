@@ -1,9 +1,9 @@
 🧠 Leonardo — Historical Download Subsystem (Updated)
 
 Date: 02/26/2026
-Updated: 2026-05-22
+Updated: 2026-05-25
 Scope: Connection + Historical Data Layer
-Status: Functional, stable, integrated with Core runtime and exchange capability ownership
+Status: Functional, stable, integrated with Core runtime, preliminary validation reporting, and explicit OHLCV acceptance workflow
 
 1. Purpose of This Document
 
@@ -21,7 +21,7 @@ It covers:
 • Exchange capability ownership
 • Preflight and confirmation flow
 • Multi-timeframe task monitoring
-• Validation and cancellation behavior
+• Preliminary validation and cancellation behavior
 • Current limitations
 • Dependency diagram
 
@@ -98,9 +98,13 @@ The Historical Download Manager now supports:
 • readable Confirm OHLCV Download plans
 • multi-timeframe selection and sequential batch execution
 • OHLCV Download Task monitor dialog
-• progress, retry, stalled, validation, cancellation, and final recap display
+• progress, retry, stalled, preliminary validation, cancellation, and final recap display
 • Stop/Cancel requests routed through Core/TaskManager
 • authoritative batch completion payloads
+• newly downloaded OHLCV metadata written as `validation.status = "unknown"` and `quality.validation_status = "not_validated"`
+• preliminary `ERROR` results highlighted in bold red and `WARNING` results highlighted with warning styling in the task monitor/final recap
+• manual OHLCV Maintenance validation required before downloaded data is accepted/loadable
+• local +1 point font bump for Historical Download Manager windows, preflight confirmation, task monitor, and recap/status text widgets
 
 The GUI displays this state. It does not become the execution owner.
 
@@ -254,7 +258,16 @@ The Bybit adapter owns server-time access and newest/oldest range discovery beha
 
 3.7 Validation
 
-After completion, the historical validation layer checks the saved CSV. Validation is neutral and works from canonical timeframe grammar rather than a Bybit-specific allow-list.
+After completion, the historical validation layer checks the saved CSV with `HistoricalDatasetValidator`. This validation is preliminary reporting only. It notifies the user about apparent `OK`, `WARNING`, or `ERROR` results, but it does not certify the downloaded dataset as accepted/loadable.
+
+Newly written OHLCV sidecars keep:
+
+• `validation.status = "unknown"`
+• `quality.validation_status = "not_validated"`
+
+Manual validation through OHLCV Maintenance is required before downloaded OHLCV becomes accepted for Historical Data Manager charts or Data Manager calculations.
+
+Validation is neutral and works from canonical timeframe grammar rather than a Bybit-specific allow-list.
 
 Fixed-duration timeframe validation supports canonical minute/hour/day/week units. Month candles are variable-length, so exact fixed-delta validation is not applied to `1M`.
 
@@ -307,6 +320,10 @@ The sidecar includes:
 • UTC and `Europe/Rome` display timestamps
 • row/column counts and column metadata
 • lineage, fingerprint, and timeline-quality metadata
+• default download validation metadata with `validation.status = "unknown"`
+• default download quality metadata with `validation_status = "not_validated"`
+
+OHLCV Maintenance is the explicit acceptance workflow that may later stamp `ok`, `modified`, `warning`, or `error` validation metadata after manual analysis, repair, or source correction.
 
 ------------------------------------------------------------
 6. Naming Layer
@@ -356,8 +373,11 @@ Responsibilities
 • show the Confirm OHLCV Download dialog
 • submit confirmed single-timeframe or multi-timeframe jobs
 • observe normalized audit events
-• display progress, validation, cancellation, and final recap state
+• display progress, preliminary validation, cancellation, and final recap state
+• highlight preliminary validation `ERROR` and `WARNING` results clearly
+• direct users to OHLCV Maintenance for explicit validation, repair, or source correction
 • request cancellation through CoreBridge
+• apply only local Historical Download Manager font readability adjustments
 
 Updated Interaction Model
 
@@ -465,7 +485,7 @@ The current subsystem solves:
 • multi-timeframe sequential batch downloads
 • readable user confirmation before execution
 • GUI progress without GUI execution ownership
-• task monitor final recap and batch validation summary
+• task monitor final recap and preliminary batch validation summary
 • Stop/Cancel routing through Core/TaskManager
 • Bybit market/timeframe/alias/limit ownership in the adapter
 • adapter-default page limits with adapter-max clamping
@@ -483,11 +503,12 @@ The subsystem now:
 • avoids partial candle corruption
 • stores partitioned CSV datasets
 • writes OHLCV metadata sidecars beside canonical candle CSVs
+• keeps newly downloaded OHLCV metadata unaccepted with `validation.status = "unknown"` and `quality.validation_status = "not_validated"`
 • invalidates any loaded `HistoricalDatasetService` cache for the rewritten dataset
 • supports preflight plans and readable confirmation before execution
 • supports multi-timeframe batch downloads
 • displays task-monitor progress and final recap state
-• validates completed datasets and reports validation state in the recap
+• runs preliminary validation and reports OK/WARNING/ERROR state in the recap without certifying the dataset as accepted
 • routes Stop/Cancel through Core/TaskManager
 • resolves default page limit from the adapter when GUI Limit is `0`
 • clamps explicit page limits to the adapter maximum
@@ -505,10 +526,13 @@ The subsystem now:
 Current known limitations:
 
 • only Bybit has a concrete exchange adapter in the current implementation
-• exchange discovery is still effectively single-exchange until a registry/provider layer is introduced
+• ExchangeRegistry exists as the Core capability/provider boundary, but additional exchange adapters are not implemented yet
 • the GUI may expose a broad numeric limit field, but Core still clamps execution to the selected adapter maximum
 • no full multi-exchange connection/rate-limit framework is implemented yet
 • websocket/realtime lifecycle remains a separate feed/orchestration concern from historical ingestion
+• downloaded OHLCV still requires OHLCV Maintenance validation before chart or Data Manager use
+• warning-load policy is not implemented; `warning` datasets remain blocked by accepted loadability policy
+• future validator policy may add timestamp alignment, seconds-vs-milliseconds sanity, duplicate header detection, and more precise gap location reporting
 
 ------------------------------------------------------------
 13. Architectural Summary
@@ -584,6 +608,7 @@ The downloader still owns:
 - idempotent merge;
 - atomic persistence;
 - adjacent OHLCV metadata sidecar writing;
+- preliminary post-write validation reporting without acceptance stamping;
 - structured audit emission.
 
 GUI still submits and observes. Core still executes and supervises.

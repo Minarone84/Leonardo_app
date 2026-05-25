@@ -1,8 +1,8 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.19
+Version: v0.20
 Status: Living document (expected to change)
-Updated: 2026-05-22
+Updated: 2026-05-25
 
 Purpose
 
@@ -426,12 +426,22 @@ Implemented baseline:
   - ArtifactRecoveryPlanner shares UTC dependency-intent resolution, remains read-only, and blocks unsafe UTC dependencies with missing or duplicate join keys.
   - Consolidated historical validation passed the focused Core/download/chart/data/recovery suite and confirmed no new layering violations in the historical scope.
 
+- M13 OHLCV acceptance and loadability chain is accepted:
+  - Historical Download Manager runs preliminary `HistoricalDatasetValidator` reporting but writes new OHLCV metadata as `validation.status = "unknown"` and `quality.validation_status = "not_validated"`.
+  - OHLCV Maintenance is accepted as the explicit validation, repair, source-invalid reporting, source-correction, provenance, and `modified` status workflow.
+  - Accepted/loadable OHLCV statuses are `ok` and `modified`; `unknown`, `not_validated`, `warning`, `error`, stale fingerprints, missing/unreadable metadata, metadata mismatch, and missing CSV are blocked.
+  - Historical Data Manager chart creation uses CoreBridge/HistoricalDatasetService loadable catalogs and `HistoricalDatasetService.open_dataset(...)` enforces the final load gate.
+  - Data Manager Patch A added data-layer gates through `evaluate_ohlcv_dataset_loadability(...)`, `require_ohlcv_dataset_loadable(...)`, `format_ohlcv_loadability_error(...)`, `ArtifactCalculationService`, `AnalysisDatabaseStore`, and `ArtifactRecoveryPlanner`.
+  - Data Manager Patch B moved selector and OHLCV preview behavior onto CoreBridge/data-layer loadable catalog surfaces, labels modified datasets, and shows OHLCV Maintenance guidance when no validated datasets are available.
+
 Next direction:
 
-- Treat the current Historical Download Manager M7 behavior as the accepted OHLCV ingestion baseline.
+- Treat the current Historical Download Manager M7/M13 behavior as the accepted OHLCV ingestion and preliminary-validation baseline.
+- Treat OHLCV Maintenance as the explicit acceptance workflow for OHLCV validation, repair, source-invalid handling, source correction, and modified status.
 - Treat the current historical chart/study M8 behavior plus M12 apply/save/recovery hardening as the accepted chart-session and artifact-calculation baseline.
-- Treat the current Data Manager M4/M5/M6 behavior as the accepted analysis-database baseline.
+- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates as the accepted analysis-database baseline.
 - Integrate GUI release checks into CI/build packaging so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files and preserve Data Manager ownership boundaries.
+- Harden Data Manager metadata/lineage in a future patch so derived artifact sidecars and Analysis Database materialization metadata record source OHLCV validation status, fingerprint, and source-correction provenance snapshots.
 - Consider adding recipe-hash lineage into saved artifact sidecars in a future migration so recovery can prove exact recipe-hash freshness instead of metadata-level consistency only.
 - A partition-level artifact index may later cache summaries for faster listing/search, while sidecars remain the metadata source of truth.
 
@@ -497,6 +507,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.20: OHLCV acceptance and loadability sync. Documents Download Manager preliminary validation with default unknown/not_validated metadata, OHLCV Maintenance validation/repair/source-correction workflow, `modified` status, ok/modified loadability policy, Historical Data Manager load gating, Data Manager Patch A/B gates and selector messaging, and future Data Manager source-OHLCV lineage hardening.
+
 v0.19: Historical apply/save/recovery hardening. Documents Historical Download command-boundary cleanup, TaskManager terminal cleanup, timeline-first runtime projection alignment, sidecar-driven saved-source selection, shared `result_to_save_dataframe(...)` save conversion, shared UTC dependency preparation, and recovery planner UTC dependency-intent parity with read-only join-key blocker checks.
 
 v0.18: Core-boundary repair and exchange-registry baseline. Documents normalized audit event handling, implemented HistoricalDatasetService cache invalidation APIs, downloader post-write dataset-cache invalidation, pyproject runtime dependency truth, and the minimal Core `ExchangeRegistry` capability provider used by CoreBridge and HistoricalDownloader while keeping Bybit as the only default adapter.

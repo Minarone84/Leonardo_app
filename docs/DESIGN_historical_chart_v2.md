@@ -1,7 +1,7 @@
 # Leonardo — Historical Chart Architecture (Current State)
 
-Version: v4.7
-Date: 2026-05-22
+Version: v4.8
+Date: 2026-05-25
 
 Scope: historical chart sessions, chart-space ownership, viewport/camera behavior, autoscale/manual-y behavior, resident slicing, study projection, pane contracts, and renderer execution.
 
@@ -91,7 +91,7 @@ The panel does **not** own:
 - pane layout policy
 - renderer semantics
 
-Dataset discovery before chart creation is not panel or workspace ownership; the selection UI must consume CoreBridge/HistoricalDatasetService catalog surfaces before a chart session is opened.
+Dataset discovery before chart creation is not panel or workspace ownership; the selection UI must consume CoreBridge/HistoricalDatasetService loadable catalog surfaces before a chart session is opened. Only accepted OHLCV datasets with `validation.status` of `ok` or `modified` are offered, modified datasets are labeled as such, and `HistoricalDatasetService.open_dataset(...)` enforces the same gate before loading so blocked datasets cannot bypass the selector.
 
 ---
 

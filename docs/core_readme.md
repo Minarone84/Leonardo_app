@@ -1,7 +1,7 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.9
-Date: 2026-05-22
+Version: v3.10
+Date: 2026-05-25
 
 ## Overview
 
@@ -144,7 +144,8 @@ Core owns:
 - task submission and cancellation routing;
 - downloader execution;
 - page-limit resolution and adapter-max clamping;
-- validation invocation and validation audit emission;
+- preliminary validation invocation and validation audit emission;
+- default OHLCV metadata writing as `validation.status = "unknown"` and `quality.validation_status = "not_validated"`;
 - structured, normalized audit event history.
 
 Exchange adapters own venue-specific capability truth, including:
@@ -159,6 +160,8 @@ Exchange adapters own venue-specific capability truth, including:
 The GUI may display capabilities and request work, but it must not own historical execution, exchange-specific values, adapter limits, or cancellation truth.
 
 `CoreBridge` resolves plain GUI download intent into Core-side downloader requests, including the configured historical root. The Historical Download Window does not construct `HistoricalDownloader`, downloader request dataclasses, or historical storage roots directly.
+
+Download-time validation is notification/reporting only. `HistoricalDatasetValidator` checks the written CSV and the task monitor can report preliminary `OK`, `WARNING`, or `ERROR`, but download completion does not certify data as accepted. Manual OHLCV Maintenance validation is required before a dataset becomes loadable for charts or Data Manager workflows.
 
 ---
 
@@ -269,7 +272,18 @@ Each persisted OHLCV CSV now has an adjacent metadata sidecar:
 
 `data/historical/bybit/linear/BTCUSDT/1h/ohlcv/candles.meta.json`
 
-The CSV remains the tabular value truth. The `.meta.json` sidecar carries artifact identity, market identity, file references, timestamp range, shape, column metadata, lineage, fingerprint, and quality metadata.
+The CSV remains the tabular value truth. The `.meta.json` sidecar carries artifact identity, market identity, file references, timestamp range, shape, column metadata, lineage, fingerprint, quality metadata, and OHLCV validation metadata.
+
+OHLCV validation status is an explicit metadata contract:
+
+- `HistoricalDatasetValidator` is the central CSV-content validation truth for downloader preliminary validation and OHLCV Maintenance validation;
+- metadata/sidecar readability, identity, expected columns, and fingerprint freshness are separate store/metadata inspection responsibilities;
+- downloaded OHLCV starts as `validation.status = "unknown"` and `quality.validation_status = "not_validated"`;
+- OHLCV Maintenance may stamp `ok`, `modified`, `warning`, or `error` after explicit user validation/repair/source correction;
+- `modified` means the dataset is valid after documented source correction and remains accepted/loadable, but it is not raw exchange truth;
+- stored validation status is trusted only while the stored validation fingerprint matches the current CSV fingerprint.
+
+Accepted/loadable OHLCV statuses are `ok` and `modified`. Blocked statuses are `unknown`, `not_validated`, `warning`, and `error`. Missing CSV, missing/unreadable metadata, metadata identity mismatch, missing validation status/fingerprint, and stale validation fingerprints are also blocked. Warning remains blocked until a separate user-approved warning-load policy exists.
 
 Analysis databases are folder-backed artifacts stored in:
 
@@ -598,6 +612,8 @@ A recipe stores a reproducible full-dataset financial-tool calculation intent. A
 
 GUI code may collect a new database name and checked artifact columns for `Database seed creator`, or one checked database for `Database Builder`, but it must call data-layer APIs for durable mutation. GUI code must not manually rewrite `manifest.json`, move folders, delete database files, materialize dataframes outside the store boundary, or add/remove/replace Analysis Database artifact components during build/rebuild.
 
+Data Manager materialization uses accepted OHLCV only. `ArtifactCalculationService._load_full_dataset_dataframe(...)` and `AnalysisDatabaseStore._load_selected_ohlcv_dataframe(...)` call the shared OHLCV loadability gate before reading `candles.csv`. `ArtifactRecoveryPlanner._recalculation_blockers(...)` reports a blocker when source OHLCV exists but is not accepted/loadable. The shared helpers are `evaluate_ohlcv_dataset_loadability(...)`, `require_ohlcv_dataset_loadable(...)`, and `format_ohlcv_loadability_error(...)`.
+
 ### Artifact recipe and recovery orchestration semantics
 
 Artifact recovery is intentionally split into narrow data-layer responsibilities:
@@ -696,8 +712,12 @@ For historical chart sessions, `HistoricalDatasetService` is the intended Core-s
 - resident slice retrieval
 - full-dataset dataframe access or equivalent loaded columns
 - dataset catalog listing for GUI selection (`list_dataset_exchanges`, `list_dataset_market_types`, `list_dataset_symbols`, `list_dataset_timeframes`, `list_dataset_ids`)
+- loadable dataset catalog listing for accepted OHLCV selection (`list_loadable_dataset_exchanges`, `list_loadable_dataset_market_types`, `list_loadable_dataset_symbols`, `list_loadable_dataset_timeframes`, `list_loadable_dataset_loadabilities`)
+- loadability checks through `dataset_loadability(...)`, backed by `evaluate_ohlcv_dataset_loadability(...)`
 - dataset existence checks (`has_dataset`, `dataset_exists`)
 - dataset-cache invalidation (`invalidate_dataset_cache`, `invalidate_all_dataset_caches`)
+
+`open_dataset(...)` enforces the accepted OHLCV gate before loading. Raw catalog/listing APIs remain available for maintenance workflows such as OHLCV Maintenance, but chart/Data Manager load paths must rely on loadability-aware APIs or `require_ohlcv_dataset_loadable(...)`.
 
 Compatibility probing or private service-store reach-through may still exist downstream during transition, but it is not the intended permanent Core → controller contract.
 
@@ -756,6 +776,9 @@ The Core enforces:
 - controller-facing historical dataset interfaces should be explicit and public
 - historical download page limits must resolve through adapter capability and be clamped to adapter maximum
 - exchange-specific market/timeframe/alias/interval/limit truth must stay in the exchange adapter/capability layer
+- download-time OHLCV validation is preliminary reporting only and must not stamp downloaded data as accepted
+- accepted/loadable OHLCV statuses are `ok` and `modified`; `unknown`, `not_validated`, `warning`, `error`, missing/unreadable/stale metadata, metadata mismatch, and missing CSV are blocked
+- Data Manager and Historical Data Manager load paths must use the data-layer OHLCV loadability policy instead of GUI metadata parsing
 - non-renderable outputs remain valid runtime outputs
 - render truth must stay downstream of Core compute truth
 - financial-tool execution environment must be caller-supplied context, not hidden naming or renderer state
@@ -799,9 +822,11 @@ The Leonardo Core provides:
 - structured artifact persistence with CSV + `.meta.json` metadata sidecars
 - artifact recipe / collection persistence for reproducible full-dataset calculations
 - read-only artifact recovery planning, delegated artifact regeneration, explicit Analysis Database component editing, and store-owned linked Analysis Database rebuilds
+- accepted-OHLCV loadability gates for Historical Data Manager chart loading and Data Manager calculation/materialization paths
 - observable runtime lifecycle and state
 - explicit distinction between compute truth and render truth
-- Core-supervised historical OHLCV download planning, execution, cancellation, validation, and audit emission
+- Core-supervised historical OHLCV download planning, execution, cancellation, preliminary validation reporting, and audit emission
+- OHLCV Maintenance service ownership for explicit validation, repair, source-invalid handling, source correction provenance, and modified status stamping
 
 It is:
 
@@ -848,13 +873,19 @@ list_dataset_market_types(exchange: str) -> list[str]
 list_dataset_symbols(exchange: str, market_type: str) -> list[str]
 list_dataset_timeframes(exchange: str, market_type: str, symbol: str) -> list[str]
 list_dataset_ids() -> list[DatasetId]
+dataset_loadability(dataset_id: DatasetId) -> DatasetLoadability
+list_loadable_dataset_exchanges() -> list[str]
+list_loadable_dataset_market_types(exchange: str) -> list[str]
+list_loadable_dataset_symbols(exchange: str, market_type: str) -> list[str]
+list_loadable_dataset_timeframes(exchange: str, market_type: str, symbol: str) -> list[str]
+list_loadable_dataset_loadabilities() -> list[DatasetLoadability]
 has_dataset(dataset_id: DatasetId) -> bool
 dataset_exists(dataset_id: DatasetId) -> bool
 invalidate_dataset_cache(dataset_id: DatasetId) -> bool
 invalidate_all_dataset_caches() -> int
 ```
 
-Downstream controller code should call these APIs directly. Private reach-through into service internals such as `_datasets` is not part of the production contract.
+Downstream controller code should call these APIs directly. Chart and Data Manager load paths must use the loadability-aware APIs or `open_dataset(...)` so unaccepted OHLCV cannot bypass the selector. Private reach-through into service internals such as `_datasets` is not part of the production contract.
 
 ### Frozen boundary rules
 

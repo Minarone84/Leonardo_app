@@ -152,8 +152,11 @@ The sidecar may include:
 - canonical names and saved identity from `ft_naming.py`;
 - params and bindings with explicit/inferred/unknown status;
 - lineage, fingerprint, quality, and namespaced extension metadata.
+- OHLCV validation metadata when the artifact is `ohlcv/candles.csv`.
 
 Sidecars are consumers of contract data. They must not define new tool behavior, compute logic, render defaults, or naming templates. Valid sidecar column metadata is also the source-selection truth for saved artifacts: non-renderable but analysis-usable/selectable outputs may be selected as analytical sources, while non-selectable utility columns must not be exposed merely because they exist in the CSV header.
+
+For OHLCV, validation metadata is an acceptance contract owned by the historical data layer. `ok` and `modified` are loadable; `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, metadata mismatch, stale fingerprints, missing validation fingerprints, and missing CSV are blocked. Download-time validation is preliminary reporting only and does not certify a dataset as accepted.
 
 ## Adding a new indicator
 
@@ -245,4 +248,3 @@ UTC directional trend semantics are contractually constrained:
 - opposite trends must not overlap beyond the shared boundary;
 - invalid OHLC/source rows break active intervals and historical directional trend detection must not bridge NaN or malformed candle/source gaps;
 - `hr_trend_max_gap` is horizontal-range continuity metadata and must not block directional uptrend/downtrend detection.
-

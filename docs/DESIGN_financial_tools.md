@@ -1,8 +1,8 @@
 # DESIGN — Financial Tools System
 
 Leonardo
-Version: v1.18
-Date: 2026-05-22
+Version: v1.19
+Date: 2026-05-25
 Scope: Indicators, Oscillators, Constructs, Tool Specs, Naming Policy, Controller Integration, Panel Integration, Workspace Integration, Chart Application
 
 ---
@@ -450,6 +450,10 @@ Non-renderable utility outputs remain valid persisted outputs. Their sidecar col
 Saved-source selection must consume valid sidecar column metadata when available. `selectable` / `analysis_usable` metadata is the source-selection truth; CSV-header fallback is a compatibility path for legacy, missing, malformed, or incomplete sidecars and must not override valid metadata.
 
 Full-dataset save conversion is shared through the data-layer `result_to_save_dataframe(...)` helper so chart save and save-only artifact calculation preserve timestamps, output ordering, boolean/state outputs, numeric values, and NaN/gap honesty consistently before persistence.
+
+Save-only artifact calculation through Data Manager requires accepted OHLCV before reading source candles. `ArtifactCalculationService` uses the shared data-layer OHLCV loadability gate, so only `ok` and `modified` source OHLCV are accepted. `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, stale validation fingerprints, metadata mismatch, and missing CSV are rejected before calculation. GUI code must not duplicate this policy.
+
+Future Data Manager lineage hardening is not implemented yet. Saved derived artifact metadata should eventually record the source OHLCV validation status, fingerprint, and source-correction provenance snapshot used for calculation.
 
 Restore-only metadata backfill may recreate missing/corrupt sidecars from existing CSV files, but it must not rewrite the CSV value artifact and must not become the normal save path.
 

@@ -17,7 +17,7 @@ Primary architecture documents live in `docs/`:
 - `Leonardo__Roadmap_V01.md` — Roadmap and change log.
 
 
-## Current Historical Download Manager baseline — 2026-05-22
+## Current Historical Download Manager baseline — 2026-05-25
 
 The Historical Download Manager is now a Core-supervised OHLCV ingestion flow. The GUI collects user input, displays exchange capabilities, requests preflight plans, shows the Confirm OHLCV Download dialog, opens the OHLCV Download Task monitor, and observes normalized audit events. Core owns execution through TaskManager, CoreBridge resolves the configured historical root and builds downloader requests from plain GUI intent, HistoricalDownloader owns planning/paging/persistence/validation, `ExchangeRegistry` owns exchange discovery and adapter factory lookup, and the exchange adapter owns venue-specific markets, timeframes, aliases, interval mappings, historical limits, and range-discovery behavior.
 
@@ -26,17 +26,41 @@ Important accepted behavior:
 - multi-timeframe OHLCV selection and sequential batch execution;
 - metadata-aware local file inspection and update-latest planning;
 - preflight range discovery before confirmed download;
-- task monitor progress, Stop/Cancel request handling, validation status, final recap, and batch validation summary;
+- task monitor progress, Stop/Cancel request handling, preliminary validation status, final recap, and batch validation summary;
 - GUI `Limit = 0` means adapter/default page limit, and explicit values are clamped by the adapter maximum;
 - historical capability display and downloader adapter acquisition route through the Core-registered `ExchangeRegistry`; Bybit remains the only default concrete adapter;
 - OHLCV rewrites invalidate the matching `HistoricalDatasetService` dataset/slice cache through public Core/data APIs;
+- post-write validation is preliminary reporting only; newly downloaded OHLCV metadata remains `validation.status = "unknown"` and `quality.validation_status = "not_validated"` until OHLCV Maintenance explicitly validates it;
+- the final recap highlights preliminary `ERROR` and `WARNING` results and directs the user to Historical -> OHLCV Maintenance for validation, repair, or source correction;
+- Historical Download Manager related windows/dialogs use a local +1 point font bump without changing the global `QApplication` font;
 - audit sinks normalize subsystem events so GUI snapshots and durable JSONL audit history consume one structured event shape;
 - completed, failed, and cancelled tasks are removed from `TaskManager`'s active task map while remaining preserved in audit history.
 
-## Current Data Manager / Analysis Database workflow — 2026-05-16
+## Current OHLCV Maintenance workflow — 2026-05-25
+
+OHLCV Maintenance is a top-level Historical menu workflow for explicit dataset acceptance and repair. It lists stored OHLCV datasets, shows metadata/details and validation reports, supports checkbox-driven selection with Select All / Deselect All, and routes user intent through CoreBridge into `HistoricalOhlcvMaintenanceService`.
+
+Accepted behavior includes:
+
+- Analyze Checked runs `HistoricalDatasetValidator` through the data-layer service and stamps validation metadata;
+- supported metadata/display statuses are `unknown`, `ok`, `modified`, `warning`, and `error`;
+- Delete Selected deletes the exact `candles.csv` and adjacent `candles.meta.json` after confirmation;
+- Rebuild Metadata rewrites only the metadata sidecar, not CSV values;
+- Plan Repair computes explicit redownload ranges, and Execute Repair redownloads/replaces those ranges before revalidation;
+- source-invalid repair outcomes are reported when the exchange returns data that still fails validation;
+- Plan Source Correction and Apply Source Correction support conservative local correction for source-invalid candles with provenance records;
+- `modified` means the dataset is valid after documented source correction and is accepted/loadable, but it is not raw exchange truth;
+- the window opens at full usable height, half screen width, horizontally centered with the native title bar kept inside available screen geometry, and uses a local +1 point font bump.
+
+The GUI remains display/intent only. Validation, deletion, metadata rebuild, repair orchestration, source correction execution, cache invalidation, and metadata stamping are data-layer responsibilities.
+
+## Current Data Manager / Analysis Database workflow — 2026-05-25
 
 Data Manager remains dataset/artifact oriented and separate from chart sessions. The current Analysis Database workflow includes:
 
+- dataset selection through the CoreBridge/data-layer loadable OHLCV catalog, listing only `ok` and `modified` datasets and labeling modified datasets with `(Modified)`;
+- no-loadable-dataset guidance that directs users to Historical -> OHLCV Maintenance;
+- OHLCV preview verifies loadability through CoreBridge and uses the data-layer `csv_path` from the loadability report before bounded preview;
 - `Database seed creator` for named draft manifests with a `SYMBOL_timeframe_` default prefix;
 - checked saved artifact columns feed the `Database seed creator` only;
 - no-whitespace, no-path-separator, same-market duplicate visible-name rejection for draft creation and rename;
@@ -54,11 +78,15 @@ Data Manager remains dataset/artifact oriented and separate from chart sessions.
 - DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack;
 - saved artifact and Database Builder actions use the shared button rack so lists and details retain content width.
 
-GUI code collects user selections and presents dialogs. It must not manually rewrite `manifest.json`, move/delete `analysis_databases/{database_id}/`, invent persistence rules, classify artifact recovery state locally, or replace Analysis Database components during build/rebuild. Recovery UI actions are intent surfaces only: status classification belongs to `ArtifactRecoveryPlanner`, artifact regeneration belongs to `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor`, and linked database materialization belongs to `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`.
+Data Manager only uses accepted OHLCV. The shared data-layer helpers `evaluate_ohlcv_dataset_loadability(...)`, `require_ohlcv_dataset_loadable(...)`, and `format_ohlcv_loadability_error(...)` enforce the same policy as `HistoricalDatasetService`: `ok` and `modified` are loadable; `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, metadata mismatch, missing CSV, and stale validation fingerprints are blocked. `ArtifactCalculationService._load_full_dataset_dataframe(...)`, `AnalysisDatabaseStore._load_selected_ohlcv_dataframe(...)`, and `ArtifactRecoveryPlanner._recalculation_blockers(...)` all enforce this before using source OHLCV.
+
+GUI code collects user selections and presents dialogs. It must not manually rewrite `manifest.json`, move/delete `analysis_databases/{database_id}/`, invent persistence rules, classify artifact recovery state locally, duplicate OHLCV validation/loadability policy, or replace Analysis Database components during build/rebuild. Recovery UI actions are intent surfaces only: status classification belongs to `ArtifactRecoveryPlanner`, artifact regeneration belongs to `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor`, and linked database materialization belongs to `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`.
 
 Saved artifact source selection in chart/Data Manager workflows consumes `.meta.json` column metadata when available. Valid sidecar `selectable` / `analysis_usable` metadata is the source-selection truth; CSV-header fallback is retained only for legacy, missing, or malformed sidecars.
 
-## Current Historical Chart / Study workflow — 2026-05-22
+Future Data Manager metadata/lineage hardening remains open: derived artifact metadata and Analysis Database materialization metadata should eventually record source OHLCV validation status, fingerprint, and source-correction provenance snapshots.
+
+## Current Historical Chart / Study workflow — 2026-05-25
 
 The historical chart stack is now hardened around the ownership chain:
 
@@ -69,6 +97,7 @@ Core dataset truth → controller/session truth → panel chart-local study trut
 Accepted behavior includes:
 
 - dataset selection is Core/data-backed through `HistoricalDatasetService` catalog APIs and `CoreBridge`, not GUI folder-walking;
+- chart creation uses the loadable OHLCV catalog and only accepts `ok` or `modified` datasets; `HistoricalDatasetService.open_dataset(...)` enforces the final gate before loading;
 - dataset-open and resident-slice async results are marshalled back to the GUI thread and guarded against stale dataset/open-generation/request results;
 - controller apply keeps full-dataset compute truth separate from resident-local render truth;
 - renderable outputs are the only outputs that become chart series; accidental empty render payloads fail unless the tool explicitly allows empty render output;
@@ -86,12 +115,14 @@ Accepted behavior includes:
 
 M6/M6B completed release-check/test reconciliation and full uploaded test validation without production-code changes.
 
-## Current Historical Data Manager / Workspace layout workflow — 2026-05-22
+## Current Historical Data Manager / Workspace layout workflow — 2026-05-25
 
 Historical chart sessions hosted by `HistoricalDataManagerWindow` now support an 8-slot embedded workspace without changing chart-session, controller, renderer, data, or financial-tool ownership. The Historical Data Manager opens maximized so the chart workspace is immediately usable.
 
 Accepted workspace behavior includes:
 
+- New Chart selection uses the CoreBridge/HistoricalDatasetService loadable catalog, shows only `ok` and `modified` OHLCV, labels modified datasets, and displays OHLCV Maintenance guidance when no validated datasets are available;
+- blocked datasets cannot bypass the selector because `HistoricalDatasetService.open_dataset(...)` refuses non-loadable OHLCV before chart loading;
 - up to 8 embedded historical chart panels;
 - stable logical slot identity ordered as `1-2`, `3-4`, `5-6`, `7-8`;
 - detached charts reserve their original slot and dock back into that same slot;

@@ -1,7 +1,7 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.22
-Date: 2026-05-22
+Version: v3.23
+Date: 2026-05-25
 
 ## Overview
 
@@ -20,6 +20,8 @@ It is built around a modular chart engine that supports:
 - Historical Notebook workflow for notes, Potential Trades, POIs, runtime chart annotations, and workspace snapshot notebook references
 - Historical workspace Pan Anchor for optional horizontal pan synchronization across active charts
 - confirmed delete workflows for saved Study Setups, Workspace Snapshots, notebook rows, and notebooks
+- OHLCV Maintenance for explicit validation, repair, source-invalid reporting, and source correction
+- accepted OHLCV gating for Historical Data Manager and Data Manager workflows
 - centralized runtime diagnostics
 
 The GUI supports two deployment models:
@@ -164,6 +166,7 @@ The GUI Window Manager tracks all top-level windows:
 - `FinancialToolsManagerWindow`
 - `DataManagerWindow`
 - `HistoricalDownloadWindow`
+- `OhlcvMaintenanceWindow`
 - Runtime Inspector window
 
 Embedded chart panels are not tracked as top-level windows.
@@ -186,7 +189,11 @@ Responsibilities include:
 - requesting Core-owned preflight plans through CoreBridge;
 - submitting plain download intent to CoreBridge, which resolves the configured historical root and builds downloader requests internally;
 - showing the Confirm OHLCV Download dialog before execution;
-- opening the OHLCV Download Task monitor for progress, validation, cancellation, and final recap display;
+- opening the OHLCV Download Task monitor for progress, preliminary validation, cancellation, and final recap display;
+- showing preliminary `ERROR` results in bold red and preliminary `WARNING` results in warning styling;
+- showing that newly downloaded OHLCV remains `validation.status = "unknown"` and `quality.validation_status = "not_validated"`;
+- directing users to Historical -> OHLCV Maintenance for explicit validation, repair, or source correction;
+- applying a local +1 point font bump to Historical Download Manager related windows/dialogs without changing the global application font;
 - requesting Stop/Cancel through CoreBridge.
 
 It must not:
@@ -221,6 +228,29 @@ HistoricalDownloadWindow
 
 ---
 
+## OHLCV Maintenance Window
+
+`OhlcvMaintenanceWindow` is a top-level managed Historical menu window for manual OHLCV acceptance and maintenance. The GUI displays dataset state and user intent; `HistoricalOhlcvMaintenanceService` owns validation, deletion, metadata rebuild, repair orchestration, source correction execution, cache invalidation, and metadata stamping.
+
+Accepted behavior includes:
+
+- listing OHLCV datasets with checkbox-driven selection plus Select All / Deselect All;
+- showing metadata/details and validation reports;
+- Analyze Checked through CoreBridge -> `HistoricalOhlcvMaintenanceService` -> `HistoricalDatasetValidator`;
+- persisted validation statuses `unknown`, `ok`, `modified`, `warning`, and `error`, with row styling;
+- confirmed Delete Selected for the exact `candles.csv` and adjacent `candles.meta.json`;
+- Rebuild Metadata that rewrites only the metadata sidecar;
+- Plan Repair and Execute Repair with repair confirmation, progress, recap, and post-repair validation;
+- source-invalid repair outcome reporting when exchange data still fails validation;
+- Plan Source Correction and Apply Source Correction with explicit confirmation and provenance-recorded local correction;
+- `modified` display/status for datasets valid after documented source correction;
+- initial geometry at full usable screen height, half available screen width, horizontally centered with the native title bar inside available geometry;
+- a local +1 point font bump covering the table, labels, buttons, details, validation report, repair recap, and source-correction plan/execution content.
+
+It must not parse CSV, implement validation rules, write metadata directly, or move correction/repair logic into GUI code.
+
+---
+
 ## Data Manager Window
 
 `DataManagerWindow` is a top-level managed window opened from the main-window Analysis menu.
@@ -229,7 +259,7 @@ It is dataset/artifact oriented, not a chart session.
 
 Responsibilities include:
 
-- selecting existing historical market/timeframe partitions;
+- selecting accepted/loadable historical OHLCV partitions through CoreBridge/data-layer catalog surfaces;
 - listing saved OHLCV, indicator, oscillator, construct, artifact recipe, recipe collection, and Analysis Database artifacts;
 - creating Analysis Database draft seeds through the `Database seed creator` widget;
 - building existing draft/unmaterialized Analysis Databases through a dedicated build dialog opened from `Build Selected Database`;
@@ -242,6 +272,10 @@ Responsibilities include:
 
 Current Analysis Database UI behavior:
 
+- dataset selection lists only `ok` and `modified` OHLCV datasets from the CoreBridge/data-layer loadable catalog;
+- modified datasets are labeled with `(Modified)`;
+- when no loadable OHLCV exists, the selector shows `No validated OHLCV datasets available` guidance pointing to Historical -> OHLCV Maintenance;
+- OHLCV preview checks loadability through CoreBridge and uses the data-layer `csv_path` from the loadability report before bounded read-only preview;
 - the database-name field is prefilled with the selected dataset prefix, for example `BTCUSDT_30m_`;
 - database names must not contain spaces or other whitespace;
 - duplicate visible database names are rejected for the same market/timeframe partition during draft creation and rename;
@@ -276,6 +310,13 @@ Current artifact recipe / recovery UI behavior:
 - `Rebuild Linked Database` delegates linked Analysis Database materialization through the recovery database rebuilder and `AnalysisDatabaseStore`;
 - Data Manager refreshes artifact and database lists after successful recovery/rebuild, but it does not classify artifact freshness or materialize dataframes itself.
 
+Current OHLCV loadability behavior:
+
+- only `ok` and `modified` OHLCV metadata statuses are selectable/usable;
+- `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, metadata mismatch, missing CSV, and stale validation fingerprints are blocked;
+- final data-layer paths still enforce the gate through `ArtifactCalculationService`, `AnalysisDatabaseStore`, and `ArtifactRecoveryPlanner`;
+- GUI code displays catalog results and messages only; it does not parse `candles.meta.json`, parse `candles.csv`, or implement validation/loadability rules.
+
 It must not:
 
 - create chart-local studies;
@@ -286,6 +327,7 @@ It must not:
 - manually rewrite Analysis Database manifests or move/delete database folders;
 - silently mutate valid artifact metadata;
 - classify artifact recovery state locally;
+- classify OHLCV loadability locally;
 - regenerate artifacts without the data-layer recovery/executor boundary;
 - rebuild linked Analysis Databases outside `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`;
 - consume checked artifact columns inside Database Builder;
@@ -293,12 +335,14 @@ It must not:
 
 Data Manager maintenance actions such as metadata backfill are restore-only operations. They may recreate missing or unreadable `.meta.json` sidecars from existing CSV files, but they must not rewrite CSV data and must not be treated as the normal save path. Analysis Database create, rename, delete, build, rebuild, and explicit component-edit operations must go through the appropriate data-layer service, because `manifest.json` is the metadata-sidecar equivalent for the folder-backed `dataframe.csv` artifact. GUI release checks enforce that Database Builder does not consume artifact selections, does not call feature-replacement rebuild APIs, keeps build/rebuild separate and manifest-driven, and keeps main Data Manager actions in the shared right-side button rack layout.
 
+Future Data Manager metadata/lineage hardening is not implemented yet. Derived artifact sidecars and Analysis Database materialization metadata should eventually record source OHLCV validation status, fingerprint, and source-correction provenance snapshots.
+
 
 ## Historical Workspace Model
 
 Historical chart sessions are hosted by `HistoricalDataManagerWindow`.
 
-The New Historical Chart selection dialog consumes CoreBridge/HistoricalDatasetService catalog surfaces for exchange, market type, symbol, and timeframe discovery. It must not walk `data/historical` directly or validate datasets by guessing filesystem contents. The accepted dataset value artifact remains strict `ohlcv/candles.csv`.
+The New Historical Chart selection dialog consumes CoreBridge/HistoricalDatasetService loadable catalog surfaces for exchange, market type, symbol, and timeframe discovery. It shows only accepted `ok` and `modified` OHLCV datasets, labels modified datasets, and displays OHLCV Maintenance guidance when no validated datasets are available. It must not walk `data/historical` directly or validate datasets by guessing filesystem contents. The accepted dataset value artifact remains strict `ohlcv/candles.csv`, and `HistoricalDatasetService.open_dataset(...)` enforces the final load gate before chart loading.
 
 Any historical dataset refresh/cache-invalidation action exposed by the GUI must request Core-owned historical dataset cache invalidation through CoreBridge. It is a cache-refresh intent, not a chart-session reload and not a filesystem mutation path.
 
@@ -1353,7 +1397,9 @@ The GUI currently provides:
 - threshold-aware coloring
 - pane-local vertical interaction
 - centralized Runtime Inspector diagnostics
-- managed Data Manager window for dataset/artifact preparation, metadata-aware Analysis Database seed creation, separate build/rebuild, explicit component editing, recipe/collection recovery, compact maximized M6F layout, larger recipe/collection dialogs, rename/delete, and read-only preview workflows
+- OHLCV Maintenance for explicit validation, repair, source-invalid reporting, provenance-recorded source correction, and modified status display
+- Historical Data Manager chart creation limited to accepted `ok` / `modified` OHLCV datasets through CoreBridge/HistoricalDatasetService loadability gates
+- managed Data Manager window for accepted-OHLCV dataset/artifact preparation, metadata-aware Analysis Database seed creation, separate build/rebuild, explicit component editing, recipe/collection recovery, compact maximized M6F layout, larger recipe/collection dialogs, rename/delete, and read-only preview workflows
 - polling-based runtime visibility
 - explicit `CoreBridge`-owned realtime control boundary
 
@@ -1486,6 +1532,8 @@ Recommended tooling (in the GUI package):
 ---
 
 ## Change log
+
+- **v3.23 (2026-05-25)** — OHLCV acceptance workflow documentation sync: Historical Download Manager preliminary validation remains non-certifying, OHLCV Maintenance is documented as the explicit validation/repair/source-correction window, Historical Data Manager chart creation is gated to `ok` / `modified` OHLCV, and Data Manager selector/preview behavior now consumes CoreBridge/data-layer loadable catalogs.
 
 - **v3.22 (2026-05-22)** — Historical apply/save/recovery hardening: Financial Tool Manager saved-source selection now consumes sidecar column metadata, historical runtime projection prefers explicit timeline/index alignment before legacy positional fallback, chart save and save-only artifact calculation share result-to-save-dataframe conversion, and UTC dependency preparation/recovery intent resolution are centralized while preserving chart/session ownership boundaries.
 

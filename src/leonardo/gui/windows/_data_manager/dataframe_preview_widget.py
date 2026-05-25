@@ -8,7 +8,6 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtWidgets import QGroupBox, QHBoxLayout, QLabel, QPushButton, QTableView, QVBoxLayout, QWidget
 
 from leonardo.data.historical.artifact_metadata_naming import format_ts_ms_rome, format_ts_ms_utc
-from leonardo.gui.windows._data_manager.button_rack import make_button_rack
 
 
 class _DataFrameTableModel(QAbstractTableModel):
@@ -75,38 +74,38 @@ class DataFramePreviewWidget(QGroupBox):
         self._max_rows = max(1, int(max_rows))
         self._model = _DataFrameTableModel(parent=self)
 
-        root = QHBoxLayout(self)
+        root = QVBoxLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
         root.setSpacing(8)
 
-        content = QVBoxLayout()
-        content.setSpacing(8)
-        root.addLayout(content, 1)
-
         preview_header = QHBoxLayout()
         preview_header.setSpacing(12)
-        content.addLayout(preview_header, 0)
+        root.addLayout(preview_header, 0)
+
+        summary_area = QVBoxLayout()
+        summary_area.setSpacing(6)
+        preview_header.addLayout(summary_area, 2)
 
         self._summary = QLabel("Select an OHLCV file, saved artifact, or materialized analysis database to preview.", self)
         self._summary.setWordWrap(True)
         self._summary.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        preview_header.addWidget(self._summary, 1)
+        summary_area.addWidget(self._summary, 0)
 
-        timestamp_area = QVBoxLayout()
-        timestamp_area.setSpacing(4)
-        preview_header.addLayout(timestamp_area, 1)
-
-        timestamp_title_row = QHBoxLayout()
-        timestamp_title_row.setSpacing(8)
-        self._timestamp_title = QLabel("Visible timestamp range", self)
-        self._timestamp_title.setAlignment(Qt.AlignLeft | Qt.AlignTop)
-        timestamp_title_row.addWidget(self._timestamp_title)
-        timestamp_title_row.addStretch(1)
         self._clear_button = QPushButton("Clear Preview", self)
         self._clear_button.clicked.connect(self.clear)
-        timestamp_area.addLayout(timestamp_title_row, 0)
+        summary_area.addWidget(self._clear_button, 0, Qt.AlignLeft)
+
+        timestamp_area = QVBoxLayout()
+        timestamp_area.setContentsMargins(0, 0, 0, 0)
+        timestamp_area.setSpacing(0)
+        preview_header.addLayout(timestamp_area, 3)
+
+        self._timestamp_title = QLabel("Visible timestamp range", self)
+        self._timestamp_title.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        timestamp_area.addWidget(self._timestamp_title, 0, Qt.AlignLeft | Qt.AlignTop)
 
         timestamp_values_row = QHBoxLayout()
+        timestamp_values_row.setContentsMargins(0, 0, 0, 0)
         timestamp_values_row.setSpacing(12)
         self._first_timestamp_summary = QLabel("", self)
         self._first_timestamp_summary.setWordWrap(True)
@@ -125,9 +124,7 @@ class DataFramePreviewWidget(QGroupBox):
         self._table.setSortingEnabled(False)
         self._table.setSelectionBehavior(QTableView.SelectRows)
         self._table.setEditTriggers(QTableView.NoEditTriggers)
-        content.addWidget(self._table, 1)
-
-        root.addLayout(make_button_rack(self._clear_button), 0)
+        root.addWidget(self._table, 1)
 
     def clear(self) -> None:
         self._model.clear()
@@ -162,7 +159,7 @@ class DataFramePreviewWidget(QGroupBox):
             f"Source: {csv_path}",
             (
                 f"Showing first {len(preview_dataframe)} row(s), {len(preview_dataframe.columns)} column(s). "
-                f"Preview limit: {self._max_rows} row(s)."
+                f"Preview limits: {self._max_rows} row(s)."
             ),
         ]
         self._summary.setText("\n".join(summary_lines))

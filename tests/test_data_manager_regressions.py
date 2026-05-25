@@ -9,6 +9,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtWidgets import QApplication, QComboBox, QPushButton
 
+from leonardo.gui.windows._data_manager.dataframe_preview_widget import DataFramePreviewWidget
 from leonardo.gui.windows._data_manager.dataset_selector_widget import (
     DatasetSelectorWidget,
     _dataset_label,
@@ -407,6 +408,50 @@ def test_dataframe_preview_adds_readable_timestamps_without_mutating_source_csv(
     assert "drop(columns=[\"time\"])" in source
 
 
+def test_dataframe_preview_header_layout_keeps_clear_button_under_summary(tmp_path: Path) -> None:
+    _qapp()
+    path = DATA_MANAGER / "dataframe_preview_widget.py"
+    source = _source(path)
+
+    assert "button_rack import make_button_rack" not in source
+    assert "make_button_rack(self._clear_button)" not in source
+    assert "root = QVBoxLayout(self)" in source
+    assert "preview_header.addLayout(summary_area, 2)" in source
+    assert "summary_area.addWidget(self._clear_button, 0, Qt.AlignLeft)" in source
+    assert "timestamp_area.setSpacing(0)" in source
+    assert "timestamp_area.addWidget(self._timestamp_title, 0, Qt.AlignLeft | Qt.AlignTop)" in source
+    assert "preview_header.addLayout(timestamp_area, 3)" in source
+    assert "timestamp_values_row.setContentsMargins(0, 0, 0, 0)" in source
+
+    csv_path = tmp_path / "preview.csv"
+    csv_path.write_text(
+        "ts_ms,open\n"
+        "1585132200000,1\n"
+        "1585135800000,2\n",
+        encoding="utf-8",
+    )
+    widget = DataFramePreviewWidget(max_rows=500)
+    widget.load_csv_path(csv_path, "Preview Title")
+
+    first_visible = widget._first_timestamp_summary.text()
+    last_visible = widget._last_timestamp_summary.text()
+    assert first_visible.startswith("First visible:")
+    assert "ts_ms:" in first_visible
+    assert "UTC:" in first_visible
+    assert "Europe/Rome:" in first_visible
+    assert last_visible.startswith("Last visible:")
+    assert "ts_ms:" in last_visible
+    assert "UTC:" in last_visible
+    assert "Europe/Rome:" in last_visible
+    assert "Showing first 2 row(s), 4 column(s). Preview limits: 500 row(s)." in widget._summary.text()
+
+    widget.clear()
+
+    assert widget._model.rowCount() == 0
+    assert widget._first_timestamp_summary.text() == ""
+    assert widget._last_timestamp_summary.text() == ""
+
+
 def test_database_builder_component_edit_is_explicit_intent_only() -> None:
     """Database Builder may expose component-edit intent, but rebuild must stay manifest-only."""
     path = DATA_MANAGER / "analysis_database_list_widget.py"
@@ -562,7 +607,6 @@ def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
         "analysis_database_builder_widget.py",
         "saved_artifact_selector_widget.py",
         "analysis_database_list_widget.py",
-        "dataframe_preview_widget.py",
     )
     for filename in widget_files:
         path = DATA_MANAGER / filename
@@ -570,6 +614,11 @@ def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
         assert "button_rack import make_button_rack" in source, filename
         assert "root = QHBoxLayout(self)" in source, filename
         assert "make_button_rack(" in source, filename
+
+    preview_source = _source(DATA_MANAGER / "dataframe_preview_widget.py")
+    assert "button_rack import make_button_rack" not in preview_source
+    assert "make_button_rack(" not in preview_source
+    assert "summary_area.addWidget(self._clear_button" in preview_source
 
     helper_source = _source(DATA_MANAGER / "button_rack.py")
     assert "def make_button_rack" in helper_source

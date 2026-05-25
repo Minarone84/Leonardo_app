@@ -7,14 +7,15 @@ from PySide6.QtCore import QSignalBlocker, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QFormLayout,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QSizePolicy,
     QTextEdit,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -47,30 +48,31 @@ class AnalysisDatabaseBuilderWidget(QGroupBox):
         self._name_prefix = ""
         self._selected_columns: list[SavedArtifactColumn] = []
 
-        root = QHBoxLayout(self)
+        root = QGridLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
         root.setSpacing(8)
-
-        content = QVBoxLayout()
-        content.setSpacing(8)
-        root.addLayout(content, 1)
+        root.setColumnStretch(0, 1)
+        root.setColumnStretch(1, 0)
 
         self._summary = QLabel("Select a dataset and saved artifact columns to prepare an analysis database.", self)
         self._summary.setWordWrap(True)
-        content.addWidget(self._summary)
+        root.addWidget(self._summary, 0, 0)
 
         form = QFormLayout()
         form.setSpacing(8)
-        content.addLayout(form)
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        root.addLayout(form, 1, 0, 1, 2)
 
         self._name_edit = QLineEdit(self)
         self._name_edit.setPlaceholderText("Example: BTCUSDT_30m_trend_pack")
+        self._name_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._name_edit.textChanged.connect(self._refresh_state)
         form.addRow("Database name", self._name_edit)
 
         self._description_edit = QTextEdit(self)
         self._description_edit.setPlaceholderText("Optional user description for this analysis database.")
         self._description_edit.setAcceptRichText(False)
+        self._description_edit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._description_edit.setFixedHeight(72)
         form.addRow("Description", self._description_edit)
 
@@ -86,14 +88,13 @@ class AnalysisDatabaseBuilderWidget(QGroupBox):
         base_action_row.addWidget(QLabel("Base columns", self))
         base_action_row.addWidget(self._include_volume)
         base_action_row.addStretch(1)
-        content.addLayout(base_action_row, 0)
+        root.addLayout(base_action_row, 2, 0, 1, 2)
 
         self._base_policy = QLabel("Locked by contract: ts_ms, open, high, low, close. Volume is selectable.", self)
         self._base_policy.setWordWrap(True)
-        content.addWidget(self._base_policy)
-        content.addStretch(1)
+        root.addWidget(self._base_policy, 3, 0, 1, 2)
 
-        root.addLayout(make_button_rack(self._button), 0)
+        root.addLayout(make_button_rack(self._button), 0, 1)
 
     def set_market(self, market: Optional[MarketId]) -> None:
         previous_prefix = self._name_prefix

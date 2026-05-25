@@ -7,8 +7,9 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtWidgets import QApplication, QComboBox, QGridLayout, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QApplication, QComboBox, QFormLayout, QGridLayout, QPushButton, QSizePolicy
 
+from leonardo.gui.windows._data_manager.analysis_database_builder_widget import AnalysisDatabaseBuilderWidget
 from leonardo.gui.windows._data_manager.dataframe_preview_widget import DataFramePreviewWidget
 from leonardo.gui.windows._data_manager.dataset_selector_widget import (
     DatasetSelectorWidget,
@@ -309,6 +310,33 @@ def test_database_seed_creator_imports_shared_feature_builder_helper() -> None:
     assert "def _build_feature_source" not in source
     assert "build_feature_source_id" not in source
     assert "build_database_column_name" not in source
+
+
+def test_database_seed_creator_name_and_description_span_full_width(tmp_path: Path) -> None:
+    _qapp()
+    widget = AnalysisDatabaseBuilderWidget(historical_root=tmp_path)
+
+    root = widget.layout()
+    assert isinstance(root, QGridLayout)
+
+    form_layout: QFormLayout | None = None
+    form_position: tuple[int, int, int, int] | None = None
+    for index in range(root.count()):
+        item = root.itemAt(index)
+        layout = item.layout() if item is not None else None
+        if isinstance(layout, QFormLayout):
+            form_layout = layout
+            form_position = root.getItemPosition(index)
+            break
+
+    assert form_layout is not None
+    assert form_position == (1, 0, 1, 2)
+    assert form_layout.rowWrapPolicy() == QFormLayout.RowWrapPolicy.WrapAllRows
+    assert widget._name_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+    assert widget._description_edit.sizePolicy().horizontalPolicy() == QSizePolicy.Expanding
+    assert widget._description_edit.acceptRichText() is False
+    assert widget._description_edit.minimumHeight() == 72
+    assert widget._description_edit.maximumHeight() == 72
 
 
 def test_database_builder_no_longer_consumes_saved_artifact_selection() -> None:
@@ -627,7 +655,6 @@ def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
     widget_files = (
         "dataset_selector_widget.py",
         "tool_calculation_widget.py",
-        "analysis_database_builder_widget.py",
         "saved_artifact_selector_widget.py",
         "analysis_database_list_widget.py",
     )
@@ -647,6 +674,11 @@ def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
     assert "button_rack import make_button_rack" in metadata_source
     assert "root = QGridLayout(self)" in metadata_source
     assert "root.addLayout(make_button_rack(self._restore_button), 0, 1)" in metadata_source
+
+    seed_source = _source(DATA_MANAGER / "analysis_database_builder_widget.py")
+    assert "button_rack import make_button_rack" in seed_source
+    assert "root = QGridLayout(self)" in seed_source
+    assert "root.addLayout(make_button_rack(self._button), 0, 1)" in seed_source
 
     helper_source = _source(DATA_MANAGER / "button_rack.py")
     assert "def make_button_rack" in helper_source

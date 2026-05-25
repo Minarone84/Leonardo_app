@@ -171,18 +171,44 @@ class DataManagerWindow(QMainWindow):
 
     def _on_dataset_changed(self, market: object) -> None:
         selected_market = market if isinstance(market, MarketId) else None
+        loadability = self._dataset_selector.current_loadability()
+        workflow_market = (
+            selected_market
+            if selected_market is not None
+            and loadability is not None
+            and self._loadability_is_loadable(loadability)
+            else None
+        )
         self._selected_market = selected_market
-        self._artifact_selector.set_build_selection_mode(False)
-        self._artifact_selector.set_market(selected_market)
-        self._metadata_tools.set_market(selected_market)
-        self._tool_calculation.set_market(selected_market)
-        self._analysis_builder.set_market(selected_market)
-        self._database_list.set_market(selected_market)
-        if selected_market is not None:
-            self.statusBar().showMessage("Dataset selected for Data Manager")
-        else:
+        self._apply_dataset_selection_state(workflow_market=workflow_market)
+        if selected_market is None:
             self._preview.clear()
             self.statusBar().showMessage("No dataset selected")
+            return
+        if workflow_market is None:
+            self._preview.clear()
+            reason = self._loadability_reason(loadability)
+            self.statusBar().showMessage(
+                reason or "Selected OHLCV dataset is available for read-only preview only"
+            )
+            return
+
+        self.statusBar().showMessage("Dataset selected for Data Manager")
+
+    def _apply_dataset_selection_state(self, *, workflow_market: Optional[MarketId]) -> None:
+        workflow_enabled = workflow_market is not None
+        self._artifact_selector.set_build_selection_mode(False)
+        self._artifact_selector.set_market(workflow_market)
+        self._metadata_tools.set_market(workflow_market)
+        self._tool_calculation.set_market(workflow_market)
+        self._analysis_builder.set_market(workflow_market)
+        self._database_list.set_market(workflow_market)
+
+        self._artifact_selector.setEnabled(workflow_enabled)
+        self._metadata_tools.setEnabled(workflow_enabled)
+        self._tool_calculation.setEnabled(workflow_enabled)
+        self._analysis_builder.setEnabled(workflow_enabled)
+        self._database_list.setEnabled(workflow_enabled)
 
     def _on_database_build_requested(self, manifest: object) -> None:
         if not hasattr(manifest, "database_id"):
@@ -229,33 +255,26 @@ class DataManagerWindow(QMainWindow):
             self.statusBar().showMessage("No dataset selected")
             return
 
-        try:
-            loadability = self._dataset_loadability(market)
-        except Exception as exc:
-            self._preview.clear()
-            self.statusBar().showMessage(f"Could not verify selected OHLCV dataset: {exc!r}")
-            return
-
-        if not self._loadability_is_loadable(loadability):
-            reason = self._loadability_reason(loadability)
-            self._preview.clear()
-            self.statusBar().showMessage(
-                reason
-                or (
-                    "Selected OHLCV dataset is not accepted for Data Manager preview. "
-                    "Open Historical \u2192 OHLCV Maintenance to analyze, repair, or source-correct it."
-                )
-            )
-            return
+        loadability = self._dataset_selector.current_loadability()
+        if loadability is None:
+            try:
+                loadability = self._dataset_loadability(market)
+            except Exception as exc:
+                self._preview.clear()
+                self.statusBar().showMessage(f"Could not verify selected OHLCV dataset: {exc!r}")
+                return
 
         ohlcv_path = self._loadability_csv_path(loadability)
         if ohlcv_path is None:
             self._preview.clear()
-            self.statusBar().showMessage("Selected OHLCV dataset cannot be previewed from the accepted catalog")
+            self.statusBar().showMessage("Selected OHLCV dataset cannot be previewed from the catalog")
             return
-        title = f"OHLCV · {market.exchange} / {market.market_type} / {market.symbol} / {market.timeframe}"
+        title = f"OHLCV - {market.exchange} / {market.market_type} / {market.symbol} / {market.timeframe}"
         self._preview.load_csv_path(ohlcv_path, title)
-        self.statusBar().showMessage("Previewing OHLCV candles")
+        if self._loadability_is_loadable(loadability):
+            self.statusBar().showMessage("Previewing OHLCV candles")
+        else:
+            self.statusBar().showMessage("Previewing non-loadable OHLCV candles in read-only mode")
 
     def _dataset_loadability(self, market: MarketId) -> object:
         return self._core.historical_dataset_loadability(

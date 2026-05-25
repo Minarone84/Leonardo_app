@@ -187,6 +187,10 @@ class CoreBridge(QObject):
         """Return accepted OHLCV datasets through the Core/data loadability policy."""
         return self._historical_dataset_service().list_loadable_dataset_loadabilities()
 
+    def list_historical_ohlcv_dataset_loadabilities(self) -> list[object]:
+        """Return all OHLCV dataset loadability reports through the Core/data catalog."""
+        return self._historical_dataset_service().list_dataset_loadabilities()
+
     def historical_dataset_loadability(
         self,
         *,

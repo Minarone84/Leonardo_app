@@ -171,6 +171,8 @@ class ToolCalculationWidget(QGroupBox):
         )
 
     def set_market(self, market: Optional[MarketId]) -> None:
+        if market != self._market:
+            self._close_dataset_scoped_windows()
         self._market = market
 
         enabled = market is not None
@@ -187,6 +189,22 @@ class ToolCalculationWidget(QGroupBox):
             f"{market.exchange} / {market.market_type} / "
             f"{market.symbol} / {market.timeframe}"
         )
+
+    def _close_dataset_scoped_windows(self) -> None:
+        for attr_name in (
+            "_tool_window",
+            "_recipe_dialog",
+            "_collection_dialog",
+            "_update_dialog",
+        ):
+            widget = getattr(self, attr_name)
+            if widget is None:
+                continue
+            try:
+                widget.close()
+            except RuntimeError:
+                pass
+            setattr(self, attr_name, None)
 
     def _activate_existing_window(self, widget: Optional[QWidget]) -> bool:
         if widget is None:

@@ -1,13 +1,20 @@
 from __future__ import annotations
 
 import ast
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+
+from PySide6.QtWidgets import QApplication, QComboBox, QPushButton
+
 from leonardo.gui.windows._data_manager.dataset_selector_widget import (
+    DatasetSelectorWidget,
     _dataset_label,
     _options_from_loadability_reports,
 )
+from leonardo.gui.windows.data_manager_window import DataManagerWindow
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -15,6 +22,8 @@ SRC = ROOT / "src" / "leonardo"
 DATA_MANAGER = SRC / "gui" / "windows" / "_data_manager"
 WINDOWS = SRC / "gui" / "windows"
 CORE_BRIDGE = SRC / "gui" / "core_bridge.py"
+
+_QAPP: QApplication | None = None
 
 
 def _source(path: Path) -> str:
@@ -34,61 +43,150 @@ def _function_source(path: Path, function_name: str) -> str:
     raise AssertionError(f"Function {function_name!r} not found in {path}")
 
 
-def test_dataset_selector_options_keep_only_core_loadable_reports_and_label_modified() -> None:
+def _qapp() -> QApplication:
+    global _QAPP
+    app = QApplication.instance()
+    if isinstance(app, QApplication):
+        return app
+    _QAPP = QApplication([])
+    return _QAPP
+
+
+def _loadability_report(
+    *,
+    symbol: str = "BTCUSDT",
+    timeframe: str,
+    loadable: bool,
+    validation_status: str,
+    csv_path: str = "",
+    reason: str = "",
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        dataset_id=SimpleNamespace(
+            exchange="bybit",
+            market_type="linear",
+            symbol=symbol,
+            timeframe=timeframe,
+        ),
+        loadable=loadable,
+        validation_status=validation_status,
+        reason=reason,
+        csv_path=csv_path,
+        metadata_path=f"{csv_path}.meta.json" if csv_path else "",
+    )
+
+
+class _FakeDatasetCore:
+    def __init__(self, reports: list[SimpleNamespace]) -> None:
+        self._reports = reports
+
+    def list_historical_ohlcv_dataset_loadabilities(self) -> list[SimpleNamespace]:
+        return list(self._reports)
+
+    def historical_dataset_loadability(
+        self,
+        *,
+        exchange: str,
+        market_type: str,
+        symbol: str,
+        timeframe: str,
+    ) -> SimpleNamespace:
+        for report in self._reports:
+            dataset_id = report.dataset_id
+            if (
+                dataset_id.exchange == exchange
+                and dataset_id.market_type == market_type
+                and dataset_id.symbol == symbol
+                and dataset_id.timeframe == timeframe
+            ):
+                return report
+        raise KeyError((exchange, market_type, symbol, timeframe))
+
+
+def test_dataset_selector_options_keep_all_core_reports_and_label_statuses() -> None:
     reports = [
-        SimpleNamespace(
-            dataset_id=SimpleNamespace(
-                exchange="bybit",
-                market_type="linear",
-                symbol="BTCUSDT",
-                timeframe="1m",
-            ),
-            loadable=True,
-            validation_status="ok",
-            reason="Dataset is manually validated and loadable.",
-        ),
-        SimpleNamespace(
-            dataset_id=SimpleNamespace(
-                exchange="bybit",
-                market_type="linear",
-                symbol="ETHUSDT",
-                timeframe="1m",
-            ),
-            loadable=True,
-            validation_status="modified",
-            reason="Modified: valid after documented source correction.",
-        ),
-        SimpleNamespace(
-            dataset_id=SimpleNamespace(
-                exchange="bybit",
-                market_type="linear",
-                symbol="XRPUSDT",
-                timeframe="1m",
-            ),
-            loadable=False,
-            validation_status="error",
-            reason="This OHLCV dataset failed validation.",
-        ),
+        _loadability_report(timeframe="1m", loadable=True, validation_status="ok"),
+        _loadability_report(symbol="ETHUSDT", timeframe="1m", loadable=True, validation_status="modified"),
+        _loadability_report(symbol="XRPUSDT", timeframe="1m", loadable=False, validation_status="error"),
     ]
 
     options = _options_from_loadability_reports(reports)
 
-    assert [option.market.symbol for option in options] == ["BTCUSDT", "ETHUSDT"]
+    assert [option.market.symbol for option in options] == ["BTCUSDT", "ETHUSDT", "XRPUSDT"]
+    assert [option.loadable for option in options] == [True, True, False]
     assert [_dataset_label(option) for option in options] == [
-        "bybit / linear / BTCUSDT / 1m",
-        "bybit / linear / ETHUSDT / 1m (Modified)",
+        "bybit / linear / BTCUSDT / 1m - OK",
+        "bybit / linear / ETHUSDT / 1m - Modified",
+        "bybit / linear / XRPUSDT / 1m - Error",
     ]
 
 
-def test_data_manager_dataset_selector_uses_core_loadable_catalog_not_raw_storage() -> None:
+def test_dataset_selector_hierarchy_shows_all_timeframe_statuses_and_styles_invalid(tmp_path: Path) -> None:
+    _qapp()
+    reports = [
+        _loadability_report(timeframe="1m", loadable=True, validation_status="ok"),
+        _loadability_report(timeframe="5m", loadable=True, validation_status="modified"),
+        _loadability_report(timeframe="15m", loadable=False, validation_status="warning"),
+        _loadability_report(timeframe="1h", loadable=False, validation_status="error"),
+        _loadability_report(timeframe="4h", loadable=False, validation_status="unknown"),
+        _loadability_report(timeframe="1d", loadable=False, validation_status="not_validated"),
+    ]
+    widget = DatasetSelectorWidget(
+        historical_root=tmp_path,
+        core_bridge=_FakeDatasetCore(reports),  # type: ignore[arg-type]
+    )
+
+    exchange = widget.findChild(QComboBox, "dataset_exchange_combo")
+    market_type = widget.findChild(QComboBox, "dataset_market_type_combo")
+    symbol = widget.findChild(QComboBox, "dataset_symbol_combo")
+    timeframe = widget.findChild(QComboBox, "dataset_timeframe_combo")
+    assert exchange is not None
+    assert market_type is not None
+    assert symbol is not None
+    assert timeframe is not None
+
+    assert widget.current_market() is None
+    exchange.setCurrentIndex(exchange.findText("bybit"))
+    assert widget.current_market() is None
+    market_type.setCurrentIndex(market_type.findText("linear"))
+    assert widget.current_market() is None
+    symbol.setCurrentIndex(symbol.findText("BTCUSDT"))
+    assert widget.current_market() is None
+
+    labels = [timeframe.itemText(index) for index in range(timeframe.count())]
+    assert "1m - OK" in labels
+    assert "5m - Modified" in labels
+    assert "15m - Warning" in labels
+    assert "1h - Error" in labels
+    assert "4h - Unknown" in labels
+    assert "1d - Not validated" in labels
+
+    timeframe.setCurrentIndex(timeframe.findText("15m - Warning"))
+    selected = widget.current_market()
+    assert selected is not None
+    assert selected.timeframe == "15m"
+    assert widget.current_loadability().loadable is False  # type: ignore[union-attr]
+    assert "color: #b00020" in timeframe.styleSheet()
+    assert "font-weight: 700" in timeframe.styleSheet()
+
+    preview_button = next(
+        button
+        for button in widget.findChildren(QPushButton)
+        if button.text() == "Preview OHLCV"
+    )
+    assert preview_button.isEnabled()
+
+
+def test_data_manager_dataset_selector_uses_core_all_status_catalog_not_raw_storage() -> None:
     path = DATA_MANAGER / "dataset_selector_widget.py"
     source = _source(path)
 
-    assert "list_loadable_historical_ohlcv_datasets" in source
+    assert "list_historical_ohlcv_dataset_loadabilities" in source
     assert "historical_dataset_loadability" in source
-    assert "No validated OHLCV datasets available" in source
-    assert "Open Historical \\u2192 OHLCV Maintenance" in source
-    assert "(Modified)" in source
+    assert "No OHLCV datasets available" in source
+    assert "OHLCV / Timeframe" in source
+    assert "DatasetSelectorOption" in source
+    assert "currentData()" in source
     assert "root.glob" not in source
     assert "ohlcv/candles.csv" not in source
     assert "candles.meta" not in source
@@ -105,14 +203,71 @@ def test_data_manager_window_passes_core_bridge_to_selector_and_checks_preview_l
     assert "core_bridge=self._core" in source
     assert "historical_dataset_loadability" in source
     assert "_loadability_csv_path" in preview_source
-    assert "Selected OHLCV dataset is not accepted for Data Manager preview" in preview_source
+    assert "Previewing non-loadable OHLCV candles in read-only mode" in preview_source
     assert "HistoricalPaths" not in source
     assert "CsvOHLCVStore" not in source
 
 
-def test_core_bridge_exposes_data_manager_loadable_ohlcv_catalog_boundary() -> None:
+def test_data_manager_invalid_dataset_selection_enters_safe_mode_and_preview_remains_read_only(tmp_path: Path) -> None:
+    _qapp()
+    warning_csv = tmp_path / "warning.csv"
+    reports = [
+        _loadability_report(
+            timeframe="1m",
+            loadable=True,
+            validation_status="ok",
+            csv_path=str(tmp_path / "ok.csv"),
+        ),
+        _loadability_report(
+            timeframe="15m",
+            loadable=False,
+            validation_status="warning",
+            csv_path=str(warning_csv),
+            reason="Warning OHLCV is not loadable.",
+        ),
+    ]
+    ctx = SimpleNamespace(
+        config=SimpleNamespace(runtime=SimpleNamespace(data_dir=str(tmp_path)))
+    )
+    window = DataManagerWindow(
+        ctx=ctx,  # type: ignore[arg-type]
+        core_bridge=_FakeDatasetCore(reports),  # type: ignore[arg-type]
+    )
+
+    selector = window._dataset_selector
+    selector._exchange_combo.setCurrentIndex(selector._exchange_combo.findText("bybit"))
+    selector._market_type_combo.setCurrentIndex(selector._market_type_combo.findText("linear"))
+    selector._symbol_combo.setCurrentIndex(selector._symbol_combo.findText("BTCUSDT"))
+    selector._timeframe_combo.setCurrentIndex(selector._timeframe_combo.findText("15m - Warning"))
+
+    assert window._tool_calculation.isEnabled() is False
+    assert window._analysis_builder.isEnabled() is False
+    assert window._database_list.isEnabled() is False
+    assert window._metadata_tools.isEnabled() is False
+    assert window._artifact_selector.isEnabled() is False
+    assert window._preview.isEnabled() is True
+
+    captured: list[tuple[object, str]] = []
+    window._preview.load_csv_path = lambda path, title="DataFrame": captured.append((path, title))  # type: ignore[method-assign]
+    window._preview_current_ohlcv()
+
+    assert captured == [(warning_csv, "OHLCV - bybit / linear / BTCUSDT / 15m")]
+    assert "non-loadable OHLCV candles" in window.statusBar().currentMessage()
+
+    selector._timeframe_combo.setCurrentIndex(selector._timeframe_combo.findText("1m - OK"))
+
+    assert window._tool_calculation.isEnabled() is True
+    assert window._analysis_builder.isEnabled() is True
+    assert window._database_list.isEnabled() is True
+    assert window._metadata_tools.isEnabled() is True
+    assert window._artifact_selector.isEnabled() is True
+
+
+def test_core_bridge_exposes_data_manager_ohlcv_loadability_catalog_boundary() -> None:
     source = _source(CORE_BRIDGE)
 
+    assert "def list_historical_ohlcv_dataset_loadabilities" in source
+    assert "list_dataset_loadabilities()" in source
     assert "def list_loadable_historical_ohlcv_datasets" in source
     assert "list_loadable_dataset_loadabilities()" in source
     assert "LOADABLE_OHLCV_VALIDATION_STATUSES" not in source

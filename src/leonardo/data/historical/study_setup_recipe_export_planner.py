@@ -5,13 +5,17 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Iterable, Mapping
 
 from leonardo.data.chart_presets.study_setup_store import (
     ChartStudySetup,
     ChartStudySetupStore,
 )
+from leonardo.data.historical.artifact_recipe_collection_store import (
+    ArtifactRecipeCollectionStore,
+)
 from leonardo.data.historical.artifact_recipe_store import (
+    ArtifactRecipe,
     ArtifactRecipeStore,
     market_to_dict,
 )
@@ -33,11 +37,23 @@ STUDY_EXPORT_STATUS_CONDITIONAL = "conditional"
 STUDY_EXPORT_STATUS_BLOCKED = "blocked"
 STUDY_EXPORT_STATUS_SKIPPED = "skipped"
 
+STUDY_EXPORT_SAVE_STATUS_SAVED = "saved"
+STUDY_EXPORT_SAVE_STATUS_SKIPPED = "skipped"
+STUDY_EXPORT_SAVE_STATUS_FAILED = "failed"
+STUDY_EXPORT_SAVE_STATUS_BLOCKED = "blocked"
+
 _SUPPORTED_STATUSES = {
     STUDY_EXPORT_STATUS_EXPORTABLE,
     STUDY_EXPORT_STATUS_CONDITIONAL,
     STUDY_EXPORT_STATUS_BLOCKED,
     STUDY_EXPORT_STATUS_SKIPPED,
+}
+
+_SUPPORTED_SAVE_STATUSES = {
+    STUDY_EXPORT_SAVE_STATUS_SAVED,
+    STUDY_EXPORT_SAVE_STATUS_SKIPPED,
+    STUDY_EXPORT_SAVE_STATUS_FAILED,
+    STUDY_EXPORT_SAVE_STATUS_BLOCKED,
 }
 
 
@@ -201,6 +217,121 @@ class StudySetupRecipeExportPlan:
                 if self.collection_draft is not None
                 else None
             ),
+            "summary": dict(self.summary),
+            "metadata": _json_safe(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class StudyRecipeExportPersistenceBlocker:
+    """Structured blocker emitted while persisting a study setup export plan."""
+
+    blocker_id: str
+    candidate_id: str | None
+    reason: str
+    message: str
+    metadata: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "blocker_id": self.blocker_id,
+            "candidate_id": self.candidate_id,
+            "reason": self.reason,
+            "message": self.message,
+            "metadata": _json_safe(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class StudyRecipeExportSaveResult:
+    """Persistence result for one selected recipe export candidate."""
+
+    candidate_id: str
+    study_index: int | None
+    status: str
+    recipe_id: str | None
+    message: str
+    error: str | None
+    metadata: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        if self.status not in _SUPPORTED_SAVE_STATUSES:
+            raise ValueError(f"Unsupported study export save status: {self.status!r}")
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "candidate_id": self.candidate_id,
+            "study_index": self.study_index,
+            "status": self.status,
+            "recipe_id": self.recipe_id,
+            "message": self.message,
+            "error": self.error,
+            "metadata": _json_safe(self.metadata),
+        }
+
+
+@dataclass(frozen=True)
+class StudySetupRecipeExportPersistenceReport:
+    """JSON-safe report returned after persisting selected export candidates."""
+
+    report_id: str
+    plan_id: str
+    created_at_utc: str
+    requested_candidate_ids: tuple[str, ...]
+    saved_recipe_ids: tuple[str, ...]
+    skipped_candidate_ids: tuple[str, ...]
+    failed_candidate_ids: tuple[str, ...]
+    saved_collection_id: str | None
+    results: tuple[StudyRecipeExportSaveResult, ...]
+    blockers: tuple[StudyRecipeExportPersistenceBlocker, ...]
+    warnings: tuple[str, ...]
+    summary: dict[str, int]
+    metadata: dict[str, Any]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "requested_candidate_ids",
+            tuple(str(item) for item in self.requested_candidate_ids),
+        )
+        object.__setattr__(
+            self,
+            "saved_recipe_ids",
+            tuple(str(item) for item in self.saved_recipe_ids),
+        )
+        object.__setattr__(
+            self,
+            "skipped_candidate_ids",
+            tuple(str(item) for item in self.skipped_candidate_ids),
+        )
+        object.__setattr__(
+            self,
+            "failed_candidate_ids",
+            tuple(str(item) for item in self.failed_candidate_ids),
+        )
+        object.__setattr__(self, "results", tuple(self.results))
+        object.__setattr__(self, "blockers", tuple(self.blockers))
+        object.__setattr__(self, "warnings", tuple(str(item) for item in self.warnings))
+        object.__setattr__(self, "summary", dict(self.summary))
+        object.__setattr__(self, "metadata", dict(self.metadata))
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "report_id": self.report_id,
+            "plan_id": self.plan_id,
+            "created_at_utc": self.created_at_utc,
+            "requested_candidate_ids": list(self.requested_candidate_ids),
+            "saved_recipe_ids": list(self.saved_recipe_ids),
+            "skipped_candidate_ids": list(self.skipped_candidate_ids),
+            "failed_candidate_ids": list(self.failed_candidate_ids),
+            "saved_collection_id": self.saved_collection_id,
+            "results": [result.to_dict() for result in self.results],
+            "blockers": [blocker.to_dict() for blocker in self.blockers],
+            "warnings": list(self.warnings),
             "summary": dict(self.summary),
             "metadata": _json_safe(self.metadata),
         }
@@ -838,11 +969,470 @@ class StudySetupRecipeExportPlanner:
         return f"study_recipe_export_plan__{_safe_token(setup.setup_id)}__h{digest[:8]}"
 
 
+class StudySetupRecipeExportPersistenceService:
+    """Persist selected exportable candidates from a read-only setup export plan.
+
+    The service delegates recipe and collection writes to their owning stores. It
+    does not plan studies, calculate artifacts, execute recipe collections, or
+    mutate chart study setup files.
+    """
+
+    def __init__(self, *, historical_root: Path) -> None:
+        self._historical_root = Path(historical_root)
+        self._recipe_store = ArtifactRecipeStore(historical_root=self._historical_root)
+        self._collection_store = ArtifactRecipeCollectionStore(
+            historical_root=self._historical_root,
+        )
+
+    def persist_export_plan(
+        self,
+        plan: StudySetupRecipeExportPlan,
+        *,
+        selected_candidate_ids: Iterable[str] | None = None,
+        save_collection: bool = False,
+        collection_display_name: str | None = None,
+        overwrite_recipes: bool = False,
+        overwrite_collection: bool = False,
+    ) -> StudySetupRecipeExportPersistenceReport:
+        """Save selected exportable recipe candidates from an existing plan."""
+
+        requested_ids = self._requested_candidate_ids(
+            plan=plan,
+            selected_candidate_ids=selected_candidate_ids,
+        )
+        candidate_by_id = {candidate.candidate_id: candidate for candidate in plan.candidates}
+        requested_set = set(requested_ids)
+        results: list[StudyRecipeExportSaveResult] = []
+        blockers: list[StudyRecipeExportPersistenceBlocker] = []
+        warnings = list(plan.warnings)
+        saved_recipes: list[ArtifactRecipe] = []
+        saved_candidate_ids: list[str] = []
+
+        for candidate in plan.candidates:
+            if candidate.candidate_id not in requested_set:
+                continue
+            result, blocker, recipe = self._persist_candidate(
+                candidate=candidate,
+                overwrite_recipes=overwrite_recipes,
+            )
+            results.append(result)
+            if blocker is not None:
+                blockers.append(blocker)
+            if recipe is not None:
+                saved_recipes.append(recipe)
+                saved_candidate_ids.append(candidate.candidate_id)
+
+        for candidate_id in requested_ids:
+            if candidate_id in candidate_by_id:
+                continue
+            result = StudyRecipeExportSaveResult(
+                candidate_id=candidate_id,
+                study_index=None,
+                status=STUDY_EXPORT_SAVE_STATUS_BLOCKED,
+                recipe_id=None,
+                message="Selected export candidate id is not present in the plan.",
+                error=None,
+                metadata={"reason": "unknown_candidate_id"},
+            )
+            blocker = StudyRecipeExportPersistenceBlocker(
+                blocker_id=(
+                    f"{_safe_token(plan.plan_id)}__unknown_candidate__"
+                    f"{_safe_token(candidate_id)}"
+                ),
+                candidate_id=candidate_id,
+                reason="unknown_candidate_id",
+                message="Selected export candidate id is not present in the plan.",
+                metadata={"plan_id": plan.plan_id},
+            )
+            results.append(result)
+            blockers.append(blocker)
+
+        saved_collection_id = None
+        if save_collection:
+            collection_id, collection_blockers, collection_warnings = self._save_collection(
+                plan=plan,
+                requested_candidate_ids=requested_ids,
+                saved_candidate_ids=tuple(saved_candidate_ids),
+                saved_recipes=tuple(saved_recipes),
+                collection_display_name=collection_display_name,
+                overwrite_collection=overwrite_collection,
+            )
+            saved_collection_id = collection_id
+            blockers.extend(collection_blockers)
+            warnings.extend(collection_warnings)
+
+        saved_recipe_ids = tuple(recipe.recipe_id for recipe in saved_recipes)
+        skipped_candidate_ids = tuple(
+            result.candidate_id
+            for result in results
+            if result.status == STUDY_EXPORT_SAVE_STATUS_SKIPPED
+        )
+        failed_candidate_ids = tuple(
+            result.candidate_id
+            for result in results
+            if result.status == STUDY_EXPORT_SAVE_STATUS_FAILED
+        )
+        blocked_candidate_count = sum(
+            1
+            for result in results
+            if result.status == STUDY_EXPORT_SAVE_STATUS_BLOCKED
+        )
+        summary = self._persistence_summary(
+            requested_candidate_ids=requested_ids,
+            saved_recipe_ids=saved_recipe_ids,
+            skipped_candidate_ids=skipped_candidate_ids,
+            failed_candidate_ids=failed_candidate_ids,
+            blocked_candidate_count=blocked_candidate_count,
+            saved_collection_id=saved_collection_id,
+        )
+        return StudySetupRecipeExportPersistenceReport(
+            report_id=self._report_id(
+                plan=plan,
+                requested_candidate_ids=requested_ids,
+                saved_recipe_ids=saved_recipe_ids,
+                failed_candidate_ids=failed_candidate_ids,
+                saved_collection_id=saved_collection_id,
+            ),
+            plan_id=plan.plan_id,
+            created_at_utc=_utc_now(),
+            requested_candidate_ids=requested_ids,
+            saved_recipe_ids=saved_recipe_ids,
+            skipped_candidate_ids=skipped_candidate_ids,
+            failed_candidate_ids=failed_candidate_ids,
+            saved_collection_id=saved_collection_id,
+            results=tuple(results),
+            blockers=tuple(blockers),
+            warnings=tuple(dict.fromkeys(warnings)),
+            summary=summary,
+            metadata={
+                "source_setup_id": plan.setup_id,
+                "source_setup_display_name": plan.setup_display_name,
+                "important_only": bool(plan.important_only),
+                "save_collection": bool(save_collection),
+                "saved_candidate_ids": list(saved_candidate_ids),
+            },
+        )
+
+    def _requested_candidate_ids(
+        self,
+        *,
+        plan: StudySetupRecipeExportPlan,
+        selected_candidate_ids: Iterable[str] | None,
+    ) -> tuple[str, ...]:
+        if selected_candidate_ids is None:
+            return tuple(
+                candidate.candidate_id
+                for candidate in plan.candidates
+                if candidate.status == STUDY_EXPORT_STATUS_EXPORTABLE
+                and candidate.recipe_payload is not None
+            )
+
+        requested: list[str] = []
+        for raw_candidate_id in selected_candidate_ids:
+            candidate_id = str(raw_candidate_id or "").strip()
+            if candidate_id not in requested:
+                requested.append(candidate_id)
+        return tuple(requested)
+
+    def _persist_candidate(
+        self,
+        *,
+        candidate: StudyRecipeExportCandidate,
+        overwrite_recipes: bool,
+    ) -> tuple[
+        StudyRecipeExportSaveResult,
+        StudyRecipeExportPersistenceBlocker | None,
+        ArtifactRecipe | None,
+    ]:
+        if candidate.status != STUDY_EXPORT_STATUS_EXPORTABLE:
+            reason = _non_exportable_persistence_reason(candidate.status)
+            status = (
+                STUDY_EXPORT_SAVE_STATUS_SKIPPED
+                if candidate.status == STUDY_EXPORT_STATUS_SKIPPED
+                else STUDY_EXPORT_SAVE_STATUS_BLOCKED
+            )
+            message = "Candidate is not exportable and was not persisted."
+            return (
+                StudyRecipeExportSaveResult(
+                    candidate_id=candidate.candidate_id,
+                    study_index=candidate.study_index,
+                    status=status,
+                    recipe_id=None,
+                    message=message,
+                    error=None,
+                    metadata={
+                        "reason": reason,
+                        "candidate_status": candidate.status,
+                        "candidate_reasons": list(candidate.reasons),
+                    },
+                ),
+                StudyRecipeExportPersistenceBlocker(
+                    blocker_id=f"{candidate.candidate_id}__{reason}",
+                    candidate_id=candidate.candidate_id,
+                    reason=reason,
+                    message=message,
+                    metadata={
+                        "candidate_status": candidate.status,
+                        "candidate_reasons": list(candidate.reasons),
+                    },
+                ),
+                None,
+            )
+
+        if candidate.recipe_payload is None:
+            message = "Exportable candidate has no recipe payload preview."
+            return (
+                StudyRecipeExportSaveResult(
+                    candidate_id=candidate.candidate_id,
+                    study_index=candidate.study_index,
+                    status=STUDY_EXPORT_SAVE_STATUS_BLOCKED,
+                    recipe_id=None,
+                    message=message,
+                    error=None,
+                    metadata={"reason": "missing_recipe_payload"},
+                ),
+                StudyRecipeExportPersistenceBlocker(
+                    blocker_id=f"{candidate.candidate_id}__missing_recipe_payload",
+                    candidate_id=candidate.candidate_id,
+                    reason="missing_recipe_payload",
+                    message=message,
+                    metadata={"candidate_status": candidate.status},
+                ),
+                None,
+            )
+
+        try:
+            recipe = self._recipe_store.save_recipe(
+                candidate.recipe_payload,
+                overwrite=overwrite_recipes,
+            )
+        except Exception as exc:
+            message = "Artifact recipe save failed."
+            return (
+                StudyRecipeExportSaveResult(
+                    candidate_id=candidate.candidate_id,
+                    study_index=candidate.study_index,
+                    status=STUDY_EXPORT_SAVE_STATUS_FAILED,
+                    recipe_id=None,
+                    message=message,
+                    error=repr(exc),
+                    metadata={
+                        "reason": "recipe_save_failed",
+                        "tool_key": candidate.tool_key,
+                        "family": candidate.family,
+                    },
+                ),
+                None,
+                None,
+            )
+
+        return (
+            StudyRecipeExportSaveResult(
+                candidate_id=candidate.candidate_id,
+                study_index=candidate.study_index,
+                status=STUDY_EXPORT_SAVE_STATUS_SAVED,
+                recipe_id=recipe.recipe_id,
+                message="Artifact recipe saved.",
+                error=None,
+                metadata={
+                    "recipe_id": recipe.recipe_id,
+                    "recipe_hash": recipe.recipe_hash,
+                    "recipe_hash_short": recipe.recipe_hash_short,
+                    "recipe_display_name": recipe.display_name,
+                    "recipe_path": self._recipe_store.recipe_path(
+                        market=recipe.market,
+                        recipe_id=recipe.recipe_id,
+                    ),
+                    "tool_key": recipe.tool_key,
+                    "tool_type": recipe.tool_type,
+                    "market": market_to_dict(recipe.market),
+                },
+            ),
+            None,
+            recipe,
+        )
+
+    def _save_collection(
+        self,
+        *,
+        plan: StudySetupRecipeExportPlan,
+        requested_candidate_ids: tuple[str, ...],
+        saved_candidate_ids: tuple[str, ...],
+        saved_recipes: tuple[ArtifactRecipe, ...],
+        collection_display_name: str | None,
+        overwrite_collection: bool,
+    ) -> tuple[
+        str | None,
+        tuple[StudyRecipeExportPersistenceBlocker, ...],
+        tuple[str, ...],
+    ]:
+        if not saved_recipes:
+            return (
+                None,
+                (
+                    StudyRecipeExportPersistenceBlocker(
+                        blocker_id=f"{_safe_token(plan.plan_id)}__no_saved_recipes_for_collection",
+                        candidate_id=None,
+                        reason="no_saved_recipes_for_collection",
+                        message=(
+                            "No successfully saved recipes are available for "
+                            "collection persistence."
+                        ),
+                        metadata={"plan_id": plan.plan_id},
+                    ),
+                ),
+                (),
+            )
+        if plan.collection_draft is None:
+            return (
+                None,
+                (
+                    StudyRecipeExportPersistenceBlocker(
+                        blocker_id=f"{_safe_token(plan.plan_id)}__missing_collection_draft",
+                        candidate_id=None,
+                        reason="missing_collection_draft",
+                        message="The export plan does not contain a collection draft.",
+                        metadata={"plan_id": plan.plan_id},
+                    ),
+                ),
+                (),
+            )
+
+        edge_warning, dependency_edges = self._filtered_dependency_edges(
+            dependency_edges=plan.collection_draft.dependency_edges,
+            saved_recipe_ids={recipe.recipe_id for recipe in saved_recipes},
+        )
+        warnings = list(plan.collection_draft.warnings)
+        if edge_warning is not None:
+            warnings.append(edge_warning)
+
+        display_name = str(collection_display_name or "").strip()
+        if not display_name:
+            display_name = plan.collection_draft.display_name
+        metadata = dict(plan.collection_draft.metadata)
+        metadata.update(
+            {
+                "source_plan_id": plan.plan_id,
+                "source_setup_id": plan.setup_id,
+                "source_setup_display_name": plan.setup_display_name,
+                "requested_candidate_ids": list(requested_candidate_ids),
+                "saved_candidate_ids": list(saved_candidate_ids),
+                "saved_recipe_ids": [recipe.recipe_id for recipe in saved_recipes],
+                "important_only": bool(plan.important_only),
+            }
+        )
+        source_database_id = _optional_string(metadata.get("source_database_id"))
+        try:
+            collection = self._collection_store.build_collection(
+                market=saved_recipes[0].market,
+                display_name=display_name,
+                recipes=saved_recipes,
+                source_database_id=source_database_id,
+                dependency_edges=dependency_edges,
+                metadata=metadata,
+            )
+            saved = self._collection_store.save_collection(
+                collection,
+                overwrite=overwrite_collection,
+            )
+        except Exception as exc:
+            return (
+                None,
+                (
+                    StudyRecipeExportPersistenceBlocker(
+                        blocker_id=f"{_safe_token(plan.plan_id)}__collection_save_failed",
+                        candidate_id=None,
+                        reason="collection_save_failed",
+                        message="Artifact recipe collection save failed.",
+                        metadata={"error": repr(exc), "plan_id": plan.plan_id},
+                    ),
+                ),
+                tuple(warnings),
+            )
+
+        return saved.collection_id, (), tuple(warnings)
+
+    def _filtered_dependency_edges(
+        self,
+        *,
+        dependency_edges: tuple[dict[str, Any], ...],
+        saved_recipe_ids: set[str],
+    ) -> tuple[str | None, tuple[dict[str, Any], ...]]:
+        kept: list[dict[str, Any]] = []
+        dropped = 0
+        for edge in dependency_edges:
+            from_recipe_id = str(edge.get("from_recipe_id", "") or "").strip()
+            to_recipe_id = str(edge.get("to_recipe_id", "") or "").strip()
+            if from_recipe_id in saved_recipe_ids and to_recipe_id in saved_recipe_ids:
+                kept.append(dict(edge))
+            else:
+                dropped += 1
+        warning = (
+            "dropped_dependency_edge_for_excluded_recipe"
+            if dropped
+            else None
+        )
+        return warning, tuple(kept)
+
+    def _persistence_summary(
+        self,
+        *,
+        requested_candidate_ids: tuple[str, ...],
+        saved_recipe_ids: tuple[str, ...],
+        skipped_candidate_ids: tuple[str, ...],
+        failed_candidate_ids: tuple[str, ...],
+        blocked_candidate_count: int,
+        saved_collection_id: str | None,
+    ) -> dict[str, int]:
+        return {
+            "requested": len(requested_candidate_ids),
+            STUDY_EXPORT_SAVE_STATUS_SAVED: len(saved_recipe_ids),
+            STUDY_EXPORT_SAVE_STATUS_SKIPPED: len(skipped_candidate_ids),
+            STUDY_EXPORT_SAVE_STATUS_BLOCKED: int(blocked_candidate_count),
+            STUDY_EXPORT_SAVE_STATUS_FAILED: len(failed_candidate_ids),
+            "collection_saved": 1 if saved_collection_id else 0,
+        }
+
+    def _report_id(
+        self,
+        *,
+        plan: StudySetupRecipeExportPlan,
+        requested_candidate_ids: tuple[str, ...],
+        saved_recipe_ids: tuple[str, ...],
+        failed_candidate_ids: tuple[str, ...],
+        saved_collection_id: str | None,
+    ) -> str:
+        raw = {
+            "plan_id": plan.plan_id,
+            "requested_candidate_ids": requested_candidate_ids,
+            "saved_recipe_ids": saved_recipe_ids,
+            "failed_candidate_ids": failed_candidate_ids,
+            "saved_collection_id": saved_collection_id,
+        }
+        digest = hashlib.sha256(
+            json.dumps(raw, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        return f"study_recipe_export_persistence__{_safe_token(plan.setup_id)}__h{digest[:8]}"
+
+
 @dataclass(frozen=True)
 class _ConstructSourceStatus:
     status: str
     reason: str | None
     dependency_notes: tuple[str, ...]
+
+
+def _non_exportable_persistence_reason(candidate_status: str) -> str:
+    if candidate_status == STUDY_EXPORT_STATUS_CONDITIONAL:
+        return "conditional_not_persisted"
+    if candidate_status == STUDY_EXPORT_STATUS_SKIPPED:
+        return "candidate_skipped"
+    return "candidate_not_exportable"
+
+
+def _optional_string(value: object) -> str | None:
+    text = str(value or "").strip()
+    return text or None
 
 
 def _normalize_tool_type(value: object) -> str | None:
@@ -918,9 +1508,17 @@ __all__ = [
     "STUDY_EXPORT_STATUS_CONDITIONAL",
     "STUDY_EXPORT_STATUS_EXPORTABLE",
     "STUDY_EXPORT_STATUS_SKIPPED",
+    "STUDY_EXPORT_SAVE_STATUS_BLOCKED",
+    "STUDY_EXPORT_SAVE_STATUS_FAILED",
+    "STUDY_EXPORT_SAVE_STATUS_SAVED",
+    "STUDY_EXPORT_SAVE_STATUS_SKIPPED",
     "StudyRecipeCollectionDraft",
     "StudyRecipeExportBlocker",
     "StudyRecipeExportCandidate",
+    "StudyRecipeExportPersistenceBlocker",
+    "StudyRecipeExportSaveResult",
     "StudySetupRecipeExportPlan",
+    "StudySetupRecipeExportPersistenceReport",
+    "StudySetupRecipeExportPersistenceService",
     "StudySetupRecipeExportPlanner",
 ]

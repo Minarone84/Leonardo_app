@@ -453,7 +453,9 @@ Full-dataset save conversion is shared through the data-layer `result_to_save_da
 
 Save-only artifact calculation through Data Manager requires accepted OHLCV before reading source candles. `ArtifactCalculationService` uses the shared data-layer OHLCV loadability gate, so only `ok` and `modified` source OHLCV are accepted. `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, stale validation fingerprints, metadata mismatch, and missing CSV are rejected before calculation. GUI code must not duplicate this policy.
 
-Data Manager lineage hardening is implemented for save-only artifact calculation. Saved derived artifact sidecars record the accepted source OHLCV provenance under `source_ohlcv.snapshot`, including source validation status, quality status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. The source snapshot is not part of tool identity, naming, params, bindings, or recipe identity. Recovery/source-drift classification from the recorded snapshot remains future work.
+Data Manager lineage hardening is implemented for save-only artifact calculation. Saved derived artifact sidecars record the accepted source OHLCV provenance under `source_ohlcv.snapshot`, including source validation status, quality status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. The source snapshot is not part of tool identity, naming, params, bindings, or recipe identity. Recovery planning can compare the recorded snapshot against current accepted OHLCV truth and classify source-drifted artifacts as stale. Regeneration remains an explicit recovery action through the existing planner/regenerator/executor path; source-drift classification does not change financial-tool identity, recipe identity, or apply/save semantics.
+
+A future Update Manager may orchestrate broader update workflows.
 
 Restore-only metadata backfill may recreate missing/corrupt sidecars from existing CSV files, but it must not rewrite the CSV value artifact and must not become the normal save path.
 

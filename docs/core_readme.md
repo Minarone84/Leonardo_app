@@ -296,7 +296,7 @@ with:
 
 `database_id` is the folder-backed persistence identity. A user-facing rename changes `display_name` in `manifest.json`; it must not move the folder or recompute `database_id`.
 
-Generated outputs capture source OHLCV provenance in data-layer metadata. Derived artifact sidecars may include `source_ohlcv.snapshot`, and Analysis Database materialization metadata records `source_ohlcv.snapshot` for the `dataframe.csv` build. The snapshot records source dataset identity, relative CSV/metadata paths, accepted validation status, quality validation status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. Legacy sidecars and manifests without this extension remain readable.
+Generated outputs capture source OHLCV provenance in data-layer metadata. Derived artifact sidecars may include `source_ohlcv.snapshot`, and Analysis Database materialization metadata records `source_ohlcv.snapshot` for the `dataframe.csv` build. The snapshot records source dataset identity, relative CSV/metadata paths, accepted validation status, quality validation status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. Legacy sidecars and manifests without this extension remain readable. Recovery source-drift classification can compare the recorded snapshot against current accepted OHLCV truth without rewriting artifacts or manifests.
 
 ### Dataset identity
 
@@ -616,7 +616,7 @@ GUI code may collect a new database name and checked artifact columns for `Datab
 
 Data Manager materialization uses accepted OHLCV only. `ArtifactCalculationService._load_full_dataset_dataframe(...)` and `AnalysisDatabaseStore._load_selected_ohlcv_dataframe(...)` call the shared OHLCV loadability gate before reading `candles.csv`. `ArtifactRecoveryPlanner._recalculation_blockers(...)` reports a blocker when source OHLCV exists but is not accepted/loadable. The shared helpers are `evaluate_ohlcv_dataset_loadability(...)`, `require_ohlcv_dataset_loadable(...)`, and `format_ohlcv_loadability_error(...)`.
 
-`ArtifactCalculationService` writes the source OHLCV snapshot into saved derived artifact sidecars under `source_ohlcv.snapshot`. `AnalysisDatabaseStore` writes the same snapshot namespace into materialization metadata and refreshes it on rebuild. Recovery/source-drift classification from recorded source OHLCV fingerprints remains future work.
+`ArtifactCalculationService` writes the source OHLCV snapshot into saved derived artifact sidecars under `source_ohlcv.snapshot`. `AnalysisDatabaseStore` writes the same snapshot namespace into materialization metadata, refreshes it on rebuild, and exposes `materialization_source_ohlcv_drift_report(...)` for read-only materialization source-drift checks.
 
 ### Artifact recipe and recovery orchestration semantics
 
@@ -624,12 +624,12 @@ Artifact recovery is intentionally split into narrow data-layer responsibilities
 
 - `ArtifactRecipeStore` owns durable single-recipe JSON persistence.
 - `ArtifactRecipeCollectionStore` owns durable ordered collection JSON persistence and dependency metadata.
-- `ArtifactRecoveryPlanner` owns read-only recovery classification for expected recipe outputs. It inspects CSV/sidecar/source availability, consumes shared UTC dependency-intent resolution where relevant, checks unsafe dependency join-key conditions, and reports recovery status without calculating or writing artifacts.
+- `ArtifactRecoveryPlanner` owns read-only recovery classification for expected recipe outputs. It inspects CSV/sidecar/source availability, consumes shared UTC dependency-intent resolution where relevant, checks unsafe dependency join-key conditions, compares recorded `source_ohlcv.snapshot` metadata against current accepted OHLCV truth, and reports recovery status without calculating or writing artifacts.
 - `ArtifactRecoveryRegenerator` owns recovery orchestration for planner-actionable recipes only. It delegates execution to `ArtifactRecipeExecutor` and does not calculate directly.
 - `ArtifactRecipeExecutor` owns recipe execution order/reporting and delegates full-dataset computation/saves to `ArtifactCalculationService`.
 - `ArtifactRecoveryDatabaseRebuilder` gates linked Analysis Database materialization after clean recovery and delegates dataframe rebuilding to `AnalysisDatabaseStore`.
 
-No recovery layer may manually write CSV artifacts, rewrite `.meta.json` sidecars, repair Analysis Database manifests, or duplicate calculation/materialization semantics owned by another layer.
+Source-drifted artifacts are classified as stale and become planner-actionable only when current OHLCV is loadable and the normal recipe execution blockers are clear. Legacy artifacts missing `source_ohlcv.snapshot` remain compatible as `freshness_unknown` / lineage unknown. Current OHLCV that is blocked or not loadable blocks actionability. No recovery layer may manually write CSV artifacts, rewrite `.meta.json` sidecars, repair Analysis Database manifests, regenerate during status checks, or duplicate calculation/materialization semantics owned by another layer.
 
 ### Artifact identity fields
 

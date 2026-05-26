@@ -502,7 +502,7 @@ Notebook POI and Potential Trade markers must not:
 - create `ChartStudyInstance` objects;
 - become financial-tool outputs;
 - alter controller full-study truth;
-- be saved as Study Setup content;
+- be saved as Study Environment content;
 - redefine pane/layout ownership.
 
 Potential Trade markers are derived only from rows with explicit `Long` or `Short` direction. Long markers render as green upward arrows below the bar; Short markers render as red downward arrows above the bar. POI/PT marker offsets are notebook annotation settings, not study style and not renderer semantic ownership.
@@ -733,9 +733,13 @@ Historical chart save paths use the active configured historical root, and chart
 - `description`
 - `dataset_role`
 
-This metadata is chart-local semantic context. Applied price overlay rows and oscillator pane headers expose a visible `Metadata...` action that opens the Study Metadata dialog. Metadata is preserved by study serialization/deserialization, Study Setups, Workspace Snapshots, and computation edit/reapply. It must not affect computation, resident projection, rendering, style, runtime render keys, artifact identity, recipe identity, or dataset geography truth. `dataset_role` is a hint for review/reporting, not proof of tool identity.
+This metadata is chart-local semantic context. Applied price overlay rows and oscillator pane headers expose a visible `Metadata...` action that opens the Study Metadata dialog. Metadata is preserved by study serialization/deserialization, Study Environments, Workspace Snapshots, and computation edit/reapply. It must not affect computation, resident projection, rendering, style, runtime render keys, artifact identity, recipe identity, or dataset geography truth. `dataset_role` is a hint for review/reporting, not proof of tool identity.
 
-Study Setup and Workspace Snapshot save dialogs support Save as new and Update existing modes. Update existing overwrites the selected saved item while preserving its storage ID and creation timestamp. Workspace Snapshot update preserves `notebook_ref` and does not change notebook ownership.
+Study Environment and Workspace Snapshot save dialogs support Save as new and Update existing modes. Update existing overwrites the selected saved item while preserving its storage ID and creation timestamp. Workspace Snapshot update preserves `notebook_ref` and does not change notebook ownership. Notebook save supports the same Save as new / Update existing semantics through `HistoricalNotebookStore.update_notebook(...)`.
+
+Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the Data Manager-visible recipe store before artifact persistence continues. Applying a tool/study remains chart-local and non-persistent. Saving a Study Environment or Workspace Snapshot does not directly save recipes, and Workspace Snapshots are restoration objects rather than Data Manager export objects.
+
+Research Suite exposes managers for saved Study Environments and Workspace Snapshots. The Study Environment Manager can inspect environments/studies, edit top-level details, edit per-study serialized `user_metadata`, and delete through store APIs. The Workspace Snapshot Manager can inspect snapshots/charts/studies, display `notebook_ref`, edit top-level details, and delete through store APIs. Embedded Workspace Snapshot study metadata is read-only in RS4.
 
 ---
 
@@ -794,9 +798,9 @@ The viewport never requests its own resident truth directly.
 
 ### 16.7 Pan Anchor
 
-Pan Anchor is a Historical Data Manager shell-level coordination mode, not a viewport ownership change.
+Pan Anchor is a Research Suite shell-level coordination mode, not a viewport ownership change.
 
-When Pan Anchor is enabled, a user horizontal pan in one active historical chart causes the other eligible charts in the same Historical Data Manager to recenter around the source chart's current center timestamp.
+When Pan Anchor is enabled, a user horizontal pan in one active historical chart causes the other eligible charts in the same Research Suite to recenter around the source chart's current center timestamp.
 
 Rules:
 
@@ -805,10 +809,10 @@ Rules:
 - synchronization is triggered by explicit user horizontal pan gestures, not generic viewport changes;
 - synchronization is timestamp-center based, not raw pixel-delta or raw bar-index based;
 - target charts keep their own visible width, zoom, autoscale/manual-y state, and vertical range;
-- embedded charts and detached charts still tracked by the same Historical Data Manager are eligible;
-- charts in other Historical Data Manager windows are not targeted;
+- embedded charts and detached charts still tracked by the same Research Suite are eligible;
+- charts in other Research Suite windows are not targeted;
 - programmatic timestamp navigation, notebook Go actions, Potential Trade/POI Go actions, initial chart load, and Workspace Snapshot restore must not become pan-sync sources;
-- Historical Data Manager owns reentry protection so programmatic target recentering does not create sync loops;
+- Research Suite owns reentry protection so programmatic target recentering does not create sync loops;
 - target recentering must use the existing panel/controller timestamp-centering path, with the controller preserving nearest-timestamp lookup, resident refill, and stale-slice protection.
 
 ---

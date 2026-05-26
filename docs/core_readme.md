@@ -637,21 +637,25 @@ Source-drifted artifacts are classified as stale and become planner-actionable o
 
 The current update workflow targets recipe collections only. It is not a dataset-wide update scan, arbitrary dependency graph inference engine, background task runner, or CoreBridge API surface.
 
-### Chart preset update semantics
+Research Suite artifact save follows the same reproducibility boundary as Data Manager save-only artifact calculation. When the historical chart Financial Tools flow saves an artifact, the corresponding recipe is saved or reused first through the Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store. Equivalent recipe payloads reuse deterministic recipe identity, and saved artifact sidecars record non-identity recipe metadata: `recipe_id`, `recipe_hash`, and `recipe_hash_short`. Applying a study remains chart-local and does not save recipes or artifacts. Saving a Study Environment or Workspace Snapshot also does not directly save recipes.
 
-`ChartStudySetupStore.update_setup(...)` replaces an existing saved Study Setup while preserving `setup_id` and `created_at_ms`, advancing `updated_at_ms`, recomputing `content_hash`, and writing through the store-owned atomic overwrite path.
+### Research Suite saved-object update semantics
+
+`ChartStudySetupStore.update_setup(...)` replaces an existing saved Study Environment while preserving `setup_id` and `created_at_ms`, advancing `updated_at_ms`, recomputing `content_hash`, and writing through the store-owned atomic overwrite path. The internal model name remains `ChartStudySetup`.
 
 `HistoricalWorkspaceSnapshotStore.update_snapshot(...)` replaces an existing saved Workspace Snapshot while preserving `snapshot_id`, `created_at_ms`, and existing `notebook_ref` behavior. It advances `updated_at_ms`, recomputes `content_hash`, and writes through the store-owned atomic overwrite path.
 
-GUI dialogs collect Save as new / Update existing intent and display fields only. They must not manually write JSON, calculate hashes, manage preset identity, or own atomic persistence behavior.
+`HistoricalNotebookStore.update_notebook(...)` replaces an existing saved Notebook while preserving `notebook_id` and `created_at_ms`, advancing `updated_at_ms`, recomputing `content_hash`, and writing through the store-owned atomic overwrite path.
 
-### Study Setup recipe export semantics
+GUI dialogs and manager dialogs collect Save as new / Update existing, rename, description, delete, and metadata-edit intent only. They must not manually write JSON, calculate hashes, manage preset identity, delete files directly, or own atomic persistence behavior. Research Suite user-facing terminology does not rename internal classes, schema fields, IDs, or store paths.
+
+### Study Environment recipe export semantics
 
 Saved chart studies may carry `StudyUserMetadata` in serialized `user_metadata` with `important`, `description`, and `dataset_role`. This metadata is semantic context only. It does not change financial-tool computation, render payloads, style, runtime state, artifact identity, recipe identity, or Analysis Database geography truth.
 
-`StudySetupRecipeExportPlanner` owns read-only mapping from saved `ChartStudySetup` payloads into export reports. It inspects serialized studies, supports important-only filtering, classifies candidates as exportable / conditional / blocked / skipped, preserves setup order, derives recipe output names/signals through ToolSpec/naming helpers, and excludes style/runtime/pane/render fields from candidate recipe payload previews.
+`StudySetupRecipeExportPlanner` owns read-only mapping from saved internal `ChartStudySetup` payloads into user-facing Study Environment export reports. It inspects serialized studies, supports important-only filtering, classifies candidates as exportable / conditional / blocked / skipped, preserves environment order, derives recipe output names/signals through ToolSpec/naming helpers, and excludes style/runtime/pane/render fields from candidate recipe payload previews.
 
-`StudySetupRecipeExportPersistenceService` consumes an approved B1 plan and persists selected/all exportable candidates only. It delegates recipe writes to `ArtifactRecipeStore.save_recipe(...)` and optional ordered collection writes to `ArtifactRecipeCollectionStore.build_collection(...)` / `save_collection(...)`. Conditional, blocked, skipped, missing-payload, and unknown candidates are reported rather than saved. This service does not calculate artifacts, execute recipes, create Analysis Databases, mutate Study Setups, or export Workspace Snapshots.
+`StudySetupRecipeExportPersistenceService` consumes an approved B1 plan and persists selected/all exportable candidates only. It delegates recipe writes to `ArtifactRecipeStore.save_recipe(...)` and optional ordered collection writes to `ArtifactRecipeCollectionStore.build_collection(...)` / `save_collection(...)`. Conditional, blocked, skipped, missing-payload, and unknown candidates are reported rather than saved. This service does not calculate artifacts, execute recipes, create Analysis Databases, mutate Study Environments, or export Workspace Snapshots.
 
 ### Analysis dataset geography and collection database planning
 
@@ -659,7 +663,7 @@ Saved chart studies may carry `StudyUserMetadata` in serialized `user_metadata` 
 
 `RecipeCollectionDatabasePlanner` owns read-only recipe collection to Analysis Database component planning. It consumes `ArtifactRecoveryPlanner` status, resolves only current/up-to-date artifacts into Analysis Database source/column previews, preserves collection order, reports duplicate planned database columns, and blocks missing, stale, source-drifted, freshness-unknown, blocked, and cross-market artifacts from component previews. It does not create or edit manifests, calculate artifacts, execute recipes, or materialize databases.
 
-`RecipeCollectionDatabaseService` owns applying resolved C2 plans to Analysis Database manifests. It can create a new draft manifest through `AnalysisDatabaseStore.build_draft_manifest(...)` / `save_manifest(...)`, or extend an existing manifest through `AnalysisDatabaseComponentEditor.add_components(...)`. Extension preserves existing components and relies on the component editor for draft/materialization reset behavior. The service integrates geography reports, applies the raw-volume policy for new recipe-collection drafts, and blocks duplicate/missing/market-mismatch cases. It does not materialize `dataframe.csv`, calculate artifacts, execute recipes, or run recipe-collection update execution.
+`RecipeCollectionDatabaseService` owns C2 plan application to Analysis Database manifests. It can create a new draft manifest through `AnalysisDatabaseStore.build_draft_manifest(...)` / `save_manifest(...)`, or extend an existing manifest through `AnalysisDatabaseComponentEditor.add_components(...)`. Extension preserves existing components and relies on the component editor for draft/materialization reset behavior. The service integrates geography reports, applies the raw-volume policy for new recipe-collection drafts, and blocks duplicate/missing/market-mismatch cases. It does not materialize `dataframe.csv`, calculate artifacts, execute recipes, or run recipe-collection update execution.
 
 ### Artifact identity fields
 
@@ -812,7 +816,7 @@ The Core enforces:
 - exchange-specific market/timeframe/alias/interval/limit truth must stay in the exchange adapter/capability layer
 - download-time OHLCV validation is preliminary reporting only and must not stamp downloaded data as accepted
 - accepted/loadable OHLCV statuses are `ok` and `modified`; `unknown`, `not_validated`, `warning`, `error`, missing/unreadable/stale metadata, metadata mismatch, and missing CSV are blocked
-- Data Manager and Historical Data Manager load paths must use the data-layer OHLCV loadability policy instead of GUI metadata parsing
+- Data Manager and Research Suite chart load paths must use the data-layer OHLCV loadability policy instead of GUI metadata parsing
 - non-renderable outputs remain valid runtime outputs
 - render truth must stay downstream of Core compute truth
 - financial-tool execution environment must be caller-supplied context, not hidden naming or renderer state
@@ -856,7 +860,7 @@ The Leonardo Core provides:
 - structured artifact persistence with CSV + `.meta.json` metadata sidecars
 - artifact recipe / collection persistence for reproducible full-dataset calculations
 - read-only artifact recovery planning, delegated artifact regeneration, explicit Analysis Database component editing, and store-owned linked Analysis Database rebuilds
-- accepted-OHLCV loadability gates for Historical Data Manager chart loading and Data Manager calculation/materialization paths
+- accepted-OHLCV loadability gates for Research Suite chart loading and Data Manager calculation/materialization paths
 - observable runtime lifecycle and state
 - explicit distinction between compute truth and render truth
 - Core-supervised historical OHLCV download planning, execution, cancellation, preliminary validation reporting, and audit emission

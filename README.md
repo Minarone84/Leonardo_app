@@ -71,7 +71,7 @@ Data Manager remains dataset/artifact oriented and separate from chart sessions.
 - `Edit Selected Database Components...` is the only workflow that intentionally changes an existing database recipe; it opens a dedicated component editor, auto-loads saved artifacts, highlights already-present components, supports explicit add/remove/replace actions, resets materialization to draft, and requires a later build;
 - duplicate visible-name validation applies to creating new database drafts and renaming databases, not to materializing/rebuilding an existing database by `database_id`;
 - save-only financial-tool artifact recipes and ordered recipe collections for reproducible full-dataset artifact calculation;
-- `Create Recipes from Study Setup...` for exporting selected saved Study Setup studies into recipe definitions through a preview/report workflow;
+- `Create Recipes from Study Environment...` for exporting selected saved Study Environment studies into recipe definitions through a preview/report workflow;
 - larger Saved Recipes and Saved Recipe Collections dialogs for readable long names;
 - recipe-collection recovery controls for checking artifact status, regenerating planner-actionable missing/stale/unknown artifacts, rebuilding a linked Analysis Database when the collection carries `source_database_id`, and planning controlled recipe-collection updates through `Plan Updates...`;
 - `Create/Extend Database...` in saved recipe collection controls for creating or extending draft Analysis Database manifests from current/resolved collection artifacts;
@@ -90,7 +90,9 @@ Data Manager metadata/lineage hardening is implemented for generated outputs. De
 
 The recipe-collection update workflow is implemented for saved recipe collections. `DataManagerUpdateService` builds read-only `DataManagerUpdatePlan` objects from a recipe collection, maps `ArtifactRecoveryPlanner` statuses into plan items/actions/blockers, includes linked Analysis Database materialization source-drift checks when `source_database_id` is present, and preserves recipe collection order for planned artifact actions. The Data Manager `Plan Updates...` dialog displays the service-produced plan/report data, executes selected actions or all actionable actions through `execute_update_plan(...)`, delegates artifact regeneration to `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`, delegates linked database rebuilds to `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`, reports completed/skipped/failed/blocked action results, and refreshes saved artifact and Analysis Database lists after execution. This workflow remains recipe-collection scoped; dataset-wide update scanning, arbitrary dependency graph inference, and background task/progress integration remain future work.
 
-Saved Study Setups can now be planned into Data Manager artifact recipe definitions. `StudySetupRecipeExportPlanner` inspects serialized studies, supports important-only filtering, classifies candidates as exportable / conditional / blocked / skipped, and produces recipe payload and collection draft previews without writing or calculating artifacts. `StudySetupRecipeExportPersistenceService` persists only selected/all exportable candidates through `ArtifactRecipeStore` and can optionally save an ordered recipe collection through `ArtifactRecipeCollectionStore`. The Data Manager dialog displays the plan and persistence report; it does not calculate artifacts, execute recipes, create Analysis Databases, or export Workspace Snapshots.
+Research Suite artifact save now preserves reproducibility at the same time as saved values. Saving an artifact from the historical chart Financial Tools flow saves or reuses the corresponding recipe in the Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store before artifact persistence continues. Equivalent recipes reuse deterministic identity, and artifact sidecars record non-identity recipe metadata: `recipe_id`, `recipe_hash`, and `recipe_hash_short`. Applying a study remains chart-local and non-persistent; saving a Study Environment or Workspace Snapshot does not directly save recipes.
+
+Saved Study Environments can now be planned into Data Manager artifact recipe definitions. The internal `StudySetupRecipeExportPlanner` inspects serialized studies, supports important-only filtering, classifies candidates as exportable / conditional / blocked / skipped, and produces recipe payload and collection draft previews without writing or calculating artifacts. `StudySetupRecipeExportPersistenceService` persists only selected/all exportable candidates through `ArtifactRecipeStore` and can optionally save an ordered recipe collection through `ArtifactRecipeCollectionStore`. The Data Manager dialog displays the plan and persistence report; it does not calculate artifacts, execute recipes, create Analysis Databases, or export Workspace Snapshots.
 
 Recipe collections can now be mapped into draft Analysis Database manifests when their expected artifacts are already current. `RecipeCollectionDatabasePlanner` consumes recovery status and resolves only up-to-date artifacts into source/column previews; missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market cases are reported instead of included. `RecipeCollectionDatabaseService` can create a new draft manifest or extend an existing manifest from those resolved components, preserving existing components on extend and leaving materialization explicit. Missing or stale artifacts remain handled through `Plan Updates...`; the create/extend dialog does not run update execution, calculate artifacts, execute recipes, or materialize `dataframe.csv`.
 
@@ -124,15 +126,15 @@ Accepted behavior includes:
 - `ArtifactRecoveryPlanner` shares UTC required-column intent resolution and performs read-only blocker checks for missing or duplicate `ts_ms` / `time` dependency join keys.
 - `ChartStudyInstance` carries `StudyUserMetadata` with `important`, `description`, and `dataset_role`;
 - study `user_metadata` is semantic/user-facing metadata only and does not affect computation, rendering, style, runtime, artifact identity, or recipe identity;
-- study serialization/deserialization, Study Setups, and Workspace Snapshots preserve `user_metadata`, while old payloads load with default metadata values;
+- study serialization/deserialization, Study Environments, and Workspace Snapshots preserve `user_metadata`, while old payloads load with default metadata values;
 - applied price overlay rows and oscillator pane headers expose a visible `Metadata...` action that opens the chart-local Study Metadata dialog;
 - the Study Metadata dialog edits Important, Description, and Dataset role through the chart-local metadata update path, and computation edit/reapply preserves it.
 
 M6/M6B completed release-check/test reconciliation and full uploaded test validation without production-code changes.
 
-## Current Historical Data Manager / Workspace layout workflow — 2026-05-25
+## Current Research Suite / Workspace layout workflow — 2026-05-26
 
-Historical chart sessions hosted by `HistoricalDataManagerWindow` now support an 8-slot embedded workspace without changing chart-session, controller, renderer, data, or financial-tool ownership. The Historical Data Manager opens maximized so the chart workspace is immediately usable.
+Research Suite is the user-facing historical chart research/design area. It is still implemented internally by `HistoricalDataManagerWindow`, and internal classes, schema fields, IDs, and store paths intentionally remain stable. Historical chart sessions support an 8-slot embedded workspace without changing chart-session, controller, renderer, data, or financial-tool ownership. The Research Suite opens maximized so the chart workspace is immediately usable.
 
 Accepted workspace behavior includes:
 
@@ -143,7 +145,7 @@ Accepted workspace behavior includes:
 - detached charts reserve their original slot and dock back into that same slot;
 - chart-level Position controls can move a chart to another slot or swap with an occupied slot while protecting reserved detached slots;
 - two visualization modes: `Scroll 4` for scrolling beyond the first four visible charts, and `Fit 8` for fitting all embedded charts into the usable workspace;
-- a checkable `Pan Anchor` quick action, off by default, that synchronizes horizontal panning across active charts in the same Historical Data Manager using timestamp-center recentering;
+- a checkable `Pan Anchor` quick action, off by default, that synchronizes horizontal panning across active charts in the same Research Suite using timestamp-center recentering;
 - adaptive visual layout by embedded chart count:
   - 1 chart → one full-widget chart;
   - 2 charts → one row with two equal columns;
@@ -167,15 +169,15 @@ Current compact-layout behavior also includes:
 
 Pan Anchor is horizontal-only. It does not synchronize zoom, vertical scale, autoscale/manual-y state, renderer internals, studies, notebooks, or saved presets. Programmatic navigation such as Notebook/POI/PT Go and Workspace Snapshot load does not become a pan-sync source.
 
-## Current Historical Notebook / Workspace Snapshot workflow — 2026-05-22
+## Current Notebook / Workspace Snapshot workflow — 2026-05-26
 
-Historical Data Manager now includes a workspace-linked Historical Notebook workflow for chart analysis notes and runtime chart annotations.
+Research Suite includes a workspace-linked Notebook workflow for chart analysis notes and runtime chart annotations.
 
 Accepted notebook behavior includes:
 
 - `Notes` menu actions for creating, opening, saving, loading notebooks, and opening `Notebook Manager...`;
 - Notebook Manager owns assignment/unassignment, notebook descriptions/last-save visibility, assigned-workspace summaries, and confirmed notebook deletion;
-- notebook persistence through `NotebookStore` under `chart_presets/notebooks`, outside the notebook window itself;
+- notebook persistence through `HistoricalNotebookStore` under `chart_presets/notebooks`, outside the notebook window itself;
 - notebooks may be saved without being assigned to any workspace snapshot;
 - Workspace Snapshots store only an optional `notebook_ref`, never embedded notebook content;
 - deleting an assigned notebook through Notebook Manager clears referencing workspace snapshot `notebook_ref` values, but deleting a Workspace Snapshot never deletes the referenced notebook;
@@ -190,28 +192,36 @@ Accepted notebook behavior includes:
 - runtime POI and Potential Trade chart markers are notebook-driven annotations, not hidden studies and not financial-tool outputs;
 - Potential Trade markers render as Long green upward arrows below bars or Short red downward arrows above bars;
 - notebook-level `annotation_settings` persist `poi_marker_offset`, `pt_long_marker_offset`, and `pt_short_marker_offset`;
-- notebooks auto-save on close through the existing Historical Data Manager / store boundary;
-- a compact menu-bar `Notebook` quick action before the Study Setup actions opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
+- notebooks support explicit Save as new and Update existing modes through `HistoricalNotebookStore.update_notebook(...)`;
+- Update existing preserves `notebook_id` and `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and atomically overwrites through the store;
+- Create New Notebook clears the prior loaded identity before refreshing workspace charts;
+- Save as new creates a distinct notebook identity and does not repoint existing Workspace Snapshot `notebook_ref` values;
+- notebooks auto-save on close through the existing Research Suite / store boundary;
+- a compact menu-bar `Notebook` quick action before the Study Environment actions opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
 
-Study Setups remain notebook-free. Notebook data belongs to the notebook store and Workspace Snapshot association belongs to `notebook_ref` only.
+Study Environments remain notebook-free. Notebook data belongs to the notebook store and Workspace Snapshot association belongs to `notebook_ref` only.
 
-## Current saved Study Setup / Workspace Snapshot save and delete workflow — 2026-05-26
+## Current saved Study Environment / Workspace Snapshot management — 2026-05-26
 
-Saved Study Setup and Workspace Snapshot save dialogs support both Save as new and Update existing. Save as new remains the default. Update existing requires selecting an existing saved item, preloads its name/description, reuses the existing `setup_id` or `snapshot_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and overwrites atomically through the preset stores without creating a duplicate file. Workspace Snapshot updates preserve existing `notebook_ref` behavior.
+Saved Study Environment and Workspace Snapshot save dialogs support both Save as new and Update existing. Save as new remains the default. Update existing requires selecting an existing saved item, preloads its name/description, reuses the existing `setup_id` or `snapshot_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and overwrites atomically through the preset stores without creating a duplicate file. Workspace Snapshot updates preserve existing `notebook_ref` behavior.
 
-Saved Study Setup and Workspace Snapshot load dialogs also expose confirmed Delete actions.
+Saved Study Environment and Workspace Snapshot load dialogs also expose confirmed Delete actions.
 
 Accepted behavior includes:
 
-- Save Study Setup can save a new setup or update the selected setup through `ChartStudySetupStore.update_setup(...)`;
-- Save Workspace Snapshot can save a new snapshot or update the selected snapshot through `HistoricalWorkspaceSnapshotStore.update_snapshot(...)`;
+- the Study Environment save action can save a new environment or update the selected environment through `ChartStudySetupStore.update_setup(...)`;
+- the Workspace Snapshot save action can save a new snapshot or update the selected snapshot through `HistoricalWorkspaceSnapshotStore.update_snapshot(...)`;
 - GUI dialogs collect user intent only; preset stores own persistence, hashing, timestamps, identity preservation, and atomic writes;
-- Load Study Setup can delete the selected saved setup through `ChartStudySetupStore.delete_setup(setup_id)`;
-- deleting a saved Study Setup does not remove currently applied chart studies and does not affect Workspace Snapshots;
-- Load Workspace Snapshot can delete the selected snapshot through `HistoricalWorkspaceSnapshotStore.delete_snapshot(snapshot_id)`;
+- the Study Environment load action can delete the selected saved environment through `ChartStudySetupStore.delete_setup(setup_id)`;
+- deleting a saved Study Environment does not remove currently applied chart studies and does not affect Workspace Snapshots;
+- the Workspace Snapshot load action can delete the selected snapshot through `HistoricalWorkspaceSnapshotStore.delete_snapshot(snapshot_id)`;
 - deleting a Workspace Snapshot does not delete referenced notebooks, datasets, saved studies, or saved artifacts;
 - Workspace Snapshot delete confirmation explicitly mentions a referenced notebook when `notebook_ref` is present;
 - delete dialogs refresh their list and clear stale selection/details after successful deletion.
+
+Research Suite also exposes `Manage Study Environments...` and `Manage Workspace Snapshots...`. `StudyEnvironmentManagerDialog` lists saved environments, shows contained studies, edits top-level name/description, edits per-study serialized `user_metadata` (`important`, `dataset_role`, `description`), preserves study params/style/bindings, and deletes through `ChartStudySetupStore` APIs. `WorkspaceSnapshotManagerDialog` lists saved snapshots, shows saved charts and studies, displays `notebook_ref`, edits top-level name/description, and deletes through `HistoricalWorkspaceSnapshotStore` APIs. Embedded Workspace Snapshot study metadata is read-only in RS4.
+
+No recipe creation, artifact calculation, Workspace Snapshot export, assigned-notebook deletion, or Analysis Database creation is part of these dialogs.
 
 ## Current Oscillator / ARSI workflow — 2026-05-20
 

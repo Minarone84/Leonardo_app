@@ -152,12 +152,13 @@ The sidecar may include:
 - canonical names and saved identity from `ft_naming.py`;
 - params and bindings with explicit/inferred/unknown status;
 - lineage, fingerprint, quality, and namespaced extension metadata;
-- source OHLCV provenance under `source_ohlcv.snapshot` for generated derived artifacts when available.
+- source OHLCV provenance under `source_ohlcv.snapshot` for generated derived artifacts when available;
+- non-identity recipe metadata (`recipe_id`, `recipe_hash`, `recipe_hash_short`) for artifacts saved from reproducible recipe-backed flows when available.
 - OHLCV validation metadata when the artifact is `ohlcv/candles.csv`.
 
 Sidecars are consumers of contract data. They must not define new tool behavior, compute logic, render defaults, or naming templates. Valid sidecar column metadata is also the source-selection truth for saved artifacts: non-renderable but analysis-usable/selectable outputs may be selected as analytical sources, while non-selectable utility columns must not be exposed merely because they exist in the CSV header.
 
-The `source_ohlcv.snapshot` entry is metadata/lineage only. It records the accepted OHLCV source used for calculation, including source validation/fingerprint and source-correction provenance where applicable. Recovery classification may consume it to detect source OHLCV drift, but it does not change canonical artifact naming, params, bindings, recipe identity, or tool behavior.
+The `source_ohlcv.snapshot` entry is metadata/lineage only. It records the accepted OHLCV source used for calculation, including source validation/fingerprint and source-correction provenance where applicable. Recovery classification may consume it to detect source OHLCV drift, but it does not change canonical artifact naming, params, bindings, recipe identity, or tool behavior. Recipe metadata keys identify the saved or reused recipe associated with a saved artifact; they do not become artifact identity fields.
 
 For OHLCV, validation metadata is an acceptance contract owned by the historical data layer. `ok` and `modified` are loadable; `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, metadata mismatch, stale fingerprints, missing validation fingerprints, and missing CSV are blocked. Download-time validation is preliminary reporting only and does not certify a dataset as accepted.
 
@@ -171,11 +172,15 @@ Serialized chart studies may include `user_metadata` from `StudyUserMetadata`:
 
 This metadata is user-facing semantic context. It must not define financial-tool contracts, runtime outputs, renderability, chart style, saved artifact identity, recipe identity, or Analysis Database geography truth. `dataset_role` may support warnings and review context, but tool identity and geography detection must use structured tool/source metadata where available.
 
-## Saved preset update identity
+## Saved Research Suite object update identity
 
-Updating an existing Study Setup preserves its `setup_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and replaces the stored study payload through `ChartStudySetupStore.update_setup(...)`.
+Updating an existing Study Environment preserves its internal `setup_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and replaces the stored study payload through `ChartStudySetupStore.update_setup(...)`. The internal schema/model name remains `ChartStudySetup`.
 
 Updating an existing Workspace Snapshot preserves its `snapshot_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, replaces the stored workspace/chart payload through `HistoricalWorkspaceSnapshotStore.update_snapshot(...)`, and preserves existing `notebook_ref` behavior. Update-existing is an overwrite of the selected saved item, not a new saved item.
+
+Updating an existing Notebook preserves its `notebook_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and replaces stored notebook content through `HistoricalNotebookStore.update_notebook(...)`.
+
+Research Suite managers use store-owned update/delete APIs. The Study Environment Manager may edit serialized study `user_metadata`; the Workspace Snapshot Manager displays embedded study metadata read-only in RS4.
 
 ## Adding a new indicator
 

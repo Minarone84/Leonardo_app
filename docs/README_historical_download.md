@@ -270,7 +270,7 @@ Newly written OHLCV sidecars keep:
 • `validation.status = "unknown"`
 • `quality.validation_status = "not_validated"`
 
-Manual validation through OHLCV Maintenance is required before downloaded OHLCV becomes accepted for Historical Data Manager charts or Data Manager calculations.
+Manual validation through OHLCV Maintenance is required before downloaded OHLCV becomes accepted for Research Suite charts or Data Manager calculations.
 
 Validation is neutral and works from canonical timeframe grammar rather than a Bybit-specific allow-list.
 

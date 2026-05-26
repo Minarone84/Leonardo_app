@@ -274,11 +274,13 @@ Important rules:
 - metadata is semantic context only;
 - metadata does not affect computation, rendering, style, runtime state, artifact identity, or recipe identity;
 - `dataset_role` is a hint for reporting and user review, not proof of tool identity or Analysis Database geography;
-- `important` may be used by Study Setup recipe export filtering, but it does not change computation or rendering;
+- `important` may be used by Study Environment recipe export filtering, but it does not change computation or rendering;
 - old serialized study payloads load with default metadata values;
-- study serialization/deserialization, Study Setups, and Workspace Snapshots preserve `user_metadata`;
+- study serialization/deserialization, Study Environments, and Workspace Snapshots preserve `user_metadata`;
 - computation edit/reapply must preserve existing metadata unless the user explicitly edits it;
-- updating an existing Study Setup stores the current live study metadata into the selected saved setup.
+- updating an existing Study Environment stores the current live study metadata into the selected saved environment.
+
+Study metadata can be edited from the live chart through `Metadata...` or from saved Study Environments through the Study Environment Manager. The manager edits only serialized `user_metadata`; it does not edit computation params, style, bindings, or recipe definitions.
 
 ### `StudyDisplayStyle`
 
@@ -738,9 +740,9 @@ In particular:
 - broader financial-tool architecture belongs in `DESIGN_financial_tools.md`
 - historical chart-space and resident-slice behavior belong in `DESIGN_historical_chart_v2.md`
 
-Notebook POI and Potential Trade markers are also outside the study system. They are runtime chart annotations derived from Historical Notebook rows. They do not enter `ChartStudyRegistry`, do not create `ChartStudyInstance` objects, do not become financial-tool outputs, and are not saved as Study Setup content.
+Notebook POI and Potential Trade markers are also outside the study system. They are runtime chart annotations derived from Notebook rows. They do not enter `ChartStudyRegistry`, do not create `ChartStudyInstance` objects, do not become financial-tool outputs, and are not saved as Study Environment content.
 
-Study Setup recipe export is a Data Manager workflow built from serialized study payloads. It may use `important` for filtering and carry `description` / `dataset_role` as report context, but it must not treat metadata as computation truth, style truth, artifact identity, recipe identity, or geography proof. Export planning and persistence are owned by data-layer services, not by the chart study registry.
+Study Environment recipe export is a Data Manager workflow built from serialized study payloads. It may use `important` for filtering and carry `description` / `dataset_role` as report context, but it must not treat metadata as computation truth, style truth, artifact identity, recipe identity, or geography proof. Export planning and persistence are owned by data-layer services, not by the chart study registry. Saving a Study Environment does not directly persist recipes; recipe creation happens only through the Data Manager export workflow.
 
 ---
 

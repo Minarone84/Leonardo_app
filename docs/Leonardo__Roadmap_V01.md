@@ -396,14 +396,14 @@ Implemented baseline:
   - Historical workspace compact layout reduces chart-area margins, pane gaps, splitter width, and renderer plot padding without changing domain-padding/refill behavior.
   - Historical workspace visualization mode controls moved to the `Window` menu and the menu bar shows the current mode.
 
-- M10 Historical Notebook / Workspace Snapshot integration is accepted:
-  - Historical Data Manager exposes `Notes` menu actions for creating, opening, saving, loading, and managing notebooks.
+- M10 Notebook / Workspace Snapshot integration is accepted:
+  - Research Suite exposes `Notes` menu actions for creating, opening, saving, loading, and managing notebooks.
   - `HistoricalNotebookStore` persists notebook JSON under `chart_presets/notebooks` while `HistoricalNotebookWindow` remains an in-memory editor.
   - Workspace Snapshots store only optional `notebook_ref` metadata and never embed notebook content.
   - Notebook chart tabs are keyed by dataset identity, not by chart position.
   - Notes, Potential Trades, and Points of Interest use structured rows with explicit delete/navigation behavior.
   - POI rows and eligible Potential Trades rows can produce runtime chart markers; those markers are notebook annotations, not hidden studies or financial-tool outputs.
-  - The menu-bar quick actions include an `Open Notebook` / `Notebook` button before Study Setup actions when an assigned notebook is available.
+  - The menu-bar quick actions include an `Open Notebook` / `Notebook` button before Study Environment actions when an assigned notebook is available.
 
 - M11 Historical Notebook / preset delete / Pan Anchor polish is accepted:
   - Notebook Manager owns notebook assignment/unassignment, assignment summaries, descriptions/last-save visibility, and confirmed notebook deletion.
@@ -411,10 +411,10 @@ Implemented baseline:
   - Notes rows no longer navigate; Potential Trades rows have explicit `Go`, `Delete`, empty-by-default `Direction`, and Long/Short marker semantics.
   - Potential Trade Long markers render as green upward arrows below bars; Potential Trade Short markers render as red downward arrows above bars.
   - Notebook JSON persists additive `annotation_settings` for POI, PT Long, and PT Short marker offsets.
-  - Notebooks auto-save on close through the Historical Data Manager/store boundary.
-  - Load Study Setup and Load Workspace Snapshot dialogs expose confirmed Delete actions; Workspace Snapshot deletion does not delete referenced notebooks.
-  - Historical Data Manager opens maximized.
-  - Pan Anchor is accepted as an off-by-default, horizontal-only, timestamp-center pan synchronization mode across active charts in the same Historical Data Manager.
+  - Notebooks auto-save on close through the Research Suite/store boundary.
+  - Study Environment and Workspace Snapshot load dialogs expose confirmed Delete actions; Workspace Snapshot deletion does not delete referenced notebooks.
+  - Research Suite opens maximized.
+  - Pan Anchor is accepted as an off-by-default, horizontal-only, timestamp-center pan synchronization mode across active charts in the same Research Suite.
 
 - M12 Historical apply/save/recovery hardening is accepted:
   - Historical Download command boundary cleanup moved downloader request/root construction behind CoreBridge while the GUI passes plain intent and observes audit/task state.
@@ -430,7 +430,7 @@ Implemented baseline:
   - Historical Download Manager runs preliminary `HistoricalDatasetValidator` reporting but writes new OHLCV metadata as `validation.status = "unknown"` and `quality.validation_status = "not_validated"`.
   - OHLCV Maintenance is accepted as the explicit validation, repair, source-invalid reporting, source-correction, provenance, and `modified` status workflow.
   - Accepted/loadable OHLCV statuses are `ok` and `modified`; `unknown`, `not_validated`, `warning`, `error`, stale fingerprints, missing/unreadable metadata, metadata mismatch, and missing CSV are blocked.
-  - Historical Data Manager chart creation uses CoreBridge/HistoricalDatasetService loadable catalogs and `HistoricalDatasetService.open_dataset(...)` enforces the final load gate.
+  - Research Suite chart creation uses CoreBridge/HistoricalDatasetService loadable catalogs and `HistoricalDatasetService.open_dataset(...)` enforces the final load gate.
   - Data Manager Patch A added data-layer gates through `evaluate_ohlcv_dataset_loadability(...)`, `require_ohlcv_dataset_loadable(...)`, `format_ohlcv_loadability_error(...)`, `ArtifactCalculationService`, `AnalysisDatabaseStore`, and `ArtifactRecoveryPlanner`.
   - Data Manager Patch B moved selector and OHLCV preview behavior onto CoreBridge/data-layer loadable catalog surfaces, labels modified datasets, and shows OHLCV Maintenance guidance when no validated datasets are available.
 
@@ -463,14 +463,14 @@ Implemented baseline:
   - GUI displays service-produced plan/report data and does not parse `source_ohlcv.snapshot` or classify source drift.
   - Dataset-wide scanning, arbitrary dependency graph inference, background task/progress integration, and broader Update Manager entry points remain future work.
 
-- M17 Historical Study recipe-to-database workflow is accepted:
+- M17 Study Environment recipe-to-database workflow is accepted:
   - Historical saved studies now carry `StudyUserMetadata` with `important`, `description`, and `dataset_role`.
   - Applied historical chart studies expose a visible `Metadata...` action in price overlay rows and oscillator pane headers.
   - Study metadata is semantic/user-facing context only; it does not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth.
-  - Study serialization, Study Setups, and Workspace Snapshots preserve `user_metadata`, with backward-compatible defaults for older payloads.
-  - `StudySetupRecipeExportPlanner` provides read-only Study Setup to recipe export planning with important-only filtering, exportable / conditional / blocked / skipped classification, recipe payload previews, and collection draft previews.
+  - Study serialization, Study Environments, and Workspace Snapshots preserve `user_metadata`, with backward-compatible defaults for older payloads.
+  - `StudySetupRecipeExportPlanner` provides read-only Study Environment to recipe export planning with important-only filtering, exportable / conditional / blocked / skipped classification, recipe payload previews, and collection draft previews.
   - `StudySetupRecipeExportPersistenceService` persists selected/all exportable plan candidates as recipes and optional ordered recipe collections through the recipe stores.
-  - Data Manager exposes `Create Recipes from Study Setup...` for previewing plans, selecting exportable candidates, saving recipes, optionally saving collections, and viewing persistence reports.
+  - Data Manager exposes `Create Recipes from Study Environment...` for previewing plans, selecting exportable candidates, saving recipes, optionally saving collections, and viewing persistence reports.
   - `AnalysisDatasetGeographyPolicy` reports OHLC base, explicit Volume artifact, Braids, Peaks & Troughs, UTC / Universal Trend Classifier, raw OHLCV volume, semantic volume duplication risk, and `dataset_role` mismatch warnings without enforcing geography.
   - `RecipeCollectionDatabasePlanner` resolves only current/up-to-date recipe-collection artifacts into Analysis Database source/column previews and blocks missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market cases.
   - `AnalysisDatabaseStore.save_manifest(...)` now ensures the target manifest directory exists before atomic JSON writes and uses shorter `adb_` / `adf_` atomic temp prefixes.
@@ -478,25 +478,35 @@ Implemented baseline:
   - Data Manager exposes `Create/Extend Database...` in saved recipe collection controls for viewing C2 plans/geography reports and invoking C3 create/extend.
   - Missing/stale artifacts remain handled through the existing `Plan Updates...` workflow; C4 does not run update execution, calculate artifacts, execute recipes, or materialize databases.
 
-- M18 Historical Study preset update workflow is accepted:
-  - Save Study Setup supports Save as new and Update existing modes; Save as new remains the default.
-  - Save Workspace Snapshot supports Save as new and Update existing modes; Save as new remains the default.
+- M18 Study Environment / Workspace Snapshot / Notebook update workflow is accepted:
+  - Study Environment saves support Save as new and Update existing modes; Save as new remains the default.
+  - Workspace Snapshot saves support Save as new and Update existing modes; Save as new remains the default.
   - Update existing requires selecting an existing saved item, preloads name/description, reuses the existing `setup_id` or `snapshot_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and does not create duplicate files.
-  - `ChartStudySetupStore.update_setup(...)` and `HistoricalWorkspaceSnapshotStore.update_snapshot(...)` own update persistence.
+  - `ChartStudySetupStore.update_setup(...)`, `HistoricalWorkspaceSnapshotStore.update_snapshot(...)`, and `HistoricalNotebookStore.update_notebook(...)` own update persistence.
   - Workspace Snapshot update preserves existing `notebook_ref` behavior.
-  - A saved Study Setup / Workspace Snapshot manager and versioned preset history remain future/optional tooling.
+  - Notebook Save as new creates a distinct notebook identity without repointing existing Workspace Snapshot `notebook_ref` values.
+
+- M19 Research Suite RS1-RS4 workflow is accepted:
+  - Research Suite is the user-facing name for the historical chart research/design area; internal names such as `HistoricalDataManagerWindow`, `ChartStudySetup`, `StudySetupRecipeExportPlanner`, schema fields, IDs, and store paths remain stable.
+  - Research Suite artifact save saves or reuses the corresponding reproducible recipe in the Data Manager-visible `ArtifactRecipeStore(historical_root=...)` before artifact persistence continues.
+  - Artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as non-identity recipe metadata.
+  - Applying a study remains chart-local and non-persistent; saving a Study Environment or Workspace Snapshot does not directly save recipes.
+  - `StudyEnvironmentManagerDialog` lists saved Study Environments, shows contained studies, edits top-level details, edits per-study serialized `user_metadata`, and deletes through `ChartStudySetupStore` APIs.
+  - `WorkspaceSnapshotManagerDialog` lists saved Workspace Snapshots, shows saved charts/studies and `notebook_ref`, edits top-level details, and deletes through `HistoricalWorkspaceSnapshotStore` APIs.
+  - Embedded Workspace Snapshot study metadata is read-only in RS4.
+  - No recipe creation, artifact calculation, Workspace Snapshot export, assigned-notebook deletion, or Analysis Database creation is part of those dialogs.
 
 Next direction:
 
 - Treat the current Historical Download Manager M7/M13 behavior as the accepted OHLCV ingestion and preliminary-validation baseline.
 - Treat OHLCV Maintenance as the explicit acceptance workflow for OHLCV validation, repair, source-invalid handling, source correction, and modified status.
-- Treat the current historical chart/study M8 behavior plus M12 apply/save/recovery hardening as the accepted chart-session and artifact-calculation baseline.
-- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates, M14 source OHLCV provenance snapshots, M15 source-drift classification, M16 recipe-collection update workflow, and M17 Study Setup recipe export / recipe-collection draft database workflow as the accepted analysis-database baseline.
+- Treat the current Research Suite chart/study M8 behavior plus M12 chart artifact hardening and M19 artifact-save recipe invariant as the accepted chart-session and artifact-calculation baseline.
+- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates, M14 source OHLCV provenance snapshots, M15 source-drift classification, M16 recipe-collection update workflow, and M17 Study Environment recipe export / recipe-collection draft database workflow as the accepted analysis-database baseline.
 - Integrate GUI release checks into CI/build packaging so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files and preserve Data Manager ownership boundaries.
 - Design broader Data Manager update expansion for dataset-wide, artifact-specific, and database-specific entry points using the existing provenance, recovery, update-plan, regenerator, rebuilder, and store services without moving classification into GUI.
 - Consider background task/progress integration for long update executions, while preserving explicit user confirmation and data-layer ownership.
 - Consider arbitrary dependency graph inference only as a future expansion beyond recipe collection order.
-- Consider adding recipe-hash lineage into saved artifact sidecars in a future migration so recovery can prove exact recipe-hash freshness instead of metadata-level consistency only.
+- Consider deeper recipe freshness enforcement as future work; artifact sidecars already record non-identity recipe metadata from RS1.
 - A partition-level artifact index may later cache summaries for faster listing/search, while sidecars remain the metadata source of truth.
 
 ------------------------------------------------------------
@@ -561,9 +571,11 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
-v0.25: Historical Study metadata action and preset update workflow. Documents visible `Metadata...` actions for applied price overlay rows and oscillator pane headers, plus Save as new / Update existing modes for Study Setups and Workspace Snapshots. Update existing preserves storage IDs through store-owned persistence, preserves Workspace Snapshot `notebook_ref` behavior, and does not create extra saved preset IDs or implement a saved preset manager.
+v0.26: Research Suite RS1-RS4 sync. Documents Research Suite user-facing terminology, artifact save recipe persistence in the Data Manager-visible recipe store, artifact sidecar recipe metadata, Notebook Save as new / Update existing, and saved Study Environment / Workspace Snapshot management dialogs. Embedded Workspace Snapshot study metadata is read-only in RS4. No recipe creation, artifact calculation, or Analysis Database creation is part of those dialogs.
 
-v0.24: Historical Study recipe-to-database workflow. Documents StudyUserMetadata, chart-local Study Metadata editing/persistence, Study Setup to recipe export planning/persistence/UI, diagnostic AnalysisDatasetGeographyPolicy, recipe-collection artifact resolution planning, AnalysisDatabaseStore manifest directory guard and short temp prefixes, RecipeCollectionDatabaseService draft create/extend behavior, and the Data Manager `Create/Extend Database...` UI. Artifact calculation, recipe execution, Plan Updates execution, database materialization, hard geography enforcement, Workspace Snapshot export to recipes, notebook loading, dataset-wide scanning, arbitrary dependency inference, and background update progress remain out of scope.
+v0.25: Historical Study metadata action and preset update workflow. Documents visible `Metadata...` actions for applied price overlay rows and oscillator pane headers, plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. Update existing preserves storage IDs through store-owned persistence, preserves Workspace Snapshot `notebook_ref` behavior, and does not create extra saved preset IDs.
+
+v0.24: Historical Study recipe-to-database workflow. Documents StudyUserMetadata, chart-local Study Metadata editing/persistence, Study Environment to recipe export planning/persistence/UI, diagnostic AnalysisDatasetGeographyPolicy, recipe-collection artifact resolution planning, AnalysisDatabaseStore manifest directory guard and short temp prefixes, RecipeCollectionDatabaseService draft create/extend behavior, and the Data Manager `Create/Extend Database...` UI. Artifact calculation, recipe execution, Plan Updates execution, database materialization, hard geography enforcement, Workspace Snapshot export to recipes, notebook loading, dataset-wide scanning, arbitrary dependency inference, and background update progress remain out of scope.
 
 v0.23: Data Manager recipe-collection update workflow. Documents D1-D4 implementation: read-only update planning, controlled selected/all actionable execution, recipe-collection `Plan Updates...` UI, execution reports, linked Analysis Database rebuild planning/execution through existing services, post-execution refresh, and validation-only D4. Dataset-wide scanning, arbitrary dependency inference, background task/progress integration, and broader Update Manager entry points remain future work.
 
@@ -571,15 +583,15 @@ v0.22: Recovery source-drift classification. Documents Patch C2 implementation: 
 
 v0.21: Data Manager source OHLCV lineage hardening. Documents Patch C implementation: derived artifact sidecars and Analysis Database materialization metadata now record `source_ohlcv.snapshot` with source dataset identity, validation status, fingerprints, capture timestamp, and source-correction provenance. Rebuild refreshes materialization source provenance. Recovery/source-drift classification was added later in v0.22.
 
-v0.20: OHLCV acceptance and loadability sync. Documents Download Manager preliminary validation with default unknown/not_validated metadata, OHLCV Maintenance validation/repair/source-correction workflow, `modified` status, ok/modified loadability policy, Historical Data Manager load gating, Data Manager Patch A/B gates and selector messaging, and the pre-M14 Data Manager source-OHLCV lineage gap.
+v0.20: OHLCV acceptance and loadability sync. Documents Download Manager preliminary validation with default unknown/not_validated metadata, OHLCV Maintenance validation/repair/source-correction workflow, `modified` status, ok/modified loadability policy, Research Suite chart load gating, Data Manager Patch A/B gates and selector messaging, and the pre-M14 Data Manager source-OHLCV lineage gap.
 
 v0.19: Historical apply/save/recovery hardening. Documents Historical Download command-boundary cleanup, TaskManager terminal cleanup, timeline-first runtime projection alignment, sidecar-driven saved-source selection, shared `result_to_save_dataframe(...)` save conversion, shared UTC dependency preparation, and recovery planner UTC dependency-intent parity with read-only join-key blocker checks.
 
 v0.18: Core-boundary repair and exchange-registry baseline. Documents normalized audit event handling, implemented HistoricalDatasetService cache invalidation APIs, downloader post-write dataset-cache invalidation, pyproject runtime dependency truth, and the minimal Core `ExchangeRegistry` capability provider used by CoreBridge and HistoricalDownloader while keeping Bybit as the only default adapter.
 
-v0.17: Historical Notebook / preset delete / Pan Anchor polish. Documents Notebook Manager assignment/delete ownership, Notes/Potential Trades/POI final row layouts, Potential Trades Long/Short runtime markers, annotation offset persistence, notebook auto-save-on-close, confirmed saved Study Setup and Workspace Snapshot deletion, maximized Historical Data Manager opening, and off-by-default Pan Anchor horizontal timestamp-based pan synchronization.
+v0.17: Notebook / preset delete / Pan Anchor polish. Documents Notebook Manager assignment/delete ownership, Notes/Potential Trades/POI final row layouts, Potential Trades Long/Short runtime markers, annotation offset persistence, notebook auto-save-on-close, confirmed saved Study Environment and Workspace Snapshot deletion, maximized Research Suite opening, and off-by-default Pan Anchor horizontal timestamp-based pan synchronization.
 
-v0.16: Historical Notebook and Workspace Snapshot integration. Documents NotebookStore persistence, Notes menu actions, Save/Load/Assign Notebook workflows, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level Go To buttons, runtime POI chart markers, and the Open Notebook quick action. Study Setup remains notebook-free and POI markers remain runtime chart annotations rather than hidden studies.
+v0.16: Notebook and Workspace Snapshot integration. Documents NotebookStore persistence, Notes menu actions, save/load/assign Notebook workflows, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level Go To buttons, runtime POI chart markers, and the Open Notebook quick action. Study Environments remain notebook-free and POI markers remain runtime chart annotations rather than hidden studies.
 
 v0.15: Oscillator styling, ARSI upgrade, and historical workspace compact layout. Documents Volume histogram/mean behavior, threshold-aware oscillator segment splitting, dynamic oscillator default-style resolution, Ultimate RSI-style ARSI with orange signal/mean line and 80/50/20 guides, compact chart workspace spacing, Window-menu view mode controls, and current-mode menu-bar label.
 

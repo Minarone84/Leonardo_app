@@ -1518,6 +1518,12 @@ class HistoricalDataManagerWindow(QMainWindow):
                 + format_compatibility_report(compatibility_report),
             )
 
+        if snapshot.notebook_ref and not self._confirm_dirty_notebook_action(
+            action_label="loading the assigned notebook"
+        ):
+            self._set_status("Workspace snapshot load cancelled")
+            return
+
         try:
             workspace.load_workspace_snapshot_charts(charts, mode=load_mode)
             workspace.set_visualization_mode(
@@ -1539,7 +1545,10 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         self._sync_view_mode_controls()
         self._set_current_workspace_notebook_ref(snapshot.notebook_ref)
-        notebook_notice = self._open_notebook_ref_from_snapshot(snapshot.notebook_ref)
+        notebook_notice = self._open_notebook_ref_from_snapshot(
+            snapshot.notebook_ref,
+            confirm_dirty=False,
+        )
         self._set_status(
             f"Loading workspace snapshot '{snapshot.display_name}' "
             f"({len(charts)} chart(s))"
@@ -1709,12 +1718,19 @@ class HistoricalDataManagerWindow(QMainWindow):
     def _on_create_notebook(self) -> None:
         """Open the historical notebook editor and bind current workspace charts."""
         notebook_window = self._ensure_notebook_window()
+        if not self._confirm_dirty_notebook_action(
+            action_label="creating a new notebook"
+        ):
+            self._set_status("Create new notebook cancelled")
+            return
+
         previous_marker_id = notebook_window.notebook_id()
         if previous_marker_id:
             self._clear_notebook_poi_markers(previous_marker_id)
         notebook_window.reset_notebook(status="New notebook ready.")
 
         self._refresh_notebook_from_workspace()
+        notebook_window.mark_clean()
         notebook_window.show()
         notebook_window.raise_()
         notebook_window.activateWindow()
@@ -1912,7 +1928,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         return notebooks
 
     def _on_notebook_close_save_requested(self, event: object) -> None:
-        if self._on_save_notebook(show_success_message=False):
+        if self._confirm_dirty_notebook_action(action_label="closing the notebook"):
             accept = getattr(event, "accept", None)
             if callable(accept):
                 accept()
@@ -1952,13 +1968,46 @@ class HistoricalDataManagerWindow(QMainWindow):
         index = labels.index(selected)
         self._open_notebook_by_id(summaries[index].notebook_id, title="Load Notebook")
 
+    def _confirm_dirty_notebook_action(self, *, action_label: str) -> bool:
+        notebook_window = self._notebook_window
+        if notebook_window is None or not notebook_window.is_dirty():
+            return True
+
+        dialog = QMessageBox(self)
+        dialog.setIcon(QMessageBox.Warning)
+        dialog.setWindowTitle("Unsaved Notebook Changes")
+        dialog.setText("This notebook has unsaved changes.")
+        dialog.setInformativeText(f"Save changes before {action_label}?")
+        save_button = dialog.addButton("Save", QMessageBox.AcceptRole)
+        discard_button = dialog.addButton("Don't Save", QMessageBox.DestructiveRole)
+        cancel_button = dialog.addButton("Cancel", QMessageBox.RejectRole)
+        dialog.setDefaultButton(save_button)
+        dialog.exec()
+
+        clicked = dialog.clickedButton()
+        if clicked is save_button:
+            return self._on_save_notebook(show_success_message=False)
+        if clicked is discard_button:
+            notebook_window.mark_clean()
+            return True
+        if clicked is cancel_button:
+            return False
+        return False
+
     def _open_notebook_by_id(
         self,
         notebook_id: str,
         *,
         title: str,
         assigned_snapshot_label: str | None = None,
+        confirm_dirty: bool = True,
     ) -> bool:
+        if confirm_dirty and not self._confirm_dirty_notebook_action(
+            action_label="opening another notebook"
+        ):
+            self._set_status("Notebook open cancelled")
+            return False
+
         try:
             notebook = self._notebook_store().load_notebook(notebook_id)
         except Exception as exc:
@@ -1975,6 +2024,7 @@ class HistoricalDataManagerWindow(QMainWindow):
             assigned_snapshot_label=assigned_snapshot_label,
         )
         self._refresh_notebook_from_workspace()
+        notebook_window.mark_clean()
         notebook_window.show()
         notebook_window.raise_()
         notebook_window.activateWindow()
@@ -2087,6 +2137,8 @@ class HistoricalDataManagerWindow(QMainWindow):
     def _open_notebook_ref_from_snapshot(
         self,
         notebook_ref: Mapping[str, Any] | None,
+        *,
+        confirm_dirty: bool = True,
     ) -> str:
         if not isinstance(notebook_ref, Mapping):
             return ""
@@ -2094,6 +2146,11 @@ class HistoricalDataManagerWindow(QMainWindow):
         notebook_id = str(notebook_ref.get("notebook_id", "") or "").strip()
         if not notebook_id:
             return ""
+
+        if confirm_dirty and not self._confirm_dirty_notebook_action(
+            action_label="opening the assigned notebook"
+        ):
+            return "Assigned notebook open cancelled."
 
         try:
             notebook = self._notebook_store().load_notebook(notebook_id)
@@ -2106,6 +2163,7 @@ class HistoricalDataManagerWindow(QMainWindow):
             assigned_snapshot_label=str(notebook_ref.get("display_name", "") or ""),
         )
         self._refresh_notebook_from_workspace()
+        notebook_window.mark_clean()
         notebook_window.show()
         notebook_window.raise_()
         notebook_window.activateWindow()

@@ -273,7 +273,9 @@ def test_workspace_snapshot_load_and_notebook_manager_paths_use_notebook_ref() -
     delete_body = _function_source(MANAGER, "_on_delete_clicked")
     open_body = _function_source(HDM, "_open_notebook_ref_from_snapshot")
 
-    assert "_open_notebook_ref_from_snapshot(snapshot.notebook_ref)" in load_body
+    assert "_open_notebook_ref_from_snapshot(" in load_body
+    assert "snapshot.notebook_ref" in load_body
+    assert "confirm_dirty=False" in load_body
     assert "HistoricalNotebookManagerDialog" in manager_source
     assert "workspace_snapshot_store=self._workspace_snapshot_store()" in manager_body
     assert "dialog.notebook_deleted.connect(self._on_notebook_deleted)" in manager_body

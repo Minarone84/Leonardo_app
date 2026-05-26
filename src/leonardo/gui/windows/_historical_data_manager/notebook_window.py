@@ -102,6 +102,8 @@ class HistoricalNotebookWindow(QMainWindow):
         self._syncing_from_tables = False
         self._suppress_notebook_change_signals = False
         self._suppress_next_close_autosave = False
+        self._suppress_dirty = False
+        self._dirty = False
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -122,6 +124,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self._name_edit.setObjectName("historicalNotebookNameEdit")
         self._name_edit.setPlaceholderText("Untitled notebook")
         self._name_edit.setText("Untitled notebook")
+        self._name_edit.textChanged.connect(lambda *_args: self.mark_dirty())
         header_row.addWidget(self._name_edit, 2)
 
         self._assigned_snapshot_label = QLabel("Assigned snapshot: Not assigned", root)
@@ -159,6 +162,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self._description_edit.setObjectName("historicalNotebookDescriptionEdit")
         self._description_edit.setPlaceholderText("Notebook description")
         self._description_edit.setFixedHeight(58)
+        self._description_edit.textChanged.connect(lambda: self.mark_dirty())
         layout.addWidget(self._description_edit)
 
         tools_row = QHBoxLayout()
@@ -244,6 +248,20 @@ class HistoricalNotebookWindow(QMainWindow):
     def notebook_id(self) -> str | None:
         return self._notebook_id
 
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def set_dirty(self, value: bool) -> None:
+        self._dirty = bool(value)
+
+    def mark_dirty(self) -> None:
+        if self._suppress_dirty or self._updating_tables:
+            return
+        self.set_dirty(True)
+
+    def mark_clean(self) -> None:
+        self.set_dirty(False)
+
     def display_name(self) -> str:
         return str(self._name_edit.text() or "").strip() or "Untitled notebook"
 
@@ -255,13 +273,7 @@ class HistoricalNotebookWindow(QMainWindow):
 
     def chart_entries_payload(self) -> list[dict[str, Any]]:
         self._sync_all_entries_from_tables()
-        return [
-            normalize_notebook_chart_entry(entry)
-            for _, entry in sorted(
-                self._chart_entries_by_key.items(),
-                key=lambda item: self._entry_sort_key(item[1]),
-            )
-        ]
+        return self._normalized_chart_entries_snapshot()
 
     def current_notebook(self) -> HistoricalNotebook:
         now_ms = int(time.time() * 1000)
@@ -287,32 +299,42 @@ class HistoricalNotebookWindow(QMainWindow):
         assigned_snapshot_label: str | None = None,
     ) -> None:
         """Replace in-memory editor state with a loaded notebook payload."""
-        self._notebook_id = notebook.notebook_id
-        self._created_at_ms = notebook.created_at_ms
-        self._updated_at_ms = notebook.updated_at_ms
-        self._name_edit.setText(notebook.display_name)
-        self._description_edit.setPlainText(notebook.description)
-        self._set_annotation_settings(notebook.annotation_settings)
+        self._suppress_dirty = True
+        try:
+            self._notebook_id = notebook.notebook_id
+            self._created_at_ms = notebook.created_at_ms
+            self._updated_at_ms = notebook.updated_at_ms
+            self._name_edit.setText(notebook.display_name)
+            self._description_edit.setPlainText(notebook.description)
+            self._set_annotation_settings(notebook.annotation_settings)
 
-        entries: dict[str, dict[str, Any]] = {}
-        for raw_entry in notebook.chart_entries:
-            entry = normalize_notebook_chart_entry(raw_entry)
-            entries[str(entry["chart_key"])] = entry
-        self._chart_entries_by_key = entries
+            entries: dict[str, dict[str, Any]] = {}
+            for raw_entry in notebook.chart_entries:
+                entry = normalize_notebook_chart_entry(raw_entry)
+                entries[str(entry["chart_key"])] = entry
+            self._chart_entries_by_key = entries
 
-        self.set_assigned_snapshot_label(assigned_snapshot_label)
+            self.set_assigned_snapshot_label(assigned_snapshot_label)
 
-        self._rebuild_chart_tabs()
-        self._update_status()
+            self._rebuild_chart_tabs()
+            self._update_status()
+        finally:
+            self._suppress_dirty = False
+        self.mark_clean()
 
     def mark_saved(self, notebook: HistoricalNotebook) -> None:
-        self._notebook_id = notebook.notebook_id
-        self._created_at_ms = notebook.created_at_ms
-        self._updated_at_ms = notebook.updated_at_ms
-        self._name_edit.setText(notebook.display_name)
-        self._description_edit.setPlainText(notebook.description)
-        self._set_annotation_settings(notebook.annotation_settings)
-        self._update_status(prefix=f"Saved notebook: {notebook.display_name}.")
+        self._suppress_dirty = True
+        try:
+            self._notebook_id = notebook.notebook_id
+            self._created_at_ms = notebook.created_at_ms
+            self._updated_at_ms = notebook.updated_at_ms
+            self._name_edit.setText(notebook.display_name)
+            self._description_edit.setPlainText(notebook.description)
+            self._set_annotation_settings(notebook.annotation_settings)
+            self._update_status(prefix=f"Saved notebook: {notebook.display_name}.")
+        finally:
+            self._suppress_dirty = False
+        self.mark_clean()
 
     def reset_notebook(
         self,
@@ -321,20 +343,25 @@ class HistoricalNotebookWindow(QMainWindow):
         suppress_next_close_autosave: bool = False,
     ) -> None:
         """Clear editor state so the next save creates a new notebook identity."""
-        self._notebook_id = None
-        self._created_at_ms = None
-        self._updated_at_ms = None
-        self._suppress_next_close_autosave = bool(suppress_next_close_autosave)
-        self._chart_entries_by_key.clear()
-        self._active_chart_keys.clear()
-        self._chart_tab_labels.clear()
-        self._tables_by_chart_key.clear()
-        self._name_edit.setText("Untitled notebook")
-        self._description_edit.clear()
-        self._set_annotation_settings(None)
-        self.set_assigned_snapshot_label(None)
-        self._rebuild_chart_tabs()
-        self._status_label.setText(status)
+        self._suppress_dirty = True
+        try:
+            self._notebook_id = None
+            self._created_at_ms = None
+            self._updated_at_ms = None
+            self._suppress_next_close_autosave = bool(suppress_next_close_autosave)
+            self._chart_entries_by_key.clear()
+            self._active_chart_keys.clear()
+            self._chart_tab_labels.clear()
+            self._tables_by_chart_key.clear()
+            self._name_edit.setText("Untitled notebook")
+            self._description_edit.clear()
+            self._set_annotation_settings(None)
+            self.set_assigned_snapshot_label(None)
+            self._rebuild_chart_tabs()
+            self._status_label.setText(status)
+        finally:
+            self._suppress_dirty = False
+        self.mark_clean()
 
     def set_assigned_snapshot_label(self, label: str | None) -> None:
         resolved = str(label or "").strip()
@@ -363,6 +390,7 @@ class HistoricalNotebookWindow(QMainWindow):
         display metadata only and is stored as last_seen_position.
         """
         self._sync_all_entries_from_tables()
+        before = self._normalized_chart_entries_snapshot()
         active_keys: set[str] = set()
 
         for raw_option in chart_options:
@@ -388,6 +416,8 @@ class HistoricalNotebookWindow(QMainWindow):
         self._active_chart_keys = active_keys
         self._rebuild_chart_tabs()
         self._update_status()
+        if before != self._normalized_chart_entries_snapshot():
+            self.mark_dirty()
 
     def poi_markers_enabled(self) -> bool:
         return bool(self._show_poi_markers_check.isChecked())
@@ -674,6 +704,7 @@ class HistoricalNotebookWindow(QMainWindow):
             payload.update({"title": "", "description": ""})
         self._append_row_payload(table, section, payload)
         self._sync_entry_from_table(table)
+        self.mark_dirty()
 
     def _append_row_payload(
         self,
@@ -789,13 +820,20 @@ class HistoricalNotebookWindow(QMainWindow):
         combo.addItems(list(choices))
         if value in choices:
             combo.setCurrentText(value)
-        combo.currentTextChanged.connect(lambda _text, table=table: self._sync_entry_from_table(table))
+        combo.currentTextChanged.connect(lambda _text, table=table: self._on_combo_cell_changed(table))
         table.setCellWidget(row, column, combo)
 
     def _on_table_item_changed(self, table: QTableWidget, _item: QTableWidgetItem) -> None:
         if self._updating_tables:
             return
         self._sync_entry_from_table(table)
+        self.mark_dirty()
+
+    def _on_combo_cell_changed(self, table: QTableWidget) -> None:
+        if self._updating_tables:
+            return
+        self._sync_entry_from_table(table)
+        self.mark_dirty()
 
     def _sync_entry_from_table(self, table: QTableWidget) -> None:
         if self._updating_tables:
@@ -936,6 +974,7 @@ class HistoricalNotebookWindow(QMainWindow):
 
         table.removeRow(row)
         self._sync_entry_from_table(table)
+        self.mark_dirty()
         self._status_label.setText(f"Deleted {self._row_label_for_section(section)}.")
 
     def _confirm_row_delete(self, section: str) -> bool:
@@ -1003,6 +1042,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self._chart_tabs.removeTab(index)
         self._refresh_tab_indexes()
         self._emit_poi_markers_changed()
+        self.mark_dirty()
         self._update_status()
 
     def _on_poi_overlay_toggled(self, checked: bool) -> None:
@@ -1010,6 +1050,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self._emit_poi_markers_changed()
 
     def _on_annotation_offset_changed(self, _value: int) -> None:
+        self.mark_dirty()
         self._emit_poi_markers_changed()
 
     def _emit_poi_markers_changed(self) -> None:
@@ -1088,6 +1129,15 @@ class HistoricalNotebookWindow(QMainWindow):
         except (TypeError, ValueError):
             position = 9999
         return (position, str(entry.get("chart_key", "") or ""))
+
+    def _normalized_chart_entries_snapshot(self) -> list[dict[str, Any]]:
+        return [
+            normalize_notebook_chart_entry(entry)
+            for _, entry in sorted(
+                self._chart_entries_by_key.items(),
+                key=lambda item: self._entry_sort_key(item[1]),
+            )
+        ]
 
     def _parse_date_text_to_ts_ms(self, text: str) -> int | None:
         value = str(text or "").strip()

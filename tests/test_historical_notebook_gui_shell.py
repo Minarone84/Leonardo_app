@@ -69,9 +69,11 @@ def test_create_new_notebook_clears_loaded_identity_before_refresh() -> None:
     ]
 
     assert "previous_marker_id = notebook_window.notebook_id()" in create_body
+    assert 'action_label="creating a new notebook"' in create_body
     assert "_clear_notebook_poi_markers(previous_marker_id)" in create_body
     assert 'notebook_window.reset_notebook(status="New notebook ready.")' in create_body
     assert "self._refresh_notebook_from_workspace()" in create_body
+    assert "notebook_window.mark_clean()" in create_body
 
 
 def test_save_notebook_dialog_exposes_new_and_update_modes() -> None:
@@ -131,7 +133,9 @@ def test_notebook_window_close_requests_data_manager_save_without_store_ownershi
     assert "self.close_save_requested.emit(event)" in close_body
     assert "event.isAccepted()" in close_body
     assert "_on_notebook_close_save_requested" in manager_source
-    assert "_on_save_notebook(show_success_message=False)" in manager_source
+    assert "_confirm_dirty_notebook_action" in manager_source
+    assert 'action_label="closing the notebook"' in manager_source
+    assert '"Don\'t Save"' in manager_source
     assert "HistoricalNotebookStore" not in notebook_source
 
 

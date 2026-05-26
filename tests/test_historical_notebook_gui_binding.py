@@ -4,6 +4,7 @@ import ast
 from datetime import datetime, timezone
 import os
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -18,6 +19,10 @@ from leonardo.data.chart_presets.notebook_store import (
 )
 from leonardo.gui.windows._historical_data_manager.notebook_window import (
     HistoricalNotebookWindow,
+)
+import leonardo.gui.windows.historical_data_manager_window as hdm_module
+from leonardo.gui.windows.historical_data_manager_window import (
+    HistoricalDataManagerWindow,
 )
 from PySide6.QtWidgets import QApplication, QComboBox, QToolButton
 
@@ -507,6 +512,249 @@ def test_annotation_offset_controls_are_notebook_state() -> None:
         }
     finally:
         window.close()
+
+
+def test_notebook_window_tracks_dirty_state_for_editor_changes() -> None:
+    _qapp()
+    dataset = {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m",
+    }
+    chart_key = notebook_chart_key(dataset)
+    window = HistoricalNotebookWindow()
+    try:
+        assert window.is_dirty() is False
+
+        window._name_edit.setText("Edited notebook")
+        assert window.is_dirty() is True
+        window.mark_clean()
+
+        window._description_edit.setPlainText("Edited description")
+        assert window.is_dirty() is True
+        window.mark_clean()
+
+        window.refresh_from_chart_options(
+            [
+                {
+                    "position": 1,
+                    "label": "Position 1: bybit / linear / BTCUSDT / 30m",
+                    "dataset": dataset,
+                }
+            ]
+        )
+        assert window.is_dirty() is True
+        window.mark_clean()
+
+        notes_table = window._tables_by_chart_key[chart_key]["notes"]
+        window._append_empty_row(notes_table)
+        assert window.is_dirty() is True
+        window.mark_clean()
+
+        note_item = notes_table.item(0, 2)
+        assert note_item is not None
+        note_item.setText("Tracked note")
+        assert window.is_dirty() is True
+        window.mark_clean()
+
+        trades_table = window._tables_by_chart_key[chart_key]["trades"]
+        window._append_empty_row(trades_table)
+        window.mark_clean()
+        direction_combo = trades_table.cellWidget(0, 3)
+        assert isinstance(direction_combo, QComboBox)
+        direction_combo.setCurrentText("Long")
+        assert window.is_dirty() is True
+        window.mark_clean()
+
+        window._poi_marker_offset_spin.setValue(DEFAULT_POI_MARKER_OFFSET + 1)
+        assert window.is_dirty() is True
+        window.mark_clean()
+
+        window._confirm_row_delete = lambda _section: True
+        delete_button = notes_table.cellWidget(0, 0)
+        assert isinstance(delete_button, QToolButton)
+        delete_button.click()
+        assert window.is_dirty() is True
+    finally:
+        window.close()
+
+
+def test_notebook_window_clean_states_after_load_save_and_reset() -> None:
+    _qapp()
+    dataset = {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m",
+    }
+    chart_key = notebook_chart_key(dataset)
+    notebook = HistoricalNotebook(
+        schema_version=HISTORICAL_NOTEBOOK_SCHEMA_VERSION,
+        object_type=HISTORICAL_NOTEBOOK_OBJECT_TYPE,
+        notebook_id="clean_state_notebook",
+        content_hash="",
+        display_name="Clean State",
+        description="Loaded description",
+        created_at_ms=1000,
+        updated_at_ms=2000,
+        annotation_settings={
+            "poi_marker_offset": 42,
+            "pt_long_marker_offset": 84,
+            "pt_short_marker_offset": 21,
+        },
+        chart_entries=(
+            {
+                "chart_key": chart_key,
+                "dataset": dataset,
+                "last_seen_position": 1,
+                "notes": [{"row_id": "note_1", "date_text": "", "ts_ms": None, "note": "Loaded"}],
+                "trades": [],
+                "points_of_interest": [],
+            },
+        ),
+    )
+    window = HistoricalNotebookWindow()
+    try:
+        window.set_notebook(notebook)
+        assert window.is_dirty() is False
+
+        window._name_edit.setText("Dirty")
+        assert window.is_dirty() is True
+        window.mark_saved(notebook)
+        assert window.is_dirty() is False
+
+        window._description_edit.setPlainText("Dirty again")
+        assert window.is_dirty() is True
+        window.reset_notebook(status="New notebook ready.")
+        assert window.is_dirty() is False
+    finally:
+        window.close()
+
+
+class _FakeDirtyNotebook:
+    def __init__(self, dirty: bool = True) -> None:
+        self._dirty = dirty
+        self.cleaned = False
+
+    def is_dirty(self) -> bool:
+        return self._dirty
+
+    def mark_clean(self) -> None:
+        self.cleaned = True
+        self._dirty = False
+
+
+class _FakeMessageBox:
+    Warning = object()
+    AcceptRole = object()
+    DestructiveRole = object()
+    RejectRole = object()
+
+    clicked_label = "Cancel"
+    last: "_FakeMessageBox | None" = None
+
+    def __init__(self, _parent) -> None:
+        self.buttons: dict[str, object] = {}
+        self.labels: list[str] = []
+        self.informative_text = ""
+        _FakeMessageBox.last = self
+
+    def setIcon(self, _icon) -> None:
+        return None
+
+    def setWindowTitle(self, _title: str) -> None:
+        return None
+
+    def setText(self, _text: str) -> None:
+        return None
+
+    def setInformativeText(self, text: str) -> None:
+        self.informative_text = text
+
+    def addButton(self, label: str, _role) -> object:
+        button = object()
+        self.buttons[label] = button
+        self.labels.append(label)
+        return button
+
+    def setDefaultButton(self, _button) -> None:
+        return None
+
+    def exec(self) -> int:
+        return 0
+
+    def clickedButton(self) -> object | None:
+        return self.buttons.get(type(self).clicked_label)
+
+
+def test_dirty_notebook_confirmation_save_discard_and_cancel(monkeypatch) -> None:
+    monkeypatch.setattr(hdm_module, "QMessageBox", _FakeMessageBox)
+
+    saves: list[bool] = []
+    notebook = _FakeDirtyNotebook()
+    fake_self = SimpleNamespace(
+        _notebook_window=notebook,
+        _on_save_notebook=lambda *, show_success_message=True: saves.append(
+            bool(show_success_message)
+        )
+        or True,
+    )
+
+    _FakeMessageBox.clicked_label = "Save"
+    assert HistoricalDataManagerWindow._confirm_dirty_notebook_action(
+        fake_self,
+        action_label="closing the notebook",
+    ) is True
+    assert saves == [False]
+    assert _FakeMessageBox.last is not None
+    assert _FakeMessageBox.last.labels == ["Save", "Don't Save", "Cancel"]
+    assert "closing the notebook" in _FakeMessageBox.last.informative_text
+
+    saves.clear()
+    notebook = _FakeDirtyNotebook()
+    fake_self = SimpleNamespace(
+        _notebook_window=notebook,
+        _on_save_notebook=lambda *, show_success_message=True: saves.append(
+            bool(show_success_message)
+        )
+        or True,
+    )
+    _FakeMessageBox.clicked_label = "Don't Save"
+    assert HistoricalDataManagerWindow._confirm_dirty_notebook_action(
+        fake_self,
+        action_label="opening another notebook",
+    ) is True
+    assert saves == []
+    assert notebook.cleaned is True
+
+    notebook = _FakeDirtyNotebook()
+    fake_self = SimpleNamespace(
+        _notebook_window=notebook,
+        _on_save_notebook=lambda *, show_success_message=True: True,
+    )
+    _FakeMessageBox.clicked_label = "Cancel"
+    assert HistoricalDataManagerWindow._confirm_dirty_notebook_action(
+        fake_self,
+        action_label="creating a new notebook",
+    ) is False
+    assert notebook.cleaned is False
+
+
+def test_dirty_notebook_confirmation_save_failure_aborts(monkeypatch) -> None:
+    monkeypatch.setattr(hdm_module, "QMessageBox", _FakeMessageBox)
+    notebook = _FakeDirtyNotebook()
+    fake_self = SimpleNamespace(
+        _notebook_window=notebook,
+        _on_save_notebook=lambda *, show_success_message=True: False,
+    )
+
+    _FakeMessageBox.clicked_label = "Save"
+    assert HistoricalDataManagerWindow._confirm_dirty_notebook_action(
+        fake_self,
+        action_label="closing the notebook",
+    ) is False
+    assert notebook.cleaned is False
 
 
 def test_row_delete_buttons_confirm_and_delete_selected_row() -> None:

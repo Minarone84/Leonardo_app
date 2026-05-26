@@ -61,6 +61,12 @@ from leonardo.gui.windows._historical_data_manager.notebook_dialogs import (
 from leonardo.gui.windows._historical_data_manager.notebook_manager_dialog import (
     HistoricalNotebookManagerDialog,
 )
+from leonardo.gui.windows._historical_data_manager.study_environment_manager_dialog import (
+    StudyEnvironmentManagerDialog,
+)
+from leonardo.gui.windows._historical_data_manager.workspace_snapshot_manager_dialog import (
+    WorkspaceSnapshotManagerDialog,
+)
 from leonardo.gui.windows.historical_workspace_widget import HistoricalWorkspaceWidget
 
 
@@ -732,6 +738,19 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._action_load_study_setup = action_load_study_setup
         menu_file.addAction(action_load_study_setup)
 
+        action_manage_study_environments = QAction("Manage Study Environments...", self)
+        action_manage_study_environments.setToolTip(
+            "Inspect, rename, annotate, or delete saved Study Environments."
+        )
+        action_manage_study_environments.setStatusTip(
+            "Inspect, rename, annotate, or delete saved Study Environments."
+        )
+        action_manage_study_environments.triggered.connect(
+            self._on_manage_study_environments
+        )
+        self._action_manage_study_environments = action_manage_study_environments
+        menu_file.addAction(action_manage_study_environments)
+
         menu_file.addSeparator()
 
         action_save_workspace_snapshot = QAction("Save Workspace Snapshot...", self)
@@ -755,6 +774,19 @@ class HistoricalDataManagerWindow(QMainWindow):
         action_load_workspace_snapshot.triggered.connect(self._on_load_workspace_snapshot)
         self._action_load_workspace_snapshot = action_load_workspace_snapshot
         menu_file.addAction(action_load_workspace_snapshot)
+
+        action_manage_workspace_snapshots = QAction("Manage Workspace Snapshots...", self)
+        action_manage_workspace_snapshots.setToolTip(
+            "Inspect, rename, or delete saved Workspace Snapshots."
+        )
+        action_manage_workspace_snapshots.setStatusTip(
+            "Inspect, rename, or delete saved Workspace Snapshots."
+        )
+        action_manage_workspace_snapshots.triggered.connect(
+            self._on_manage_workspace_snapshots
+        )
+        self._action_manage_workspace_snapshots = action_manage_workspace_snapshots
+        menu_file.addAction(action_manage_workspace_snapshots)
 
         menu_file.addSeparator()
 
@@ -1185,6 +1217,20 @@ class HistoricalDataManagerWindow(QMainWindow):
 
     def _notebook_store(self) -> HistoricalNotebookStore:
         return HistoricalNotebookStore(self._notebook_store_root())
+
+    def _on_manage_study_environments(self) -> None:
+        dialog = StudyEnvironmentManagerDialog(
+            store=self._chart_study_setup_store(),
+            parent=self,
+        )
+        dialog.exec()
+
+    def _on_manage_workspace_snapshots(self) -> None:
+        dialog = WorkspaceSnapshotManagerDialog(
+            store=self._workspace_snapshot_store(),
+            parent=self,
+        )
+        dialog.exec()
 
     def _chart_options(self) -> list[dict[str, Any]]:
         workspace = self._workspace_widget

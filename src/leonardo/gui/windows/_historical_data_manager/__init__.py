@@ -17,6 +17,12 @@ from leonardo.gui.windows._historical_data_manager.notebook_dialogs import (
 from leonardo.gui.windows._historical_data_manager.notebook_manager_dialog import (
     HistoricalNotebookManagerDialog,
 )
+from leonardo.gui.windows._historical_data_manager.study_environment_manager_dialog import (
+    StudyEnvironmentManagerDialog,
+)
+from leonardo.gui.windows._historical_data_manager.workspace_snapshot_manager_dialog import (
+    WorkspaceSnapshotManagerDialog,
+)
 from leonardo.gui.windows._historical_data_manager.preset_compatibility import (
     PRESET_STATUS_BROKEN,
     PRESET_STATUS_READY,
@@ -41,6 +47,8 @@ __all__ = [
     "SaveNotebookDialog",
     "SaveStudySetupDialog",
     "SaveWorkspaceSnapshotDialog",
+    "StudyEnvironmentManagerDialog",
+    "WorkspaceSnapshotManagerDialog",
     "evaluate_study_setup_compatibility",
     "evaluate_workspace_snapshot_compatibility",
     "format_compatibility_report",

@@ -136,6 +136,27 @@ class HistoricalChartController(
         except Exception:
             pass
 
+    def current_input_bar_count(self) -> Optional[int]:
+        """
+        Return the full input row count known for the active chart session.
+
+        Apply preflight needs an informational count without forcing tool
+        calculation or full-dataset loading. The controller session already
+        owns canonical dataset length when the chart open path has completed.
+        """
+        if self._is_disposed:
+            return None
+
+        count = self._session.dataset_count
+        if count is not None:
+            return max(0, int(count))
+
+        cached_df = self._session.full_dataset_df
+        if cached_df is not None:
+            return int(len(cached_df))
+
+        return None
+
     def dispose(self) -> None:
         """Stop this controller from applying any further async results.
 

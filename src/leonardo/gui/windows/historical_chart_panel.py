@@ -101,6 +101,7 @@ class HistoricalChartPanel(
 
         self._is_floating: bool = False
         self._financial_tools_manager_window: Optional[FinancialToolsManagerWindow] = None
+        self._active_apply_progress_dialog: Optional[Any] = None
         self._study_registry = ChartStudyRegistry()
         self._study_projection_key_by_instance_id: Dict[str, str] = {}
 

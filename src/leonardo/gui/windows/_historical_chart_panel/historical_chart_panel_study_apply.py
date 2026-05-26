@@ -4,9 +4,9 @@ import uuid
 from collections.abc import Mapping
 from typing import Any, Dict, List, Optional, Sequence
 
+from PySide6.QtWidgets import QApplication
+
 from leonardo.gui.chart.model import Series
-
-
 from leonardo.gui.chart.studies import (
     ChartStudyInstance,
     ChartStudyRuntimeState,
@@ -17,6 +17,9 @@ from leonardo.gui.chart.studies import (
     STUDY_FAMILY_OSCILLATOR,
     STUDY_SOURCE_TEMPORARY,
     StudyComputationConfig,
+)
+from leonardo.gui.windows._historical_chart_panel.apply_progress_dialog import (
+    FinancialToolApplyProgressDialog,
 )
 
 def _coerce_values_list(raw: object) -> Sequence[float]:
@@ -294,12 +297,141 @@ class HistoricalChartPanelStudyApplyMixin:
 
         self._on_error("Oscillator pane move down is not available on the current workspace.")
 
-    def _on_financial_tools_apply_requested(self, payload: dict) -> None:
+    def _financial_tool_apply_title(self, payload: dict) -> str:
+        title = str(payload.get("tool_title", "") or "").strip()
+        if title:
+            return title
+
+        tool_key = str(payload.get("tool_key", "") or "").strip()
+        return tool_key or "Selected study"
+
+    def _financial_tool_apply_dataset_label(self) -> str:
+        dataset_title = getattr(self, "dataset_title", None)
+        if callable(dataset_title):
+            try:
+                label = str(dataset_title()).strip()
+                if label:
+                    return label
+            except Exception:
+                pass
+
+        dataset_key = getattr(self, "dataset_key", None)
+        if callable(dataset_key):
+            try:
+                label = str(dataset_key()).strip()
+                if label:
+                    return label
+            except Exception:
+                pass
+
+        return "Current chart"
+
+    def _financial_tool_apply_input_bar_count(self) -> Optional[int]:
+        controller = getattr(self, "_controller", None)
+        if controller is None:
+            return None
+
+        count_provider = getattr(controller, "current_input_bar_count", None)
+        if not callable(count_provider):
+            return None
+
         try:
+            count = count_provider()
+        except Exception:
+            return None
+
+        if count is None:
+            return None
+
+        try:
+            return max(0, int(count))
+        except Exception:
+            return None
+
+    def _make_financial_tool_apply_dialog(
+        self,
+        payload: dict,
+    ) -> FinancialToolApplyProgressDialog:
+        return FinancialToolApplyProgressDialog(
+            tool_title=self._financial_tool_apply_title(payload),
+            dataset_label=self._financial_tool_apply_dataset_label(),
+            input_bar_count=self._financial_tool_apply_input_bar_count(),
+            parent=self,
+        )
+
+    def _execute_financial_tool_apply_with_dialog(
+        self,
+        payload: dict,
+        dialog: FinancialToolApplyProgressDialog,
+    ) -> None:
+        state = {"succeeded": False, "error": ""}
+
+        def _mark_success(_payload: dict) -> None:
+            state["succeeded"] = True
+
+        def _mark_error(message: str) -> None:
+            state["error"] = str(message)
+
+        success_signal = getattr(self._controller, "apply_succeeded", None)
+        error_signal = getattr(self._controller, "error", None)
+
+        try:
+            if success_signal is not None:
+                success_signal.connect(_mark_success)
+            if error_signal is not None:
+                error_signal.connect(_mark_error)
+
             self._controller.apply_financial_tool(payload)
         except Exception as e:
             self._editing_study_instance_id = None
-            self._on_error(f"Financial tool apply failed: {e!r}")
+            state["error"] = f"Financial tool apply failed: {e!r}"
+            self._on_error(state["error"])
+        finally:
+            if success_signal is not None:
+                try:
+                    success_signal.disconnect(_mark_success)
+                except Exception:
+                    pass
+            if error_signal is not None:
+                try:
+                    error_signal.disconnect(_mark_error)
+                except Exception:
+                    pass
+
+        if state["succeeded"] and not state["error"]:
+            dialog.mark_success(f"Applied {self._financial_tool_apply_title(payload)}.")
+            return
+
+        dialog.mark_failure(state["error"] or "Financial tool apply did not report success.")
+
+    def _on_financial_tools_apply_requested(self, payload: dict) -> None:
+        dialog = self._make_financial_tool_apply_dialog(payload)
+        self._active_apply_progress_dialog = dialog
+
+        apply_started = False
+
+        def _start_apply() -> None:
+            nonlocal apply_started
+            if apply_started:
+                return
+
+            apply_started = True
+            dialog.start_applying()
+            app = QApplication.instance()
+            if app is not None:
+                app.processEvents()
+            self._execute_financial_tool_apply_with_dialog(payload, dialog)
+
+        dialog.apply_requested.connect(_start_apply)
+        try:
+            dialog.exec()
+        finally:
+            try:
+                dialog.apply_requested.disconnect(_start_apply)
+            except Exception:
+                pass
+            if getattr(self, "_active_apply_progress_dialog", None) is dialog:
+                self._active_apply_progress_dialog = None
 
     def _on_financial_tools_save_requested(self, payload: dict) -> None:
         try:

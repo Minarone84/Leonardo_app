@@ -1,7 +1,7 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.10
-Date: 2026-05-25
+Version: v3.11
+Date: 2026-05-26
 
 ## Overview
 
@@ -609,6 +609,7 @@ A recipe stores a reproducible full-dataset financial-tool calculation intent. A
 - materializes an existing database from its saved `manifest.json` recipe by writing/replacing `dataframe.csv` and updating materialization metadata;
 - preserves `database_id`, folder, display name, feature sources, feature columns, and recipe hash during normal build/rebuild;
 - does not run duplicate visible-name validation during materialization/rebuild, because those operations target an existing database identity rather than creating or renaming a database.
+- ensures the target manifest directory exists before atomic manifest writes, while preserving the atomic JSON write path and shortened `adb_` / `adf_` temporary-file prefixes.
 
 `AnalysisDatabaseComponentEditor` owns explicit component-edit orchestration for existing Analysis Databases. It may add, remove, or replace feature components only when called by an explicit component-edit workflow. A component edit changes the saved manifest recipe, resets materialization to draft, removes stale `dataframe.csv` when present, and requires a later build. It must not be confused with rebuild.
 
@@ -635,6 +636,22 @@ Source-drifted artifacts are classified as stale and become planner-actionable o
 `DataManagerUpdateService` builds read-only `DataManagerUpdatePlan` records from recipe collections. Plans map recovery statuses into items, actions, blockers, and warnings; include linked Analysis Database materialization source-drift checks when the collection has `source_database_id`; and preserve recipe collection order for artifact action ordering. `execute_update_plan(...)` executes selected actions or all actionable actions from an existing plan, respects action dependencies, skips blocked/review/none actions, reports completed/skipped/failed/blocked results, and does not perform low-level CSV, sidecar, manifest, or dataframe writes directly. Artifact regeneration remains delegated through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`; linked Analysis Database rebuild remains delegated through `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`.
 
 The current update workflow targets recipe collections only. It is not a dataset-wide update scan, arbitrary dependency graph inference engine, background task runner, or CoreBridge API surface.
+
+### Study Setup recipe export semantics
+
+Saved chart studies may carry `StudyUserMetadata` in serialized `user_metadata` with `important`, `description`, and `dataset_role`. This metadata is semantic context only. It does not change financial-tool computation, render payloads, style, runtime state, artifact identity, recipe identity, or Analysis Database geography truth.
+
+`StudySetupRecipeExportPlanner` owns read-only mapping from saved `ChartStudySetup` payloads into export reports. It inspects serialized studies, supports important-only filtering, classifies candidates as exportable / conditional / blocked / skipped, preserves setup order, derives recipe output names/signals through ToolSpec/naming helpers, and excludes style/runtime/pane/render fields from candidate recipe payload previews.
+
+`StudySetupRecipeExportPersistenceService` consumes an approved B1 plan and persists selected/all exportable candidates only. It delegates recipe writes to `ArtifactRecipeStore.save_recipe(...)` and optional ordered collection writes to `ArtifactRecipeCollectionStore.build_collection(...)` / `save_collection(...)`. Conditional, blocked, skipped, missing-payload, and unknown candidates are reported rather than saved. This service does not calculate artifacts, execute recipes, create Analysis Databases, mutate Study Setups, or export Workspace Snapshots.
+
+### Analysis dataset geography and collection database planning
+
+`AnalysisDatasetGeographyPolicy` is a pure diagnostic policy. It evaluates Analysis Database manifests or component previews for OHLC base, explicit Volume artifact, Braids, Peaks & Troughs, and UTC / Universal Trend Classifier presence. It also reports raw OHLCV volume presence, explicit Volume artifact presence, semantic raw-volume plus Volume-artifact duplication risk, and opportunistic `dataset_role` mismatch warnings. It does not enforce geography and does not mutate manifests.
+
+`RecipeCollectionDatabasePlanner` owns read-only recipe collection to Analysis Database component planning. It consumes `ArtifactRecoveryPlanner` status, resolves only current/up-to-date artifacts into Analysis Database source/column previews, preserves collection order, reports duplicate planned database columns, and blocks missing, stale, source-drifted, freshness-unknown, blocked, and cross-market artifacts from component previews. It does not create or edit manifests, calculate artifacts, execute recipes, or materialize databases.
+
+`RecipeCollectionDatabaseService` owns applying resolved C2 plans to Analysis Database manifests. It can create a new draft manifest through `AnalysisDatabaseStore.build_draft_manifest(...)` / `save_manifest(...)`, or extend an existing manifest through `AnalysisDatabaseComponentEditor.add_components(...)`. Extension preserves existing components and relies on the component editor for draft/materialization reset behavior. The service integrates geography reports, applies the raw-volume policy for new recipe-collection drafts, and blocks duplicate/missing/market-mismatch cases. It does not materialize `dataframe.csv`, calculate artifacts, execute recipes, or run recipe-collection update execution.
 
 ### Artifact identity fields
 

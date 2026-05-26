@@ -463,12 +463,26 @@ Implemented baseline:
   - GUI displays service-produced plan/report data and does not parse `source_ohlcv.snapshot` or classify source drift.
   - Dataset-wide scanning, arbitrary dependency graph inference, background task/progress integration, and broader Update Manager entry points remain future work.
 
+- M17 Historical Study recipe-to-database workflow is accepted:
+  - Historical saved studies now carry `StudyUserMetadata` with `important`, `description`, and `dataset_role`.
+  - Study metadata is semantic/user-facing context only; it does not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth.
+  - Study serialization, Study Setups, and Workspace Snapshots preserve `user_metadata`, with backward-compatible defaults for older payloads.
+  - `StudySetupRecipeExportPlanner` provides read-only Study Setup to recipe export planning with important-only filtering, exportable / conditional / blocked / skipped classification, recipe payload previews, and collection draft previews.
+  - `StudySetupRecipeExportPersistenceService` persists selected/all exportable plan candidates as recipes and optional ordered recipe collections through the recipe stores.
+  - Data Manager exposes `Create Recipes from Study Setup...` for previewing plans, selecting exportable candidates, saving recipes, optionally saving collections, and viewing persistence reports.
+  - `AnalysisDatasetGeographyPolicy` reports OHLC base, explicit Volume artifact, Braids, Peaks & Troughs, UTC / Universal Trend Classifier, raw OHLCV volume, semantic volume duplication risk, and `dataset_role` mismatch warnings without enforcing geography.
+  - `RecipeCollectionDatabasePlanner` resolves only current/up-to-date recipe-collection artifacts into Analysis Database source/column previews and blocks missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market cases.
+  - `AnalysisDatabaseStore.save_manifest(...)` now ensures the target manifest directory exists before atomic JSON writes and uses shorter `adb_` / `adf_` atomic temp prefixes.
+  - `RecipeCollectionDatabaseService` creates draft Analysis Database manifests or extends existing manifests from C2 plans through existing store/editor ownership, without materializing `dataframe.csv`.
+  - Data Manager exposes `Create/Extend Database...` in saved recipe collection controls for viewing C2 plans/geography reports and invoking C3 create/extend.
+  - Missing/stale artifacts remain handled through the existing `Plan Updates...` workflow; C4 does not run update execution, calculate artifacts, execute recipes, or materialize databases.
+
 Next direction:
 
 - Treat the current Historical Download Manager M7/M13 behavior as the accepted OHLCV ingestion and preliminary-validation baseline.
 - Treat OHLCV Maintenance as the explicit acceptance workflow for OHLCV validation, repair, source-invalid handling, source correction, and modified status.
 - Treat the current historical chart/study M8 behavior plus M12 apply/save/recovery hardening as the accepted chart-session and artifact-calculation baseline.
-- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates, M14 source OHLCV provenance snapshots, M15 source-drift classification, and M16 recipe-collection update workflow as the accepted analysis-database baseline.
+- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates, M14 source OHLCV provenance snapshots, M15 source-drift classification, M16 recipe-collection update workflow, and M17 Study Setup recipe export / recipe-collection draft database workflow as the accepted analysis-database baseline.
 - Integrate GUI release checks into CI/build packaging so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files and preserve Data Manager ownership boundaries.
 - Design broader Data Manager update expansion for dataset-wide, artifact-specific, and database-specific entry points using the existing provenance, recovery, update-plan, regenerator, rebuilder, and store services without moving classification into GUI.
 - Consider background task/progress integration for long update executions, while preserving explicit user confirmation and data-layer ownership.
@@ -538,6 +552,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.24: Historical Study recipe-to-database workflow. Documents StudyUserMetadata, chart-local Study Metadata editing/persistence, Study Setup to recipe export planning/persistence/UI, diagnostic AnalysisDatasetGeographyPolicy, recipe-collection artifact resolution planning, AnalysisDatabaseStore manifest directory guard and short temp prefixes, RecipeCollectionDatabaseService draft create/extend behavior, and the Data Manager `Create/Extend Database...` UI. Artifact calculation, recipe execution, Plan Updates execution, database materialization, hard geography enforcement, Workspace Snapshot export to recipes, notebook loading, dataset-wide scanning, arbitrary dependency inference, and background update progress remain out of scope.
+
 v0.23: Data Manager recipe-collection update workflow. Documents D1-D4 implementation: read-only update planning, controlled selected/all actionable execution, recipe-collection `Plan Updates...` UI, execution reports, linked Analysis Database rebuild planning/execution through existing services, post-execution refresh, and validation-only D4. Dataset-wide scanning, arbitrary dependency inference, background task/progress integration, and broader Update Manager entry points remain future work.
 
 v0.22: Recovery source-drift classification. Documents Patch C2 implementation: source OHLCV snapshot comparison helpers, ArtifactRecoveryPlanner source-drift classification, legacy missing snapshot compatibility, blocked current-OHLCV actionability behavior, existing recovery execution delegation, and AnalysisDatabaseStore read-only materialization source-drift reporting. Recipe-collection update workflow was added later in v0.23.

@@ -1,7 +1,7 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.23
-Date: 2026-05-25
+Version: v3.24
+Date: 2026-05-26
 
 ## Overview
 
@@ -20,6 +20,8 @@ It is built around a modular chart engine that supports:
 - Historical Notebook workflow for notes, Potential Trades, POIs, runtime chart annotations, and workspace snapshot notebook references
 - Historical workspace Pan Anchor for optional horizontal pan synchronization across active charts
 - confirmed delete workflows for saved Study Setups, Workspace Snapshots, notebook rows, and notebooks
+- chart-local Study Metadata for `important`, `description`, and `dataset_role`
+- Data Manager Study Setup to recipe export and recipe collection to draft database workflows
 - OHLCV Maintenance for explicit validation, repair, source-invalid reporting, and source correction
 - accepted OHLCV gating for Historical Data Manager and Data Manager workflows
 - centralized runtime diagnostics
@@ -266,8 +268,10 @@ Responsibilities include:
 - rebuilding already materialized Analysis Databases through `Rebuild Selected Database`;
 - explicitly editing Analysis Database components through `Edit Selected Database Components...`;
 - saving full-dataset artifact recipes and recipe collections through the save-only financial-tool workflow;
+- creating recipes from saved Study Setups through `Create Recipes from Study Setup...`;
 - checking recipe-collection recovery status, regenerating planner-actionable artifacts, and rebuilding linked Analysis Databases through data-layer recovery services;
 - planning and executing recipe-collection-scoped updates through `Plan Updates...` and `DataManagerUpdateService`;
+- creating or extending draft Analysis Databases from current recipe-collection artifacts through `Create/Extend Database...`;
 - previewing tabular artifacts in a read-only dataframe view;
 - exposing explicit data-check / metadata-restore workflows.
 
@@ -291,6 +295,10 @@ Current Analysis Database UI behavior:
 - build/rebuild does not add, remove, or replace artifact components and does not run duplicate visible-name validation as if a new database were being created;
 - `Edit Selected Database Components...` opens a dedicated component editor, auto-loads saved artifacts for the selected market, highlights already-present components, and supports explicit add/remove/replace actions;
 - saving component changes intentionally changes the manifest recipe, resets materialization to draft, removes stale `dataframe.csv` when present, and requires a later build;
+- `Create/Extend Database...` opens from saved recipe collection controls and displays C2 resolved components, blockers, warnings, duplicate columns, and geography reports before calling C3 create/extend services;
+- recipe collection database creation saves a draft manifest only, and recipe collection database extension appends resolved components only through the C3 data-layer service;
+- raw OHLCV volume selection for recipe-collection draft creation is passed as Auto / Include / Exclude, with policy owned by the data-layer service;
+- missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market collection artifacts remain visible as blocked plan items and are not silently included;
 - rename and delete are exposed as user actions, but durable mutation is store-owned;
 - Data Manager opens maximized and uses a compact layout where the top row contains Dataset and Calculate and Save Tool Outputs, the middle row contains DataFrame Preview and Saved Indicators / Oscillators / Constructs, and the lower area keeps Data Checks / Metadata Tools plus Database seed creator on the left with Database Builder on the right;
 - main Data Manager widgets use the shared right-side `make_button_rack(...)` action layout;
@@ -306,13 +314,14 @@ Current artifact recipe / recovery UI behavior:
 - highlighted recipe rows drive single-recipe actions such as load, calculate, and delete;
 - checked recipe rows drive collection creation;
 - saved recipe collections show ordered embedded recipe snapshots and optional `source_database_id` linkage;
+- `Create Recipes from Study Setup...` lists saved Study Setups, supports important-only planning, displays planner-owned candidates/blockers/warnings, lets only exportable candidates be selected, and persists recipes or optional collections through the B2 service;
 - `Check Recovery Status` displays planner-owned status for expected artifacts without executing anything;
 - `Recover Actionable Artifacts` delegates regeneration to the recovery regenerator and executor, and only planner-actionable recipes are attempted;
 - `Rebuild Linked Database` delegates linked Analysis Database materialization through the recovery database rebuilder and `AnalysisDatabaseStore`;
 - `Plan Updates...` opens a recipe-collection update dialog backed by `DataManagerUpdateService`;
 - the update dialog displays service-produced plan items, actions, blockers, warnings, and execution reports;
 - update execution supports selected actions and all actionable actions, reports completed/skipped/failed/blocked results including partial failures, and refreshes saved artifact and Analysis Database lists after execution;
-- Data Manager refreshes artifact and database lists after successful recovery/rebuild, but it does not classify artifact freshness or materialize dataframes itself.
+- Data Manager refreshes recipe, recipe collection, saved artifact, and database lists after successful persistence/recovery/rebuild/create/extend where relevant, but it does not classify artifact freshness or materialize dataframes itself.
 
 Current OHLCV loadability behavior:
 
@@ -331,17 +340,22 @@ It must not:
 - manually rewrite Analysis Database manifests or move/delete database folders;
 - silently mutate valid artifact metadata;
 - classify artifact recovery state locally;
+- classify dataset geography locally;
+- map recipe collection snapshots to Analysis Database components locally;
 - classify OHLCV loadability locally;
 - regenerate artifacts without the data-layer recovery/executor boundary;
 - rebuild linked Analysis Databases outside `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`;
 - consume checked artifact columns inside Database Builder;
-- replace Analysis Database components during build/rebuild.
+- replace Analysis Database components during build/rebuild;
+- execute Plan Updates from the recipe collection database create/extend dialog.
 
 Data Manager maintenance actions such as metadata backfill are restore-only operations. They may recreate missing or unreadable `.meta.json` sidecars from existing CSV files, but they must not rewrite CSV data and must not be treated as the normal save path. Analysis Database create, rename, delete, build, rebuild, and explicit component-edit operations must go through the appropriate data-layer service, because `manifest.json` is the metadata-sidecar equivalent for the folder-backed `dataframe.csv` artifact. GUI release checks enforce that Database Builder does not consume artifact selections, does not call feature-replacement rebuild APIs, keeps build/rebuild separate and manifest-driven, and keeps main Data Manager actions in the shared right-side button rack layout.
 
 Data Manager lineage hardening, source-drift classification, and update planning are data-layer owned. Generated derived artifact sidecars and Analysis Database materialization metadata receive `source_ohlcv.snapshot` through the save/materialization services, including source validation, fingerprint, and source-correction provenance when applicable. `ArtifactRecoveryPlanner`, `AnalysisDatabaseStore`, and `DataManagerUpdateService` may report source-drift and update-plan status to GUI recovery/update views, but the GUI does not parse, create, display, compare, or classify this snapshot.
 
 The implemented update UI is recipe-collection scoped and follows the existing `ToolCalculationWidget` local data-layer service pattern rather than adding CoreBridge update-plan APIs. It is not a dataset-wide Update Manager dashboard, arbitrary dependency graph workflow, or background task/progress monitor.
+
+Study Setup recipe export and recipe collection database create/extend are also local Data Manager workflows that display data-layer plans and reports. They do not calculate artifacts, execute recipes, run update plans, export Workspace Snapshots, or materialize databases.
 
 
 ## Historical Workspace Model
@@ -1083,9 +1097,18 @@ Tracked study properties include:
 - `display_name`
 - `computation`
 - `style`
+- `user_metadata`
 - `runtime`
 
 Important: UI actions (style/edit/remove) should target the stable chart-local `instance_id`. `render_keys` are renderer-facing identifiers and may be resynced after style resolution; they must not be used as durable UI identity.
+
+`StudyUserMetadata` stores user-facing semantic context on `ChartStudyInstance`:
+
+- `important`
+- `description`
+- `dataset_role`
+
+This metadata persists through study serialization, Study Setups, and Workspace Snapshots. It is preserved across computation edit/reapply and edited through a chart-local Study Metadata action/dialog. It does not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth; `dataset_role` is a hint only.
 
 ### Study lifecycle rules
 
@@ -1539,6 +1562,7 @@ Recommended tooling (in the GUI package):
 
 ## Change log
 
+- **v3.24 (2026-05-26)** - Study metadata and Data Manager recipe-to-database workflow sync: documented chart-local `StudyUserMetadata`, `Create Recipes from Study Setup...`, C1 geography reporting, C2 recipe-collection artifact resolution, C3 draft database create/extend service, and C4 `Create/Extend Database...` UI while preserving no-calculation and no-materialization boundaries.
 - **v3.23 (2026-05-25)** — OHLCV acceptance workflow documentation sync: Historical Download Manager preliminary validation remains non-certifying, OHLCV Maintenance is documented as the explicit validation/repair/source-correction window, Historical Data Manager chart creation is gated to `ok` / `modified` OHLCV, and Data Manager selector/preview behavior now consumes CoreBridge/data-layer loadable catalogs.
 
 - **v3.22 (2026-05-22)** — Historical apply/save/recovery hardening: Financial Tool Manager saved-source selection now consumes sidecar column metadata, historical runtime projection prefers explicit timeline/index alignment before legacy positional fallback, chart save and save-only artifact calculation share result-to-save-dataframe conversion, and UTC dependency preparation/recovery intent resolution are centralized while preserving chart/session ownership boundaries.

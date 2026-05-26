@@ -54,7 +54,7 @@ Accepted behavior includes:
 
 The GUI remains display/intent only. Validation, deletion, metadata rebuild, repair orchestration, source correction execution, cache invalidation, and metadata stamping are data-layer responsibilities.
 
-## Current Data Manager / Analysis Database workflow — 2026-05-25
+## Current Data Manager / Analysis Database workflow — 2026-05-26
 
 Data Manager remains dataset/artifact oriented and separate from chart sessions. The current Analysis Database workflow includes:
 
@@ -71,8 +71,10 @@ Data Manager remains dataset/artifact oriented and separate from chart sessions.
 - `Edit Selected Database Components...` is the only workflow that intentionally changes an existing database recipe; it opens a dedicated component editor, auto-loads saved artifacts, highlights already-present components, supports explicit add/remove/replace actions, resets materialization to draft, and requires a later build;
 - duplicate visible-name validation applies to creating new database drafts and renaming databases, not to materializing/rebuilding an existing database by `database_id`;
 - save-only financial-tool artifact recipes and ordered recipe collections for reproducible full-dataset artifact calculation;
+- `Create Recipes from Study Setup...` for exporting selected saved Study Setup studies into recipe definitions through a preview/report workflow;
 - larger Saved Recipes and Saved Recipe Collections dialogs for readable long names;
 - recipe-collection recovery controls for checking artifact status, regenerating planner-actionable missing/stale/unknown artifacts, rebuilding a linked Analysis Database when the collection carries `source_database_id`, and planning controlled recipe-collection updates through `Plan Updates...`;
+- `Create/Extend Database...` in saved recipe collection controls for creating or extending draft Analysis Database manifests from current/resolved collection artifacts;
 - Data Manager opens maximized and uses the accepted compact M6F visual layout: Dataset and Calculate and Save Tool Outputs on the top row, DataFrame Preview and Saved Indicators / Oscillators / Constructs on the middle row, Data Checks / Metadata Tools plus Database seed creator on the lower-left area, and Database Builder on the lower-right area;
 - Data Manager main widgets use the shared right-side `make_button_rack(...)` action layout;
 - DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack;
@@ -88,7 +90,13 @@ Data Manager metadata/lineage hardening is implemented for generated outputs. De
 
 The recipe-collection update workflow is implemented for saved recipe collections. `DataManagerUpdateService` builds read-only `DataManagerUpdatePlan` objects from a recipe collection, maps `ArtifactRecoveryPlanner` statuses into plan items/actions/blockers, includes linked Analysis Database materialization source-drift checks when `source_database_id` is present, and preserves recipe collection order for planned artifact actions. The Data Manager `Plan Updates...` dialog displays the service-produced plan/report data, executes selected actions or all actionable actions through `execute_update_plan(...)`, delegates artifact regeneration to `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`, delegates linked database rebuilds to `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`, reports completed/skipped/failed/blocked action results, and refreshes saved artifact and Analysis Database lists after execution. This workflow remains recipe-collection scoped; dataset-wide update scanning, arbitrary dependency graph inference, and background task/progress integration remain future work.
 
-## Current Historical Chart / Study workflow — 2026-05-25
+Saved Study Setups can now be planned into Data Manager artifact recipe definitions. `StudySetupRecipeExportPlanner` inspects serialized studies, supports important-only filtering, classifies candidates as exportable / conditional / blocked / skipped, and produces recipe payload and collection draft previews without writing or calculating artifacts. `StudySetupRecipeExportPersistenceService` persists only selected/all exportable candidates through `ArtifactRecipeStore` and can optionally save an ordered recipe collection through `ArtifactRecipeCollectionStore`. The Data Manager dialog displays the plan and persistence report; it does not calculate artifacts, execute recipes, create Analysis Databases, or export Workspace Snapshots.
+
+Recipe collections can now be mapped into draft Analysis Database manifests when their expected artifacts are already current. `RecipeCollectionDatabasePlanner` consumes recovery status and resolves only up-to-date artifacts into source/column previews; missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market cases are reported instead of included. `RecipeCollectionDatabaseService` can create a new draft manifest or extend an existing manifest from those resolved components, preserving existing components on extend and leaving materialization explicit. Missing or stale artifacts remain handled through `Plan Updates...`; the create/extend dialog does not run update execution, calculate artifacts, execute recipes, or materialize `dataframe.csv`.
+
+`AnalysisDatasetGeographyPolicy` reports whether an Analysis Database manifest or planned component set contains the minimum dataset terrain: OHLC base, explicit Volume artifact, Braids, Peaks & Troughs, and UTC / Universal Trend Classifier. It also reports raw OHLCV volume presence, explicit Volume artifact presence, semantic raw-volume plus Volume-artifact duplication risk, and opportunistic `dataset_role` mismatches. This policy is diagnostic only; database creation is not blocked by geography by default, and `dataset_role` is a user-facing hint rather than proof of tool identity.
+
+## Current Historical Chart / Study workflow — 2026-05-26
 
 The historical chart stack is now hardened around the ownership chain:
 
@@ -114,6 +122,10 @@ Accepted behavior includes:
 - chart save and Data Manager/recipe calculation share `result_to_save_dataframe(...)` for consistent full-dataset saved value conversion, including boolean output preservation and gap honesty;
 - historical UTC dependency preparation is centralized in `utc_dependency_sources.py` for chart apply/save and `ArtifactCalculationService`, while UTC runtime remains compute-only;
 - `ArtifactRecoveryPlanner` shares UTC required-column intent resolution and performs read-only blocker checks for missing or duplicate `ts_ms` / `time` dependency join keys.
+- `ChartStudyInstance` carries `StudyUserMetadata` with `important`, `description`, and `dataset_role`;
+- study `user_metadata` is semantic/user-facing metadata only and does not affect computation, rendering, style, runtime, artifact identity, or recipe identity;
+- study serialization/deserialization, Study Setups, and Workspace Snapshots preserve `user_metadata`, while old payloads load with default metadata values;
+- the chart-local Study Metadata dialog/action edits this metadata, and computation edit/reapply preserves it.
 
 M6/M6B completed release-check/test reconciliation and full uploaded test validation without production-code changes.
 

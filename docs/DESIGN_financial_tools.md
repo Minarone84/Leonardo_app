@@ -1,8 +1,8 @@
 # DESIGN — Financial Tools System
 
 Leonardo
-Version: v1.19
-Date: 2026-05-25
+Version: v1.20
+Date: 2026-05-26
 Scope: Indicators, Oscillators, Constructs, Tool Specs, Naming Policy, Controller Integration, Panel Integration, Workspace Integration, Chart Application
 
 ---
@@ -456,6 +456,10 @@ Save-only artifact calculation through Data Manager requires accepted OHLCV befo
 Data Manager lineage hardening is implemented for save-only artifact calculation. Saved derived artifact sidecars record the accepted source OHLCV provenance under `source_ohlcv.snapshot`, including source validation status, quality status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. The source snapshot is not part of tool identity, naming, params, bindings, or recipe identity. Recovery planning can compare the recorded snapshot against current accepted OHLCV truth and classify source-drifted artifacts as stale. Regeneration remains an explicit recovery action through the existing planner/regenerator/executor path; source-drift classification does not change financial-tool identity, recipe identity, or apply/save semantics.
 
 Data Manager recipe-collection update planning now consumes that recovery classification for saved recipe collections. `DataManagerUpdateService` may plan and execute selected/all actionable regeneration actions, but regeneration still flows through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`, preserving the Apply vs Save boundary and the normal save-only artifact calculation path. Broader dataset-wide update orchestration remains future work.
+
+Saved Study Setups can be planned into Data Manager artifact recipe definitions without calculating artifacts. `StudySetupRecipeExportPlanner` consumes serialized chart study payloads, uses `get_tool_spec`, `format_output_names`, and `format_output_signals` for output previews, excludes chart-only style/runtime/pane/render fields, and carries `StudyUserMetadata` only as report context. `StudySetupRecipeExportPersistenceService` persists selected/all exportable candidates as recipes and optional ordered recipe collections through the artifact recipe stores. This path preserves the Apply vs Save distinction: chart studies provide saved intent, but recipe export does not execute financial-tool runtime.
+
+Recipe collections can feed draft Analysis Database creation or extension only after current saved artifacts already exist. `RecipeCollectionDatabasePlanner` resolves up-to-date artifacts into source/column previews from recovery status, and `RecipeCollectionDatabaseService` creates or extends draft manifests from those previews. Missing or stale artifacts remain update/recovery concerns; database creation from a collection does not calculate artifacts, execute recipes, or materialize `dataframe.csv`.
 
 Restore-only metadata backfill may recreate missing/corrupt sidecars from existing CSV files, but it must not rewrite the CSV value artifact and must not become the normal save path.
 

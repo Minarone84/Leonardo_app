@@ -1,7 +1,7 @@
 # Leonardo Study System (Current State)
 
-Version: v1.10
-Date: 2026-05-22
+Version: v1.11
+Date: 2026-05-26
 
 ## Purpose
 
@@ -30,6 +30,7 @@ The study layer exists so Leonardo can keep these concerns separate:
 
 - computation truth
 - chart-session identity
+- user-facing semantic metadata
 - chart-local styling
 - pane placement
 - resident-local render payloads
@@ -256,6 +257,25 @@ Important rule:
 This is chart-session computation metadata.
 It is not renderer state.
 
+### `StudyUserMetadata`
+
+This stores user-facing semantic metadata for one chart-local study instance.
+
+Fields include:
+
+- `important`
+- `description`
+- `dataset_role`
+
+Important rules:
+
+- metadata is semantic context only;
+- metadata does not affect computation, rendering, style, runtime state, artifact identity, or recipe identity;
+- `dataset_role` is a hint for reporting and user review, not proof of tool identity or Analysis Database geography;
+- old serialized study payloads load with default metadata values;
+- study serialization/deserialization, Study Setups, and Workspace Snapshots preserve `user_metadata`;
+- computation edit/reapply must preserve existing metadata unless the user explicitly edits it.
+
 ### `StudyDisplayStyle`
 
 This stores chart-local display state.
@@ -356,6 +376,7 @@ It includes:
 - `display_name`
 - `computation`
 - `style`
+- `user_metadata`
 - `runtime`
 
 Important pane-target rules:
@@ -715,6 +736,8 @@ In particular:
 
 Notebook POI and Potential Trade markers are also outside the study system. They are runtime chart annotations derived from Historical Notebook rows. They do not enter `ChartStudyRegistry`, do not create `ChartStudyInstance` objects, do not become financial-tool outputs, and are not saved as Study Setup content.
 
+Study Setup recipe export is a Data Manager workflow built from serialized study payloads. It may use `important` for filtering and carry `description` / `dataset_role` as report context, but it must not treat metadata as computation truth, style truth, artifact identity, recipe identity, or geography proof. Export planning and persistence are owned by data-layer services, not by the chart study registry.
+
 ---
 
 ## Non-Negotiable Rules
@@ -728,6 +751,7 @@ The study system enforces:
 - resident refresh does not move computation into renderers
 - style/cache invalidation does not move renderer cache ownership into the panel
 - only renderable outputs become chart series
+- study metadata remains semantic/user-facing only
 - controller projection identity must remain separate from chart-local study identity
 - duplicate same-config studies may share controller compute truth but not chart-local identity
 - render keys are chart-local identifiers, not computation identity

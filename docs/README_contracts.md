@@ -161,6 +161,16 @@ The `source_ohlcv.snapshot` entry is metadata/lineage only. It records the accep
 
 For OHLCV, validation metadata is an acceptance contract owned by the historical data layer. `ok` and `modified` are loadable; `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, metadata mismatch, stale fingerprints, missing validation fingerprints, and missing CSV are blocked. Download-time validation is preliminary reporting only and does not certify a dataset as accepted.
 
+## Serialized chart study metadata
+
+Serialized chart studies may include `user_metadata` from `StudyUserMetadata`:
+
+- `important`
+- `description`
+- `dataset_role`
+
+This metadata is user-facing semantic context. It must not define financial-tool contracts, runtime outputs, renderability, chart style, saved artifact identity, recipe identity, or Analysis Database geography truth. `dataset_role` may support warnings and review context, but tool identity and geography detection must use structured tool/source metadata where available.
+
 ## Adding a new indicator
 
 1. Add an indicator contract in `tool_contracts/manifests/indicators.py`.

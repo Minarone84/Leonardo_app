@@ -1,7 +1,7 @@
 # Leonardo — Historical Chart Architecture (Current State)
 
-Version: v4.8
-Date: 2026-05-25
+Version: v4.9
+Date: 2026-05-26
 
 Scope: historical chart sessions, chart-space ownership, viewport/camera behavior, autoscale/manual-y behavior, resident slicing, study projection, pane contracts, and renderer execution.
 
@@ -724,6 +724,16 @@ No recomputation is required just because the resident window moved.
 Save remains a full-dataset persistence operation and is independent from the current resident window.
 
 Historical chart save paths use the active configured historical root, and chart-opened `FinancialToolsManagerWindow` instances receive that root from the panel.
+
+### 15.4 Study metadata
+
+`ChartStudyInstance` may carry `StudyUserMetadata` as `user_metadata`:
+
+- `important`
+- `description`
+- `dataset_role`
+
+This metadata is chart-local semantic context. It is preserved by study serialization/deserialization, Study Setups, Workspace Snapshots, and computation edit/reapply. It must not affect computation, resident projection, rendering, style, runtime render keys, artifact identity, recipe identity, or dataset geography truth. `dataset_role` is a hint for review/reporting, not proof of tool identity.
 
 ---
 

@@ -180,6 +180,8 @@ Generated derived artifacts and Analysis Database materializations record accept
 Artifact recipe lifecycle is separate from saved artifact value storage. `ArtifactRecipeStore` owns reusable single-recipe JSON files, while `ArtifactRecipeCollectionStore` owns ordered collection JSON files with embedded recipe snapshots and optional dependency/source-database metadata. Recovery services may inspect these files to plan or request regeneration, but CSV artifact writing remains owned by the calculation/persistence path and Analysis Database materialization remains store-owned.
 The Data Manager recipe-collection update workflow can plan and execute selected/all actionable artifact regeneration and linked Analysis Database rebuild actions after OHLCV is accepted. It uses the existing recovery and rebuild services; ingestion/download workflows do not execute those updates.
 
+Data Manager can also create or extend draft Analysis Database manifests from recipe collections when the expected artifacts are already current and resolved. That workflow uses recovery status and Analysis Database services; it does not calculate missing artifacts, run recipe updates, materialize `dataframe.csv`, or change OHLCV ingestion/acceptance rules.
+
 ------------------------------------------------------------
 3. Core Historical Downloader
 ------------------------------------------------------------

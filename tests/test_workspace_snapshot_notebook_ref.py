@@ -5,6 +5,10 @@ from pathlib import Path
 
 import pytest
 
+from leonardo.data.chart_presets.notebook_store import (
+    HistoricalNotebookStore,
+    notebook_chart_key,
+)
 from leonardo.data.chart_presets.study_setup_store import ChartStudySetupStore
 from leonardo.data.chart_presets.workspace_snapshot_store import (
     HistoricalWorkspaceSnapshotStore,
@@ -64,6 +68,23 @@ def _chart_payload() -> dict:
         "viewport": {"center_ts_ms": 1700000000000, "visible_bars": 500},
         "price_view_state": {},
         "studies": [_study_payload()],
+    }
+
+
+def _notebook_chart_entry(symbol: str = "BTCUSDT") -> dict:
+    dataset = {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": symbol,
+        "timeframe": "30m",
+    }
+    return {
+        "chart_key": notebook_chart_key(dataset),
+        "dataset": dataset,
+        "last_seen_position": 0,
+        "notes": [],
+        "trades": [],
+        "points_of_interest": [],
     }
 
 
@@ -127,6 +148,65 @@ def test_workspace_snapshot_notebook_ref_roundtrip_and_missing_is_valid(tmp_path
         "display_name": "Notebook 1",
     }
     assert store.list_summaries()[1].notebook_ref == loaded_with_ref.notebook_ref
+
+
+def test_notebook_update_preserves_snapshot_ref_and_save_as_new_does_not_repoint(
+    tmp_path: Path,
+) -> None:
+    notebook_store = HistoricalNotebookStore(tmp_path / "chart_presets" / "notebooks")
+    snapshot_store = _snapshot_store(tmp_path)
+    notebook = notebook_store.save_notebook(
+        notebook_store.create_notebook(
+            display_name="Notebook 1",
+            description="Original",
+            chart_entries=[_notebook_chart_entry()],
+            notebook_id="nb_1",
+            created_at_ms=1000,
+            updated_at_ms=1000,
+        )
+    )
+    snapshot = snapshot_store.save_snapshot(
+        snapshot_store.create_snapshot(
+            display_name="With Notebook",
+            description="",
+            workspace={"visualization_mode": "scroll_4"},
+            charts=[_chart_payload()],
+            notebook_ref={
+                "notebook_id": notebook.notebook_id,
+                "display_name": notebook.display_name,
+            },
+            snapshot_id="with_notebook",
+        )
+    )
+
+    updated = notebook_store.update_notebook(
+        notebook_id=notebook.notebook_id,
+        display_name="Notebook 1 Updated",
+        description="Updated",
+        chart_entries=[_notebook_chart_entry("ETHUSDT")],
+    )
+    copied = notebook_store.save_notebook(
+        notebook_store.create_notebook(
+            display_name="Notebook Copy",
+            description=updated.description,
+            chart_entries=updated.chart_entries,
+            annotation_settings=updated.annotation_settings,
+        )
+    )
+    loaded_snapshot = snapshot_store.load_snapshot(snapshot.snapshot_id)
+
+    assert updated.notebook_id == notebook.notebook_id
+    assert copied.notebook_id != notebook.notebook_id
+    assert loaded_snapshot.notebook_ref == {
+        "notebook_id": notebook.notebook_id,
+        "display_name": notebook.display_name,
+    }
+    assert (
+        notebook_store.load_notebook(
+            loaded_snapshot.notebook_ref["notebook_id"]
+        ).description
+        == "Updated"
+    )
 
 
 def test_invalid_notebook_ref_is_rejected_at_snapshot_store_boundary(tmp_path: Path) -> None:

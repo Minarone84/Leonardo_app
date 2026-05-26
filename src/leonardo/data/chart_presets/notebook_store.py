@@ -289,6 +289,35 @@ class HistoricalNotebookStore:
         self._atomic_write_json(persisted.to_dict(), path)
         return persisted
 
+    def update_notebook(
+        self,
+        *,
+        notebook_id: str,
+        display_name: str,
+        description: str = "",
+        chart_entries: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
+        annotation_settings: Mapping[str, Any] | None = None,
+    ) -> HistoricalNotebook:
+        """Replace an existing notebook while preserving its storage identity.
+
+        The selected notebook must already exist. The method preserves the
+        original ``notebook_id`` and ``created_at_ms``, advances
+        ``updated_at_ms``, recomputes the content hash through the notebook
+        contract, and persists the replacement through the normal atomic
+        overwrite path.
+        """
+        existing = self.load_notebook(notebook_id)
+        updated = self.create_notebook(
+            display_name=display_name,
+            description=description,
+            chart_entries=chart_entries,
+            annotation_settings=annotation_settings,
+            notebook_id=existing.notebook_id,
+            created_at_ms=existing.created_at_ms,
+            updated_at_ms=max(int(time.time() * 1000), existing.updated_at_ms + 1),
+        )
+        return self.save_notebook(updated, overwrite=True)
+
     def load_notebook(self, notebook_id: str) -> HistoricalNotebook:
         path = self.notebook_path(notebook_id)
         if not path.exists():

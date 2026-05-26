@@ -234,6 +234,57 @@ def test_same_notebook_id_can_be_overwritten(tmp_path: Path) -> None:
     assert overwritten.content_hash != saved.content_hash
 
 
+def test_update_notebook_reuses_identity_and_replaces_content(tmp_path: Path) -> None:
+    store, saved = _saved_notebook(tmp_path)
+    updated_entry = _chart_entry(symbol="ETHUSDT")
+
+    updated = store.update_notebook(
+        notebook_id=saved.notebook_id,
+        display_name=saved.display_name,
+        description="Updated workspace analysis",
+        chart_entries=[updated_entry],
+        annotation_settings={
+            "poi_marker_offset": 42,
+            "pt_long_marker_offset": 84,
+            "pt_short_marker_offset": 21,
+        },
+    )
+
+    assert updated.notebook_id == saved.notebook_id
+    assert updated.created_at_ms == saved.created_at_ms
+    assert updated.updated_at_ms > saved.updated_at_ms
+    assert updated.content_hash != saved.content_hash
+    assert updated.description == "Updated workspace analysis"
+    assert updated.chart_entries[0]["chart_key"] == "bybit|linear|ethusdt|30m"
+    assert updated.annotation_settings == {
+        "poi_marker_offset": 42,
+        "pt_long_marker_offset": 84,
+        "pt_short_marker_offset": 21,
+    }
+    assert len(list(store.root_dir.glob("*.json"))) == 1
+    assert store.load_notebook(saved.notebook_id) == updated
+
+
+def test_save_as_new_from_existing_notebook_content_creates_new_identity(
+    tmp_path: Path,
+) -> None:
+    store, saved = _saved_notebook(tmp_path)
+
+    copied = store.save_notebook(
+        store.create_notebook(
+            display_name="London Notes Copy",
+            description=saved.description,
+            chart_entries=saved.chart_entries,
+            annotation_settings=saved.annotation_settings,
+        )
+    )
+
+    assert copied.notebook_id != saved.notebook_id
+    assert copied.created_at_ms >= saved.created_at_ms
+    assert len(list(store.root_dir.glob("*.json"))) == 2
+    assert store.load_notebook(saved.notebook_id).display_name == "London Notes"
+
+
 def test_wrong_object_type_and_schema_are_rejected(tmp_path: Path) -> None:
     store, root = _store(tmp_path)
     root.mkdir(parents=True)

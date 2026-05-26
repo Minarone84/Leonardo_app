@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from leonardo.core.context import AppContext
 from leonardo.data.chart_presets.notebook_store import (
     DEFAULT_POI_MARKER_OFFSET,
+    HistoricalNotebook,
     HistoricalNotebookStore,
     notebook_chart_key,
 )
@@ -53,6 +54,9 @@ from leonardo.gui.windows._historical_data_manager.workspace_snapshot_dialogs im
 )
 from leonardo.gui.windows._historical_data_manager.notebook_window import (
     HistoricalNotebookWindow,
+)
+from leonardo.gui.windows._historical_data_manager.notebook_dialogs import (
+    SaveNotebookDialog,
 )
 from leonardo.gui.windows._historical_data_manager.notebook_manager_dialog import (
     HistoricalNotebookManagerDialog,
@@ -1659,6 +1663,10 @@ class HistoricalDataManagerWindow(QMainWindow):
     def _on_create_notebook(self) -> None:
         """Open the historical notebook editor and bind current workspace charts."""
         notebook_window = self._ensure_notebook_window()
+        previous_marker_id = notebook_window.notebook_id()
+        if previous_marker_id:
+            self._clear_notebook_poi_markers(previous_marker_id)
+        notebook_window.reset_notebook(status="New notebook ready.")
 
         self._refresh_notebook_from_workspace()
         notebook_window.show()
@@ -1784,18 +1792,46 @@ class HistoricalDataManagerWindow(QMainWindow):
         previous_marker_id = notebook_window.notebook_id() or "__unsaved_notebook__"
         self._refresh_notebook_from_workspace()
         store = self._notebook_store()
+        existing_notebooks = self._load_notebook_objects()
+
+        dialog = SaveNotebookDialog(
+            existing_notebooks=existing_notebooks,
+            current_notebook_id=notebook_window.notebook_id(),
+            display_name=notebook_window.display_name(),
+            description=notebook_window.description(),
+            parent=self,
+        )
+        if dialog.exec() != QDialog.Accepted:
+            self._set_status("Notebook save cancelled")
+            return False
+
+        if dialog.save_mode() == "update" and not dialog.selected_existing_notebook_id():
+            QMessageBox.information(
+                self,
+                "Save Notebook",
+                "Select an existing notebook to update.",
+            )
+            return False
+
+        chart_entries = notebook_window.chart_entries_payload()
+        annotation_settings = notebook_window.annotation_settings_payload()
 
         try:
-            if notebook_window.notebook_id():
-                notebook = notebook_window.current_notebook()
-                saved = store.save_notebook(notebook, overwrite=True)
+            if dialog.save_mode() == "update":
+                saved = store.update_notebook(
+                    notebook_id=dialog.selected_existing_notebook_id(),
+                    display_name=dialog.display_name(),
+                    description=dialog.description(),
+                    annotation_settings=annotation_settings,
+                    chart_entries=chart_entries,
+                )
             else:
                 saved = store.save_notebook(
                     store.create_notebook(
-                        display_name=notebook_window.display_name(),
-                        description=notebook_window.description(),
-                        annotation_settings=notebook_window.annotation_settings_payload(),
-                        chart_entries=notebook_window.chart_entries_payload(),
+                        display_name=dialog.display_name(),
+                        description=dialog.description(),
+                        annotation_settings=annotation_settings,
+                        chart_entries=chart_entries,
                     )
                 )
         except Exception as exc:
@@ -1818,6 +1854,16 @@ class HistoricalDataManagerWindow(QMainWindow):
                 f"Saved notebook '{saved.display_name}'.",
             )
         return True
+
+    def _load_notebook_objects(self) -> list[HistoricalNotebook]:
+        store = self._notebook_store()
+        notebooks: list[HistoricalNotebook] = []
+        for summary in store.list_summaries():
+            try:
+                notebooks.append(store.load_notebook(summary.notebook_id))
+            except Exception:
+                continue
+        return notebooks
 
     def _on_notebook_close_save_requested(self, event: object) -> None:
         if self._on_save_notebook(show_success_message=False):

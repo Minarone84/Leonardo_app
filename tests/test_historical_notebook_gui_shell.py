@@ -9,6 +9,7 @@ HDM = WINDOWS / "historical_data_manager_window.py"
 PRIVATE = WINDOWS / "_historical_data_manager"
 NOTEBOOK = PRIVATE / "notebook_window.py"
 MANAGER = PRIVATE / "notebook_manager_dialog.py"
+NOTEBOOK_DIALOGS = PRIVATE / "notebook_dialogs.py"
 INIT = PRIVATE / "__init__.py"
 
 
@@ -59,16 +60,46 @@ def test_create_notebook_action_opens_notebook_gui_shell() -> None:
     assert "notebook_window.activateWindow()" in source
 
 
+def test_create_new_notebook_clears_loaded_identity_before_refresh() -> None:
+    body = _source(HDM)
+    create_body = body[
+        body.index("    def _on_create_notebook") : body.index(
+            "    def _on_open_assigned_notebook"
+        )
+    ]
+
+    assert "previous_marker_id = notebook_window.notebook_id()" in create_body
+    assert "_clear_notebook_poi_markers(previous_marker_id)" in create_body
+    assert 'notebook_window.reset_notebook(status="New notebook ready.")' in create_body
+    assert "self._refresh_notebook_from_workspace()" in create_body
+
+
+def test_save_notebook_dialog_exposes_new_and_update_modes() -> None:
+    source = _source(NOTEBOOK_DIALOGS)
+
+    assert "class SaveNotebookDialog(QDialog)" in source
+    assert '"Save as new Notebook"' in source
+    assert '"Update existing Notebook"' in source
+    assert "_existing_notebook_combo" in source
+    assert "def save_mode" in source
+    assert "def selected_existing_notebook_id" in source
+
+
 def test_notebook_persistence_is_coordinated_by_data_manager_not_window() -> None:
     manager_source = _source(HDM)
     notebook_source = _source(NOTEBOOK)
     dialog_source = _source(MANAGER)
+    save_dialog_source = _source(NOTEBOOK_DIALOGS)
 
     assert "HistoricalNotebookStore" in manager_source
+    assert "SaveNotebookDialog" in manager_source
     assert "HistoricalNotebookManagerDialog" in manager_source
     assert "def _notebook_store_root" in manager_source
     assert '"chart_presets" / "notebooks"' in manager_source
     assert "def _on_save_notebook" in manager_source
+    assert "store.update_notebook" in manager_source
+    assert "store.create_notebook" in manager_source
+    assert "dialog.selected_existing_notebook_id()" in manager_source
     assert "def _on_notebook_close_save_requested" in manager_source
     assert "close_save_requested.connect" in manager_source
     assert "self._on_notebook_close_save_requested" in manager_source
@@ -82,6 +113,9 @@ def test_notebook_persistence_is_coordinated_by_data_manager_not_window() -> Non
     assert "notebook_ref=None" in dialog_source
     assert "HistoricalNotebookStore" not in notebook_source
     assert "workspace_snapshot_store" not in notebook_source
+    assert "HistoricalNotebookStore" not in save_dialog_source
+    assert "save_notebook" not in save_dialog_source
+    assert "update_notebook" not in save_dialog_source
 
 
 def test_notebook_window_close_requests_data_manager_save_without_store_ownership() -> None:
@@ -128,6 +162,8 @@ def test_historical_data_manager_private_package_exports_notebook_window() -> No
     source = _source(INIT)
 
     assert "HistoricalNotebookWindow" in source
+    assert "SaveNotebookDialog" in source
     assert "HistoricalNotebookManagerDialog" in source
     assert '"HistoricalNotebookWindow"' in source
+    assert '"SaveNotebookDialog"' in source
     assert '"HistoricalNotebookManagerDialog"' in source

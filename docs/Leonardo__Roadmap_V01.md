@@ -465,6 +465,7 @@ Implemented baseline:
 
 - M17 Historical Study recipe-to-database workflow is accepted:
   - Historical saved studies now carry `StudyUserMetadata` with `important`, `description`, and `dataset_role`.
+  - Applied historical chart studies expose a visible `Metadata...` action in price overlay rows and oscillator pane headers.
   - Study metadata is semantic/user-facing context only; it does not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth.
   - Study serialization, Study Setups, and Workspace Snapshots preserve `user_metadata`, with backward-compatible defaults for older payloads.
   - `StudySetupRecipeExportPlanner` provides read-only Study Setup to recipe export planning with important-only filtering, exportable / conditional / blocked / skipped classification, recipe payload previews, and collection draft previews.
@@ -476,6 +477,14 @@ Implemented baseline:
   - `RecipeCollectionDatabaseService` creates draft Analysis Database manifests or extends existing manifests from C2 plans through existing store/editor ownership, without materializing `dataframe.csv`.
   - Data Manager exposes `Create/Extend Database...` in saved recipe collection controls for viewing C2 plans/geography reports and invoking C3 create/extend.
   - Missing/stale artifacts remain handled through the existing `Plan Updates...` workflow; C4 does not run update execution, calculate artifacts, execute recipes, or materialize databases.
+
+- M18 Historical Study preset update workflow is accepted:
+  - Save Study Setup supports Save as new and Update existing modes; Save as new remains the default.
+  - Save Workspace Snapshot supports Save as new and Update existing modes; Save as new remains the default.
+  - Update existing requires selecting an existing saved item, preloads name/description, reuses the existing `setup_id` or `snapshot_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and does not create duplicate files.
+  - `ChartStudySetupStore.update_setup(...)` and `HistoricalWorkspaceSnapshotStore.update_snapshot(...)` own update persistence.
+  - Workspace Snapshot update preserves existing `notebook_ref` behavior.
+  - A saved Study Setup / Workspace Snapshot manager and versioned preset history remain future/optional tooling.
 
 Next direction:
 
@@ -552,6 +561,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.25: Historical Study metadata action and preset update workflow. Documents visible `Metadata...` actions for applied price overlay rows and oscillator pane headers, plus Save as new / Update existing modes for Study Setups and Workspace Snapshots. Update existing preserves storage IDs through store-owned persistence, preserves Workspace Snapshot `notebook_ref` behavior, and does not create extra saved preset IDs or implement a saved preset manager.
+
 v0.24: Historical Study recipe-to-database workflow. Documents StudyUserMetadata, chart-local Study Metadata editing/persistence, Study Setup to recipe export planning/persistence/UI, diagnostic AnalysisDatasetGeographyPolicy, recipe-collection artifact resolution planning, AnalysisDatabaseStore manifest directory guard and short temp prefixes, RecipeCollectionDatabaseService draft create/extend behavior, and the Data Manager `Create/Extend Database...` UI. Artifact calculation, recipe execution, Plan Updates execution, database materialization, hard geography enforcement, Workspace Snapshot export to recipes, notebook loading, dataset-wide scanning, arbitrary dependency inference, and background update progress remain out of scope.
 
 v0.23: Data Manager recipe-collection update workflow. Documents D1-D4 implementation: read-only update planning, controlled selected/all actionable execution, recipe-collection `Plan Updates...` UI, execution reports, linked Analysis Database rebuild planning/execution through existing services, post-execution refresh, and validation-only D4. Dataset-wide scanning, arbitrary dependency inference, background task/progress integration, and broader Update Manager entry points remain future work.

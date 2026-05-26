@@ -1,6 +1,6 @@
 # Leonardo Study System (Current State)
 
-Version: v1.11
+Version: v1.12
 Date: 2026-05-26
 
 ## Purpose
@@ -267,14 +267,18 @@ Fields include:
 - `description`
 - `dataset_role`
 
+Applied historical chart studies expose a visible `Metadata...` action in price overlay rows and oscillator pane headers. The action opens the Study Metadata dialog and updates `StudyUserMetadata` through the chart-local study registry path.
+
 Important rules:
 
 - metadata is semantic context only;
 - metadata does not affect computation, rendering, style, runtime state, artifact identity, or recipe identity;
 - `dataset_role` is a hint for reporting and user review, not proof of tool identity or Analysis Database geography;
+- `important` may be used by Study Setup recipe export filtering, but it does not change computation or rendering;
 - old serialized study payloads load with default metadata values;
 - study serialization/deserialization, Study Setups, and Workspace Snapshots preserve `user_metadata`;
-- computation edit/reapply must preserve existing metadata unless the user explicitly edits it.
+- computation edit/reapply must preserve existing metadata unless the user explicitly edits it;
+- updating an existing Study Setup stores the current live study metadata into the selected saved setup.
 
 ### `StudyDisplayStyle`
 

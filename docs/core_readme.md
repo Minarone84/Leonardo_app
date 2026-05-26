@@ -1,6 +1,6 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.11
+Version: v3.12
 Date: 2026-05-26
 
 ## Overview
@@ -636,6 +636,14 @@ Source-drifted artifacts are classified as stale and become planner-actionable o
 `DataManagerUpdateService` builds read-only `DataManagerUpdatePlan` records from recipe collections. Plans map recovery statuses into items, actions, blockers, and warnings; include linked Analysis Database materialization source-drift checks when the collection has `source_database_id`; and preserve recipe collection order for artifact action ordering. `execute_update_plan(...)` executes selected actions or all actionable actions from an existing plan, respects action dependencies, skips blocked/review/none actions, reports completed/skipped/failed/blocked results, and does not perform low-level CSV, sidecar, manifest, or dataframe writes directly. Artifact regeneration remains delegated through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`; linked Analysis Database rebuild remains delegated through `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`.
 
 The current update workflow targets recipe collections only. It is not a dataset-wide update scan, arbitrary dependency graph inference engine, background task runner, or CoreBridge API surface.
+
+### Chart preset update semantics
+
+`ChartStudySetupStore.update_setup(...)` replaces an existing saved Study Setup while preserving `setup_id` and `created_at_ms`, advancing `updated_at_ms`, recomputing `content_hash`, and writing through the store-owned atomic overwrite path.
+
+`HistoricalWorkspaceSnapshotStore.update_snapshot(...)` replaces an existing saved Workspace Snapshot while preserving `snapshot_id`, `created_at_ms`, and existing `notebook_ref` behavior. It advances `updated_at_ms`, recomputes `content_hash`, and writes through the store-owned atomic overwrite path.
+
+GUI dialogs collect Save as new / Update existing intent and display fields only. They must not manually write JSON, calculate hashes, manage preset identity, or own atomic persistence behavior.
 
 ### Study Setup recipe export semantics
 

@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.24
+Version: v3.25
 Date: 2026-05-26
 
 ## Overview
@@ -20,7 +20,8 @@ It is built around a modular chart engine that supports:
 - Historical Notebook workflow for notes, Potential Trades, POIs, runtime chart annotations, and workspace snapshot notebook references
 - Historical workspace Pan Anchor for optional horizontal pan synchronization across active charts
 - confirmed delete workflows for saved Study Setups, Workspace Snapshots, notebook rows, and notebooks
-- chart-local Study Metadata for `important`, `description`, and `dataset_role`
+- visible chart-local `Metadata...` actions for editing `important`, `description`, and `dataset_role`
+- Save as new / Update existing flows for saved Study Setups and Workspace Snapshots
 - Data Manager Study Setup to recipe export and recipe collection to draft database workflows
 - OHLCV Maintenance for explicit validation, repair, source-invalid reporting, and source correction
 - accepted OHLCV gating for Historical Data Manager and Data Manager workflows
@@ -498,7 +499,17 @@ Notebook JSON may include additive `annotation_settings` for `poi_marker_offset`
 
 The menu-bar corner quick actions include an optional `Notebook` button before the Study Setup buttons. It opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
 
-### Saved Study Setup and Workspace Snapshot deletion
+### Saved Study Setup and Workspace Snapshot save/update/delete
+
+The Save Study Setup and Save Workspace Snapshot dialogs support Save as new and Update existing modes. Save as new remains the default.
+
+Rules:
+
+- update mode requires selecting an existing saved item;
+- selecting an existing item preloads its name and description;
+- updating a Study Setup reuses the selected `setup_id` and does not create a duplicate setup file;
+- updating a Workspace Snapshot reuses the selected `snapshot_id`, does not create a duplicate snapshot file, and preserves notebook reference behavior;
+- GUI dialogs collect save intent and display fields only; stores own identity preservation, timestamps, hashes, duplicate checks, and atomic writes.
 
 The Load Study Setup and Load Workspace Snapshot dialogs expose confirmed Delete actions.
 
@@ -1108,7 +1119,7 @@ Important: UI actions (style/edit/remove) should target the stable chart-local `
 - `description`
 - `dataset_role`
 
-This metadata persists through study serialization, Study Setups, and Workspace Snapshots. It is preserved across computation edit/reapply and edited through a chart-local Study Metadata action/dialog. It does not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth; `dataset_role` is a hint only.
+This metadata persists through study serialization, Study Setups, and Workspace Snapshots. It is preserved across computation edit/reapply and edited through a visible chart-local `Metadata...` action in price overlay study rows and oscillator pane headers. The action opens the Study Metadata dialog for Important, Description, and Dataset role. Metadata edits do not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth; `dataset_role` is a hint only.
 
 ### Study lifecycle rules
 
@@ -1562,6 +1573,7 @@ Recommended tooling (in the GUI package):
 
 ## Change log
 
+- **v3.25 (2026-05-26)** - Historical Study metadata action and save update-mode sync: documented visible `Metadata...` actions on applied price overlay rows and oscillator headers, plus Save as new / Update existing modes for Study Setups and Workspace Snapshots. Update existing preserves IDs through store-owned persistence and does not create extra saved items.
 - **v3.24 (2026-05-26)** - Study metadata and Data Manager recipe-to-database workflow sync: documented chart-local `StudyUserMetadata`, `Create Recipes from Study Setup...`, C1 geography reporting, C2 recipe-collection artifact resolution, C3 draft database create/extend service, and C4 `Create/Extend Database...` UI while preserving no-calculation and no-materialization boundaries.
 - **v3.23 (2026-05-25)** — OHLCV acceptance workflow documentation sync: Historical Download Manager preliminary validation remains non-certifying, OHLCV Maintenance is documented as the explicit validation/repair/source-correction window, Historical Data Manager chart creation is gated to `ok` / `modified` OHLCV, and Data Manager selector/preview behavior now consumes CoreBridge/data-layer loadable catalogs.
 

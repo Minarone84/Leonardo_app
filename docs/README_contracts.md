@@ -1,7 +1,7 @@
 # Financial Tools Contract System
 
-Version: v1.4
-Date: 2026-05-22
+Version: v1.5
+Date: 2026-05-26
 
 ## Purpose
 
@@ -170,6 +170,12 @@ Serialized chart studies may include `user_metadata` from `StudyUserMetadata`:
 - `dataset_role`
 
 This metadata is user-facing semantic context. It must not define financial-tool contracts, runtime outputs, renderability, chart style, saved artifact identity, recipe identity, or Analysis Database geography truth. `dataset_role` may support warnings and review context, but tool identity and geography detection must use structured tool/source metadata where available.
+
+## Saved preset update identity
+
+Updating an existing Study Setup preserves its `setup_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and replaces the stored study payload through `ChartStudySetupStore.update_setup(...)`.
+
+Updating an existing Workspace Snapshot preserves its `snapshot_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, replaces the stored workspace/chart payload through `HistoricalWorkspaceSnapshotStore.update_snapshot(...)`, and preserves existing `notebook_ref` behavior. Update-existing is an overwrite of the selected saved item, not a new saved item.
 
 ## Adding a new indicator
 

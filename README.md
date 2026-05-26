@@ -125,7 +125,8 @@ Accepted behavior includes:
 - `ChartStudyInstance` carries `StudyUserMetadata` with `important`, `description`, and `dataset_role`;
 - study `user_metadata` is semantic/user-facing metadata only and does not affect computation, rendering, style, runtime, artifact identity, or recipe identity;
 - study serialization/deserialization, Study Setups, and Workspace Snapshots preserve `user_metadata`, while old payloads load with default metadata values;
-- the chart-local Study Metadata dialog/action edits this metadata, and computation edit/reapply preserves it.
+- applied price overlay rows and oscillator pane headers expose a visible `Metadata...` action that opens the chart-local Study Metadata dialog;
+- the Study Metadata dialog edits Important, Description, and Dataset role through the chart-local metadata update path, and computation edit/reapply preserves it.
 
 M6/M6B completed release-check/test reconciliation and full uploaded test validation without production-code changes.
 
@@ -194,12 +195,17 @@ Accepted notebook behavior includes:
 
 Study Setups remain notebook-free. Notebook data belongs to the notebook store and Workspace Snapshot association belongs to `notebook_ref` only.
 
-## Current saved Study Setup / Workspace Snapshot delete workflow — 2026-05-22
+## Current saved Study Setup / Workspace Snapshot save and delete workflow — 2026-05-26
 
-Saved Study Setup and Workspace Snapshot load dialogs now expose confirmed Delete actions.
+Saved Study Setup and Workspace Snapshot save dialogs support both Save as new and Update existing. Save as new remains the default. Update existing requires selecting an existing saved item, preloads its name/description, reuses the existing `setup_id` or `snapshot_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and overwrites atomically through the preset stores without creating a duplicate file. Workspace Snapshot updates preserve existing `notebook_ref` behavior.
+
+Saved Study Setup and Workspace Snapshot load dialogs also expose confirmed Delete actions.
 
 Accepted behavior includes:
 
+- Save Study Setup can save a new setup or update the selected setup through `ChartStudySetupStore.update_setup(...)`;
+- Save Workspace Snapshot can save a new snapshot or update the selected snapshot through `HistoricalWorkspaceSnapshotStore.update_snapshot(...)`;
+- GUI dialogs collect user intent only; preset stores own persistence, hashing, timestamps, identity preservation, and atomic writes;
 - Load Study Setup can delete the selected saved setup through `ChartStudySetupStore.delete_setup(setup_id)`;
 - deleting a saved Study Setup does not remove currently applied chart studies and does not affect Workspace Snapshots;
 - Load Workspace Snapshot can delete the selected snapshot through `HistoricalWorkspaceSnapshotStore.delete_snapshot(snapshot_id)`;

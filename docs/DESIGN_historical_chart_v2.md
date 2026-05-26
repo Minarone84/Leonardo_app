@@ -1,6 +1,6 @@
 # Leonardo — Historical Chart Architecture (Current State)
 
-Version: v4.9
+Version: v4.10
 Date: 2026-05-26
 
 Scope: historical chart sessions, chart-space ownership, viewport/camera behavior, autoscale/manual-y behavior, resident slicing, study projection, pane contracts, and renderer execution.
@@ -733,7 +733,9 @@ Historical chart save paths use the active configured historical root, and chart
 - `description`
 - `dataset_role`
 
-This metadata is chart-local semantic context. It is preserved by study serialization/deserialization, Study Setups, Workspace Snapshots, and computation edit/reapply. It must not affect computation, resident projection, rendering, style, runtime render keys, artifact identity, recipe identity, or dataset geography truth. `dataset_role` is a hint for review/reporting, not proof of tool identity.
+This metadata is chart-local semantic context. Applied price overlay rows and oscillator pane headers expose a visible `Metadata...` action that opens the Study Metadata dialog. Metadata is preserved by study serialization/deserialization, Study Setups, Workspace Snapshots, and computation edit/reapply. It must not affect computation, resident projection, rendering, style, runtime render keys, artifact identity, recipe identity, or dataset geography truth. `dataset_role` is a hint for review/reporting, not proof of tool identity.
+
+Study Setup and Workspace Snapshot save dialogs support Save as new and Update existing modes. Update existing overwrites the selected saved item while preserving its storage ID and creation timestamp. Workspace Snapshot update preserves `notebook_ref` and does not change notebook ownership.
 
 ---
 

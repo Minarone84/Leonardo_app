@@ -151,7 +151,8 @@ def test_notebook_window_gui_shell_structure() -> None:
     assert "def reset_notebook" in source
     assert "QTabWidget" in source
     assert "QTableWidget" in source
-    assert "QPlainTextEdit" in source
+    assert "QTextEdit" in source
+    assert "QColorDialog" in source
     assert "Refresh Charts" in source
     assert "Assigned snapshot: Not assigned" in source
     assert '"Notes"' in source

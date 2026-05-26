@@ -1877,13 +1877,20 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         chart_entries = notebook_window.chart_entries_payload()
         annotation_settings = notebook_window.annotation_settings_payload()
+        dialog_description = dialog.description()
+        description_html = (
+            notebook_window.description_html()
+            if dialog_description == notebook_window.description()
+            else ""
+        )
 
         try:
             if dialog.save_mode() == "update":
                 saved = store.update_notebook(
                     notebook_id=dialog.selected_existing_notebook_id(),
                     display_name=dialog.display_name(),
-                    description=dialog.description(),
+                    description=dialog_description,
+                    description_html=description_html,
                     annotation_settings=annotation_settings,
                     chart_entries=chart_entries,
                 )
@@ -1891,7 +1898,8 @@ class HistoricalDataManagerWindow(QMainWindow):
                 saved = store.save_notebook(
                     store.create_notebook(
                         display_name=dialog.display_name(),
-                        description=dialog.description(),
+                        description=dialog_description,
+                        description_html=description_html,
                         annotation_settings=annotation_settings,
                         chart_entries=chart_entries,
                     )

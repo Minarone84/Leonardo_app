@@ -111,6 +111,42 @@ def test_save_load_roundtrip_preserves_notebook_rows(tmp_path: Path) -> None:
     }
 
 
+def test_save_load_roundtrip_preserves_parallel_rich_text_fields(tmp_path: Path) -> None:
+    store, _ = _store(tmp_path)
+    entry = _chart_entry()
+    entry["notes"][0]["note_html"] = "<p><b>Retest note</b></p>"
+    entry["trades"][0]["note_html"] = "<p><u>Clean continuation</u></p>"
+    entry["points_of_interest"][0]["title_html"] = "<p><b>Breakout retest</b></p>"
+    entry["points_of_interest"][0]["description_html"] = (
+        "<p><span style=\"color:#ff0000;\">Price retested previous resistance.</span></p>"
+    )
+
+    saved = store.save_notebook(
+        store.create_notebook(
+            display_name="Rich Notes",
+            description="Workspace analysis",
+            description_html="<p><b>Workspace analysis</b></p>",
+            chart_entries=[entry],
+            notebook_id="rich_notebook",
+            created_at_ms=1000,
+            updated_at_ms=1000,
+        )
+    )
+    loaded = store.load_notebook(saved.notebook_id)
+
+    assert loaded.description == "Workspace analysis"
+    assert loaded.description_html == "<p><b>Workspace analysis</b></p>"
+    assert loaded.chart_entries[0]["notes"][0]["note"] == "Retest note"
+    assert loaded.chart_entries[0]["notes"][0]["note_html"] == "<p><b>Retest note</b></p>"
+    assert loaded.chart_entries[0]["trades"][0]["note_html"] == "<p><u>Clean continuation</u></p>"
+    assert loaded.chart_entries[0]["points_of_interest"][0]["title_html"] == (
+        "<p><b>Breakout retest</b></p>"
+    )
+    assert loaded.chart_entries[0]["points_of_interest"][0]["description_html"].startswith(
+        "<p><span"
+    )
+
+
 def test_annotation_settings_roundtrip_and_missing_defaults(tmp_path: Path) -> None:
     store, root = _store(tmp_path)
     notebook = store.create_notebook(
@@ -397,6 +433,27 @@ def test_content_hash_is_deterministic(tmp_path: Path) -> None:
 
     assert build_historical_notebook_content_hash(payload_a) == (
         build_historical_notebook_content_hash(payload_b)
+    )
+
+
+def test_content_hash_includes_rich_text_fields(tmp_path: Path) -> None:
+    store, _ = _store(tmp_path)
+    plain = store.save_notebook(
+        store.create_notebook(
+            display_name="Hash Notes",
+            description="Workspace analysis",
+            chart_entries=[_chart_entry()],
+            notebook_id="hash_plain",
+            created_at_ms=1000,
+            updated_at_ms=1000,
+        )
+    )
+    payload_plain = plain.to_dict()
+    payload_rich = dict(payload_plain)
+    payload_rich["description_html"] = "<p><b>Workspace analysis</b></p>"
+
+    assert build_historical_notebook_content_hash(payload_plain) != (
+        build_historical_notebook_content_hash(payload_rich)
     )
 
 

@@ -44,6 +44,7 @@ class HistoricalNotebook:
     updated_at_ms: int
     chart_entries: tuple[dict[str, Any], ...]
     annotation_settings: dict[str, Any] | None = None
+    description_html: str = ""
 
     def __post_init__(self) -> None:
         if self.schema_version != HISTORICAL_NOTEBOOK_SCHEMA_VERSION:
@@ -74,6 +75,7 @@ class HistoricalNotebook:
         object.__setattr__(self, "notebook_id", notebook_id)
         object.__setattr__(self, "display_name", display_name)
         object.__setattr__(self, "description", str(self.description or ""))
+        object.__setattr__(self, "description_html", str(self.description_html or ""))
         object.__setattr__(self, "created_at_ms", int(self.created_at_ms))
         object.__setattr__(self, "updated_at_ms", int(self.updated_at_ms))
         object.__setattr__(self, "chart_entries", chart_entries)
@@ -85,7 +87,7 @@ class HistoricalNotebook:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
+        payload = {
             "schema_version": int(self.schema_version),
             "object_type": self.object_type,
             "notebook_id": self.notebook_id,
@@ -97,6 +99,9 @@ class HistoricalNotebook:
             "annotation_settings": dict(self.annotation_settings or {}),
             "chart_entries": [dict(entry) for entry in self.chart_entries],
         }
+        if self.description_html:
+            payload["description_html"] = self.description_html
+        return payload
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> "HistoricalNotebook":
@@ -107,6 +112,7 @@ class HistoricalNotebook:
             content_hash=str(data.get("content_hash", "")),
             display_name=str(data.get("display_name", "")),
             description=str(data.get("description", "") or ""),
+            description_html=str(data.get("description_html", "") or ""),
             created_at_ms=int(data.get("created_at_ms", 0)),
             updated_at_ms=int(data.get("updated_at_ms", 0)),
             annotation_settings=normalize_notebook_annotation_settings(
@@ -231,6 +237,7 @@ class HistoricalNotebookStore:
         *,
         display_name: str,
         description: str = "",
+        description_html: str = "",
         chart_entries: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...] | None = None,
         annotation_settings: Mapping[str, Any] | None = None,
         notebook_id: str | None = None,
@@ -259,6 +266,7 @@ class HistoricalNotebookStore:
             content_hash="",
             display_name=display_name,
             description=description,
+            description_html=description_html,
             created_at_ms=created,
             updated_at_ms=updated,
             annotation_settings=normalize_notebook_annotation_settings(
@@ -295,6 +303,7 @@ class HistoricalNotebookStore:
         notebook_id: str,
         display_name: str,
         description: str = "",
+        description_html: str = "",
         chart_entries: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
         annotation_settings: Mapping[str, Any] | None = None,
     ) -> HistoricalNotebook:
@@ -315,6 +324,7 @@ class HistoricalNotebookStore:
             notebook_id=existing.notebook_id,
             created_at_ms=existing.created_at_ms,
             updated_at_ms=max(int(time.time() * 1000), existing.updated_at_ms + 1),
+            description_html=description_html,
         )
         return self.save_notebook(updated, overwrite=True)
 
@@ -416,6 +426,8 @@ def validate_historical_notebook_payload(payload: Mapping[str, Any]) -> list[str
 
     if not isinstance(payload.get("description", ""), str):
         errors.append("description must be a string.")
+    if "description_html" in payload and not isinstance(payload.get("description_html"), str):
+        errors.append("description_html must be a string.")
 
     if not isinstance(payload.get("created_at_ms"), int):
         errors.append("created_at_ms must be an integer.")

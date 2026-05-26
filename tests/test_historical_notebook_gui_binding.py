@@ -20,11 +20,13 @@ from leonardo.data.chart_presets.notebook_store import (
 from leonardo.gui.windows._historical_data_manager.notebook_window import (
     HistoricalNotebookWindow,
 )
+import leonardo.gui.windows._historical_data_manager.notebook_window as notebook_module
 import leonardo.gui.windows.historical_data_manager_window as hdm_module
 from leonardo.gui.windows.historical_data_manager_window import (
     HistoricalDataManagerWindow,
 )
-from PySide6.QtWidgets import QApplication, QComboBox, QToolButton
+from PySide6.QtGui import QColor
+from PySide6.QtWidgets import QApplication, QComboBox, QTextEdit, QToolButton
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -57,6 +59,12 @@ def _qapp() -> QApplication:
     return _QAPP
 
 
+def _rich_text_cell(table, row: int, column: int) -> QTextEdit:
+    widget = table.cellWidget(row, column)
+    assert isinstance(widget, QTextEdit)
+    return widget
+
+
 def test_notebook_window_has_structured_tabs_and_tables() -> None:
     source = _source(NOTEBOOK)
 
@@ -74,6 +82,11 @@ def test_notebook_window_has_structured_tabs_and_tables() -> None:
     assert '"Bad"' in source
     assert '"Title"' in source
     assert '"Description"' in source
+    assert "Bold selected notebook text" in source
+    assert "Underline selected notebook text" in source
+    assert "Set selected notebook text color" in source
+    assert "Apply bullet list to selected notebook text" in source
+    assert "Apply numbered list to selected notebook text" in source
 
 
 def test_trades_and_poi_tables_use_explicit_go_to_buttons_only() -> None:
@@ -420,30 +433,145 @@ def test_notebook_table_columns_match_required_layout() -> None:
     assert "table.setColumnWidth(3, _POI_TITLE_COLUMN_WIDTH)" in configure_body
     assert "table.setItem(row_index, date_column, date_item)" in append_body
     assert "self._set_delete_button_cell(table, row_index)" in append_body
-    assert "table.setItem(row_index, 2, self._table_item(str(payload.get(\"note\"" in append_body
+    assert "self._set_rich_text_cell(" in append_body
+    assert "html_text=str(payload.get(\"note_html\"" in append_body
     assert '"direction": ""' in empty_body
     assert 'self._set_combo_cell(table, row_index, 3, ("", "Long", "Short")' in append_body
     assert "enumerate(numeric_keys, start=4)" in append_body
     assert "self._set_combo_cell(table, row_index, 7" in append_body
-    assert "table.setItem(row_index, 8" in append_body
-    assert "table.setItem(row_index, 3, self._table_item(str(payload.get(\"title\"" in append_body
-    assert "table.setItem(row_index, 4, self._table_item(str(payload.get(\"description\"" in append_body
+    assert "html_text=str(payload.get(\"title_html\"" in append_body
+    assert "html_text=str(payload.get(\"description_html\"" in append_body
     assert "date_text = self._item_text(table, row, date_column)" in rows_body
-    assert '"note": self._item_text(table, row, 2)' in rows_body
+    assert '"note": self._rich_text_plain_text(table, row, 2)' in rows_body
     assert '"direction": self._combo_text(table, row, 3)' in rows_body
     assert '"starting_price": self._float_or_none(self._item_text(table, row, 4))' in rows_body
     assert '"target_pct_movement": self._float_or_none(self._item_text(table, row, 5))' in rows_body
     assert '"closing_price": self._float_or_none(self._item_text(table, row, 6))' in rows_body
     assert '"outcome": self._combo_text(table, row, 7) or "Good"' in rows_body
-    assert '"note": self._item_text(table, row, 8)' in rows_body
-    assert '"title": self._item_text(table, row, 3)' in rows_body
-    assert '"description": self._item_text(table, row, 4)' in rows_body
+    assert '"note": self._rich_text_plain_text(table, row, 8)' in rows_body
+    assert '"title": self._rich_text_plain_text(table, row, 3)' in rows_body
+    assert '"description": self._rich_text_plain_text(table, row, 4)' in rows_body
+    assert '"note_html"' in rows_body
+    assert '"title_html"' in rows_body
+    assert '"description_html"' in rows_body
     assert "asset_bought" not in append_body
     assert "asset_bought" not in rows_body
     assert "Delete this note?" in delete_message_body
     assert "Delete this potential trade?" in delete_message_body
     assert "Delete this point of interest?" in delete_message_body
     assert "This action cannot be undone." in delete_message_body
+
+
+def test_rich_text_cells_preserve_plain_text_and_parallel_html_payloads() -> None:
+    _qapp()
+    dataset = {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m",
+    }
+    chart_key = notebook_chart_key(dataset)
+    window = HistoricalNotebookWindow()
+    try:
+        window.refresh_from_chart_options(
+            [
+                {
+                    "position": 1,
+                    "label": "Position 1: bybit / linear / BTCUSDT / 30m",
+                    "dataset": dataset,
+                }
+            ]
+        )
+        notes_table = window._tables_by_chart_key[chart_key]["notes"]
+        trades_table = window._tables_by_chart_key[chart_key]["trades"]
+        poi_table = window._tables_by_chart_key[chart_key]["points_of_interest"]
+
+        window._append_empty_row(notes_table)
+        window._append_empty_row(trades_table)
+        window._append_empty_row(poi_table)
+
+        _rich_text_cell(notes_table, 0, 2).setHtml("<p><b>Note text</b></p>")
+        _rich_text_cell(trades_table, 0, 8).setHtml("<p><u>Trade text</u></p>")
+        _rich_text_cell(poi_table, 0, 3).setHtml("<p><b>POI title</b></p>")
+        _rich_text_cell(poi_table, 0, 4).setHtml("<p><i>POI description</i></p>")
+        window._description_edit.setHtml("<p><b>Notebook description</b></p>")
+
+        payload = window.chart_entries_payload()[0]
+        notebook = window.current_notebook()
+
+        assert notebook.description == "Notebook description"
+        assert "Notebook description" in notebook.description_html
+        assert payload["notes"][0]["note"] == "Note text"
+        assert "Note text" in payload["notes"][0]["note_html"]
+        assert payload["trades"][0]["note"] == "Trade text"
+        assert "Trade text" in payload["trades"][0]["note_html"]
+        assert payload["points_of_interest"][0]["title"] == "POI title"
+        assert "POI title" in payload["points_of_interest"][0]["title_html"]
+        assert payload["points_of_interest"][0]["description"] == "POI description"
+        assert "POI description" in payload["points_of_interest"][0]["description_html"]
+        assert notes_table.cellWidget(0, 1) is None
+        assert trades_table.cellWidget(0, 4) is None
+        assert isinstance(trades_table.cellWidget(0, 3), QComboBox)
+    finally:
+        window.close()
+
+
+def test_formatting_actions_target_current_rich_text_editor_and_mark_dirty(monkeypatch) -> None:
+    _qapp()
+    dataset = {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m",
+    }
+    chart_key = notebook_chart_key(dataset)
+    window = HistoricalNotebookWindow()
+    try:
+        window.refresh_from_chart_options(
+            [
+                {
+                    "position": 1,
+                    "label": "Position 1: bybit / linear / BTCUSDT / 30m",
+                    "dataset": dataset,
+                }
+            ]
+        )
+        notes_table = window._tables_by_chart_key[chart_key]["notes"]
+        window._append_empty_row(notes_table)
+        editor = _rich_text_cell(notes_table, 0, 2)
+        editor.setPlainText("Formatted note")
+        editor.selectAll()
+        window._set_current_text_editor(editor)
+        window.mark_clean()
+
+        monkeypatch.setattr(
+            notebook_module.QColorDialog,
+            "getColor",
+            lambda *args, **kwargs: QColor("#ff0000"),
+        )
+
+        window._toggle_bold_for_current_editor()
+        window._toggle_underline_for_current_editor()
+        window._set_color_for_current_editor()
+        window._apply_bullet_list_to_current_editor()
+
+        note = window.chart_entries_payload()[0]["notes"][0]
+        html = note["note_html"].lower()
+
+        assert window.is_dirty() is True
+        assert note["note"] == "Formatted note"
+        assert "formatted note" in html
+        assert "#ff0000" in html
+        assert "font-weight" in html or "font-weight:700" in html
+        assert "underline" in html
+        assert "-qt-list-indent" in html or "<ul" in html
+
+        window.mark_clean()
+        window._set_current_text_editor(None)
+        window._toggle_bold_for_current_editor()
+        assert window.is_dirty() is False
+    finally:
+        window.close()
 
 
 def test_annotation_offset_controls_are_notebook_state() -> None:
@@ -552,9 +680,8 @@ def test_notebook_window_tracks_dirty_state_for_editor_changes() -> None:
         assert window.is_dirty() is True
         window.mark_clean()
 
-        note_item = notes_table.item(0, 2)
-        assert note_item is not None
-        note_item.setText("Tracked note")
+        note_editor = _rich_text_cell(notes_table, 0, 2)
+        note_editor.setPlainText("Tracked note")
         assert window.is_dirty() is True
         window.mark_clean()
 
@@ -781,12 +908,10 @@ def test_row_delete_buttons_confirm_and_delete_selected_row() -> None:
         window._append_empty_row(table)
         window._append_empty_row(table)
         assert table.rowCount() == 2
-        first = table.item(0, 2)
-        second = table.item(1, 2)
-        assert first is not None
-        assert second is not None
-        first.setText("keep")
-        second.setText("delete")
+        first = _rich_text_cell(table, 0, 2)
+        second = _rich_text_cell(table, 1, 2)
+        first.setPlainText("keep")
+        second.setPlainText("delete")
 
         confirmations: list[str] = []
         window._confirm_row_delete = lambda section: confirmations.append(section) or True
@@ -863,16 +988,14 @@ def test_poi_delete_updates_runtime_markers_once() -> None:
         window._append_empty_row(table)
         first_date = table.item(0, 2)
         second_date = table.item(1, 2)
-        first_title = table.item(0, 3)
-        second_title = table.item(1, 3)
         assert first_date is not None
         assert second_date is not None
-        assert first_title is not None
-        assert second_title is not None
+        first_title = _rich_text_cell(table, 0, 3)
+        second_title = _rich_text_cell(table, 1, 3)
         first_date.setText("2026-05-21 14:30")
         second_date.setText("2026-05-22 15:30")
-        first_title.setText("remove")
-        second_title.setText("keep")
+        first_title.setPlainText("remove")
+        second_title.setPlainText("keep")
 
         emissions: list[bool] = []
         window.poi_markers_changed.connect(lambda: emissions.append(True))

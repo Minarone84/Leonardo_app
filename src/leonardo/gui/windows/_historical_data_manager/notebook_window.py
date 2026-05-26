@@ -7,9 +7,17 @@ import uuid
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QCloseEvent, QFontMetrics
+from PySide6.QtGui import (
+    QColor,
+    QCloseEvent,
+    QFont,
+    QFontMetrics,
+    QTextCharFormat,
+    QTextListFormat,
+)
 from PySide6.QtWidgets import (
     QCheckBox,
+    QColorDialog,
     QComboBox,
     QHeaderView,
     QHBoxLayout,
@@ -17,12 +25,12 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QMainWindow,
     QMessageBox,
-    QPlainTextEdit,
     QPushButton,
     QSpinBox,
     QTabWidget,
     QTableWidget,
     QTableWidgetItem,
+    QTextEdit,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -66,6 +74,14 @@ _TRADE_COLUMNS = (
 _POI_COLUMNS = ("Go", "Delete", "Date / Time", "Title", "Description")
 
 
+class _NotebookRichTextEdit(QTextEdit):
+    focused = Signal(object)
+
+    def focusInEvent(self, event) -> None:
+        super().focusInEvent(event)
+        self.focused.emit(self)
+
+
 class HistoricalNotebookWindow(QMainWindow):
     """Editable GUI shell for Historical Workspace notebook content.
 
@@ -104,6 +120,7 @@ class HistoricalNotebookWindow(QMainWindow):
         self._suppress_next_close_autosave = False
         self._suppress_dirty = False
         self._dirty = False
+        self._current_text_editor: QTextEdit | None = None
 
         root = QWidget(self)
         self.setCentralWidget(root)
@@ -158,11 +175,11 @@ class HistoricalNotebookWindow(QMainWindow):
         description_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         layout.addWidget(description_label)
 
-        self._description_edit = QPlainTextEdit(root)
+        self._description_edit = _NotebookRichTextEdit(root)
         self._description_edit.setObjectName("historicalNotebookDescriptionEdit")
         self._description_edit.setPlaceholderText("Notebook description")
-        self._description_edit.setFixedHeight(58)
-        self._description_edit.textChanged.connect(lambda: self.mark_dirty())
+        self._description_edit.setFixedHeight(72)
+        self._register_rich_text_editor(self._description_edit)
         layout.addWidget(self._description_edit)
 
         tools_row = QHBoxLayout()
@@ -268,6 +285,9 @@ class HistoricalNotebookWindow(QMainWindow):
     def description(self) -> str:
         return str(self._description_edit.toPlainText() or "")
 
+    def description_html(self) -> str:
+        return self._html_payload_for_editor(self._description_edit)
+
     def created_at_ms(self) -> int | None:
         return self._created_at_ms
 
@@ -286,6 +306,7 @@ class HistoricalNotebookWindow(QMainWindow):
             content_hash="",
             display_name=self.display_name(),
             description=self.description(),
+            description_html=self.description_html(),
             created_at_ms=created,
             updated_at_ms=now_ms,
             annotation_settings=self.annotation_settings_payload(),
@@ -305,7 +326,11 @@ class HistoricalNotebookWindow(QMainWindow):
             self._created_at_ms = notebook.created_at_ms
             self._updated_at_ms = notebook.updated_at_ms
             self._name_edit.setText(notebook.display_name)
-            self._description_edit.setPlainText(notebook.description)
+            self._set_rich_text_content(
+                self._description_edit,
+                plain_text=notebook.description,
+                html_text=getattr(notebook, "description_html", ""),
+            )
             self._set_annotation_settings(notebook.annotation_settings)
 
             entries: dict[str, dict[str, Any]] = {}
@@ -329,7 +354,11 @@ class HistoricalNotebookWindow(QMainWindow):
             self._created_at_ms = notebook.created_at_ms
             self._updated_at_ms = notebook.updated_at_ms
             self._name_edit.setText(notebook.display_name)
-            self._description_edit.setPlainText(notebook.description)
+            self._set_rich_text_content(
+                self._description_edit,
+                plain_text=notebook.description,
+                html_text=getattr(notebook, "description_html", ""),
+            )
             self._set_annotation_settings(notebook.annotation_settings)
             self._update_status(prefix=f"Saved notebook: {notebook.display_name}.")
         finally:
@@ -589,10 +618,26 @@ class HistoricalNotebookWindow(QMainWindow):
         add_button = QPushButton(button_text, widget)
         add_button.clicked.connect(lambda checked=False, table=table: self._append_empty_row(table))
         row.addWidget(add_button)
+        self._add_formatting_palette(row, widget)
         row.addStretch(1)
         layout.addLayout(row)
         layout.addWidget(table, 1)
         return widget
+
+    def _add_formatting_palette(self, row: QHBoxLayout, parent: QWidget) -> None:
+        for text, tooltip, handler in (
+            ("B", "Bold selected notebook text", self._toggle_bold_for_current_editor),
+            ("U", "Underline selected notebook text", self._toggle_underline_for_current_editor),
+            ("Color", "Set selected notebook text color", self._set_color_for_current_editor),
+            ("List", "Apply bullet list to selected notebook text", self._apply_bullet_list_to_current_editor),
+            ("1. List", "Apply numbered list to selected notebook text", self._apply_numbered_list_to_current_editor),
+        ):
+            button = QToolButton(parent)
+            button.setText(text)
+            button.setToolTip(tooltip)
+            button.setAutoRaise(True)
+            button.clicked.connect(handler)
+            row.addWidget(button)
 
     def _new_section_table(
         self,
@@ -721,7 +766,13 @@ class HistoricalNotebookWindow(QMainWindow):
         self._set_delete_button_cell(table, row_index)
 
         if section == _SECTION_NOTES:
-            table.setItem(row_index, 2, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
+            self._set_rich_text_cell(
+                table,
+                row_index,
+                2,
+                plain_text=str(payload.get("note", "") or ""),
+                html_text=str(payload.get("note_html", "") or ""),
+            )
             return
 
         if section == _SECTION_TRADES:
@@ -736,18 +787,194 @@ class HistoricalNotebookWindow(QMainWindow):
                 value = payload.get(key)
                 table.setItem(row_index, offset, self._table_item("" if value is None else str(value), row_id=row_id))
             self._set_combo_cell(table, row_index, 7, ("Good", "Bad"), str(payload.get("outcome", "Good") or "Good"))
-            table.setItem(row_index, 8, self._table_item(str(payload.get("note", "") or ""), row_id=row_id))
+            self._set_rich_text_cell(
+                table,
+                row_index,
+                8,
+                plain_text=str(payload.get("note", "") or ""),
+                html_text=str(payload.get("note_html", "") or ""),
+            )
             return
 
         if section == _SECTION_POI:
             self._set_goto_button_cell(table, row_index)
-            table.setItem(row_index, 3, self._table_item(str(payload.get("title", "") or ""), row_id=row_id))
-            table.setItem(row_index, 4, self._table_item(str(payload.get("description", "") or ""), row_id=row_id))
+            self._set_rich_text_cell(
+                table,
+                row_index,
+                3,
+                plain_text=str(payload.get("title", "") or ""),
+                html_text=str(payload.get("title_html", "") or ""),
+            )
+            self._set_rich_text_cell(
+                table,
+                row_index,
+                4,
+                plain_text=str(payload.get("description", "") or ""),
+                html_text=str(payload.get("description_html", "") or ""),
+            )
 
     def _table_item(self, text: str, *, row_id: str) -> QTableWidgetItem:
         item = QTableWidgetItem(text)
         item.setData(Qt.UserRole, row_id)
         return item
+
+    def _register_rich_text_editor(self, editor: _NotebookRichTextEdit) -> None:
+        editor.setAcceptRichText(True)
+        editor.focused.connect(lambda target: self._set_current_text_editor(target))
+        editor.textChanged.connect(self.mark_dirty)
+
+    def _set_current_text_editor(self, editor: object) -> None:
+        self._current_text_editor = editor if isinstance(editor, QTextEdit) else None
+
+    def _rich_text_editor_at(
+        self,
+        table: QTableWidget,
+        row: int,
+        column: int,
+    ) -> QTextEdit | None:
+        widget = table.cellWidget(row, column)
+        if isinstance(widget, QTextEdit):
+            return widget
+        return None
+
+    def _set_rich_text_content(
+        self,
+        editor: QTextEdit,
+        *,
+        plain_text: str,
+        html_text: str = "",
+    ) -> None:
+        previous_suppress_dirty = self._suppress_dirty
+        self._suppress_dirty = True
+        try:
+            if str(html_text or "").strip():
+                editor.setHtml(str(html_text))
+            else:
+                editor.setPlainText(str(plain_text or ""))
+        finally:
+            self._suppress_dirty = previous_suppress_dirty
+
+    def _html_payload_for_editor(self, editor: QTextEdit) -> str:
+        if not str(editor.toPlainText() or "").strip():
+            return ""
+        return str(editor.toHtml() or "")
+
+    def _rich_text_plain_text(
+        self,
+        table: QTableWidget,
+        row: int,
+        column: int,
+    ) -> str:
+        editor = self._rich_text_editor_at(table, row, column)
+        if editor is None:
+            return self._item_text(table, row, column)
+        return str(editor.toPlainText() or "").strip()
+
+    def _rich_text_html(
+        self,
+        table: QTableWidget,
+        row: int,
+        column: int,
+    ) -> str:
+        editor = self._rich_text_editor_at(table, row, column)
+        if editor is None:
+            return ""
+        return self._html_payload_for_editor(editor)
+
+    def _add_html_payload(
+        self,
+        payload: dict[str, Any],
+        key: str,
+        html_text: str,
+    ) -> None:
+        if str(html_text or "").strip():
+            payload[key] = html_text
+
+    def _set_rich_text_cell(
+        self,
+        table: QTableWidget,
+        row: int,
+        column: int,
+        *,
+        plain_text: str,
+        html_text: str = "",
+    ) -> None:
+        editor = _NotebookRichTextEdit(table)
+        editor.setAcceptRichText(True)
+        editor.setMinimumHeight(58)
+        editor.setObjectName("historicalNotebookRichTextCell")
+        self._register_rich_text_editor(editor)
+        editor.textChanged.connect(lambda table=table: self._on_rich_text_cell_changed(table))
+        self._set_rich_text_content(
+            editor,
+            plain_text=plain_text,
+            html_text=html_text,
+        )
+        table.setCellWidget(row, column, editor)
+        table.setRowHeight(row, max(table.rowHeight(row), 68))
+
+    def _on_rich_text_cell_changed(self, table: QTableWidget) -> None:
+        if self._updating_tables:
+            return
+        self._sync_entry_from_table(table)
+        self.mark_dirty()
+
+    def _toggle_bold_for_current_editor(self) -> None:
+        editor = self._current_text_editor
+        if editor is None:
+            return
+        fmt = QTextCharFormat()
+        current_weight = editor.currentCharFormat().fontWeight()
+        fmt.setFontWeight(QFont.Normal if current_weight >= QFont.Bold else QFont.Bold)
+        self._merge_format_for_current_editor(fmt)
+
+    def _toggle_underline_for_current_editor(self) -> None:
+        editor = self._current_text_editor
+        if editor is None:
+            return
+        fmt = QTextCharFormat()
+        fmt.setFontUnderline(not editor.currentCharFormat().fontUnderline())
+        self._merge_format_for_current_editor(fmt)
+
+    def _set_color_for_current_editor(self) -> None:
+        editor = self._current_text_editor
+        if editor is None:
+            return
+        color = QColorDialog.getColor(parent=self)
+        if not color.isValid():
+            return
+        fmt = QTextCharFormat()
+        fmt.setForeground(color)
+        self._merge_format_for_current_editor(fmt)
+
+    def _merge_format_for_current_editor(self, fmt: QTextCharFormat) -> None:
+        editor = self._current_text_editor
+        if editor is None:
+            return
+        cursor = editor.textCursor()
+        cursor.mergeCharFormat(fmt)
+        editor.mergeCurrentCharFormat(fmt)
+        editor.setTextCursor(cursor)
+        self.mark_dirty()
+
+    def _apply_bullet_list_to_current_editor(self) -> None:
+        self._apply_list_to_current_editor(QTextListFormat.ListDisc)
+
+    def _apply_numbered_list_to_current_editor(self) -> None:
+        self._apply_list_to_current_editor(QTextListFormat.ListDecimal)
+
+    def _apply_list_to_current_editor(self, style: QTextListFormat.Style) -> None:
+        editor = self._current_text_editor
+        if editor is None:
+            return
+        cursor = editor.textCursor()
+        cursor.beginEditBlock()
+        list_format = QTextListFormat()
+        list_format.setStyle(style)
+        cursor.createList(list_format)
+        cursor.endEditBlock()
+        editor.setTextCursor(cursor)
+        self.mark_dirty()
 
     def _set_goto_button_cell(self, table: QTableWidget, row: int) -> None:
         button = QToolButton(table)
@@ -860,38 +1087,55 @@ class HistoricalNotebookWindow(QMainWindow):
             date_text = self._item_text(table, row, date_column)
             ts_ms = self._parse_date_text_to_ts_ms(date_text)
             if section == _SECTION_NOTES:
-                rows.append(
-                    {
-                        "row_id": row_id,
-                        "date_text": date_text,
-                        "ts_ms": ts_ms,
-                        "note": self._item_text(table, row, 2),
-                    }
+                row_payload = {
+                    "row_id": row_id,
+                    "date_text": date_text,
+                    "ts_ms": ts_ms,
+                    "note": self._rich_text_plain_text(table, row, 2),
+                }
+                self._add_html_payload(
+                    row_payload,
+                    "note_html",
+                    self._rich_text_html(table, row, 2),
                 )
+                rows.append(row_payload)
             elif section == _SECTION_TRADES:
-                rows.append(
-                    {
-                        "row_id": row_id,
-                        "date_text": date_text,
-                        "ts_ms": ts_ms,
-                        "direction": self._combo_text(table, row, 3),
-                        "starting_price": self._float_or_none(self._item_text(table, row, 4)),
-                        "target_pct_movement": self._float_or_none(self._item_text(table, row, 5)),
-                        "closing_price": self._float_or_none(self._item_text(table, row, 6)),
-                        "outcome": self._combo_text(table, row, 7) or "Good",
-                        "note": self._item_text(table, row, 8),
-                    }
+                row_payload = {
+                    "row_id": row_id,
+                    "date_text": date_text,
+                    "ts_ms": ts_ms,
+                    "direction": self._combo_text(table, row, 3),
+                    "starting_price": self._float_or_none(self._item_text(table, row, 4)),
+                    "target_pct_movement": self._float_or_none(self._item_text(table, row, 5)),
+                    "closing_price": self._float_or_none(self._item_text(table, row, 6)),
+                    "outcome": self._combo_text(table, row, 7) or "Good",
+                    "note": self._rich_text_plain_text(table, row, 8),
+                }
+                self._add_html_payload(
+                    row_payload,
+                    "note_html",
+                    self._rich_text_html(table, row, 8),
                 )
+                rows.append(row_payload)
             elif section == _SECTION_POI:
-                rows.append(
-                    {
-                        "row_id": row_id,
-                        "date_text": date_text,
-                        "ts_ms": ts_ms,
-                        "title": self._item_text(table, row, 3),
-                        "description": self._item_text(table, row, 4),
-                    }
+                row_payload = {
+                    "row_id": row_id,
+                    "date_text": date_text,
+                    "ts_ms": ts_ms,
+                    "title": self._rich_text_plain_text(table, row, 3),
+                    "description": self._rich_text_plain_text(table, row, 4),
+                }
+                self._add_html_payload(
+                    row_payload,
+                    "title_html",
+                    self._rich_text_html(table, row, 3),
                 )
+                self._add_html_payload(
+                    row_payload,
+                    "description_html",
+                    self._rich_text_html(table, row, 4),
+                )
+                rows.append(row_payload)
         return rows
 
     def _row_id_for_table_row(self, table: QTableWidget, row: int) -> str:
@@ -907,6 +1151,9 @@ class HistoricalNotebookWindow(QMainWindow):
         return row_id
 
     def _item_text(self, table: QTableWidget, row: int, column: int) -> str:
+        editor = self._rich_text_editor_at(table, row, column)
+        if editor is not None:
+            return str(editor.toPlainText() or "").strip()
         item = table.item(row, column)
         if item is None:
             return ""

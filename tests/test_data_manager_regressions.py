@@ -691,7 +691,7 @@ def test_data_manager_has_study_setup_recipe_export_entry_point() -> None:
     dialog_source = _source(DATA_MANAGER / "study_setup_recipe_export_dialog.py")
 
     assert "StudySetupRecipeExportDialog" in source
-    assert '"Create Recipes from Study Setup..."' in source
+    assert '"Create Recipes from Study Environment..."' in source
     assert "_open_study_setup_recipe_export_dialog" in source
     assert "_study_setup_recipes_persisted" in source
     assert "self._recipe_dialog.refresh()" in source

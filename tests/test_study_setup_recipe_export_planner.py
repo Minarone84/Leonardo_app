@@ -82,7 +82,7 @@ def _setup(
         setup_id="setup_export",
         content_hash="",
         display_name="Export Setup",
-        description="Saved study setup",
+        description="Saved study environment",
         created_at_ms=1000,
         updated_at_ms=1000,
         created_from=created_from

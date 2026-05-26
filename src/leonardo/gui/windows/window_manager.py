@@ -208,7 +208,7 @@ class WindowManager(QObject):
         return self._historical_data_manager
 
     def notify_historical_data_manager_closing(self, window: HistoricalDataManagerWindow) -> None:
-        """Mark the cached Historical Data Manager as closing.
+        """Mark the cached Research Suite shell as closing.
 
         The window manager owns shell reuse only. It does not tear down chart
         sessions itself. This hook lets the shell report that close has begun so
@@ -333,7 +333,7 @@ class WindowManager(QObject):
             QMessageBox.warning(
                 None,
                 "Historical Dock",
-                "Historical Data Manager is not open. Cannot dock chart back.",
+                "Research Suite is not open. Cannot dock chart back.",
             )
             return False
 

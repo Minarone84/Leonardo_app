@@ -603,7 +603,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         self._core = core_bridge
         self._window_manager = window_manager
 
-        self.setWindowTitle("Leonardo - Historical Data Manager")
+        self.setWindowTitle("Leonardo - Research Suite")
         self.resize(1400, 900)
 
         self._menu_bar: Optional[QMenuBar] = None
@@ -663,7 +663,7 @@ class HistoricalDataManagerWindow(QMainWindow):
     def closeEvent(self, event: QCloseEvent) -> None:
         """Tear down embedded chart sessions before the shell is destroyed.
 
-        The Historical Data Manager owns the embedded workspace shell, not the
+        The Research Suite owns the embedded workspace shell, not the
         controller internals of each chart. It therefore delegates teardown to
         the workspace-owned panel lifecycle rather than reaching into resident
         truth or pane semantics directly.
@@ -714,20 +714,20 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         menu_file.addSeparator()
 
-        action_save_study_setup = QAction("Save Study Setup...", self)
+        action_save_study_setup = QAction("Save Study Environment...", self)
         action_save_study_setup.setToolTip(
-            "Save the studies, parameters, and styles from one chart."
+            "Save the study environment from one chart."
         )
         action_save_study_setup.setStatusTip(
-            "Save the studies, parameters, and styles from one chart."
+            "Save the study environment from one chart."
         )
         action_save_study_setup.triggered.connect(self._on_save_study_setup)
         self._action_save_study_setup = action_save_study_setup
         menu_file.addAction(action_save_study_setup)
 
-        action_load_study_setup = QAction("Load Study Setup...", self)
-        action_load_study_setup.setToolTip("Apply a saved study setup to a chart.")
-        action_load_study_setup.setStatusTip("Apply a saved study setup to a chart.")
+        action_load_study_setup = QAction("Load Study Environment...", self)
+        action_load_study_setup.setToolTip("Apply a saved study environment to a chart.")
+        action_load_study_setup.setStatusTip("Apply a saved study environment to a chart.")
         action_load_study_setup.triggered.connect(self._on_load_study_setup)
         self._action_load_study_setup = action_load_study_setup
         menu_file.addAction(action_load_study_setup)
@@ -857,7 +857,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         # already lived there. So instead of creating a second toolbar row, we
         # build one compact corner widget that contains:
         #
-        #   Open Notebook | Save Study | Load Study | Save Workspace | Load Workspace | Pan Anchor | View label
+        #   Open Notebook | Save Study Environment | Load Study Environment | Save Workspace Snapshot | Load Workspace Snapshot | Pan Anchor | View label
         #
         # Each button still uses the same QAction object that is already in a
         # standard menu. This preserves one command source and avoids duplicated
@@ -867,7 +867,7 @@ class HistoricalDataManagerWindow(QMainWindow):
     def _build_menu_bar_corner_widget(self, menu_bar: QMenuBar) -> None:
         """Build the compact right-side widget for the menu-bar row.
 
-        This widget replaces the old separate Study Setups toolbar.
+        This widget replaces the old separate study-environment toolbar.
 
         Ownership rules:
         - The standard menus still own the full user-facing command names.
@@ -891,21 +891,21 @@ class HistoricalDataManagerWindow(QMainWindow):
             )
         )
 
-        # Study Setup quick actions.
+        # Study environment quick actions.
         #
         # These are intentionally short labels because they live in the menu
         # bar row. The full action names remain available in the File menu.
         corner_layout.addWidget(
             self._make_menu_bar_action_button(
                 action=self._action_save_study_setup,
-                text="Save Study",
+                text="Save Study Environment",
                 icon=self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
             )
         )
         corner_layout.addWidget(
             self._make_menu_bar_action_button(
                 action=self._action_load_study_setup,
-                text="Load Study",
+                text="Load Study Environment",
                 icon=self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
             )
         )
@@ -914,14 +914,14 @@ class HistoricalDataManagerWindow(QMainWindow):
         corner_layout.addWidget(
             self._make_menu_bar_action_button(
                 action=self._action_save_workspace_snapshot,
-                text="Save Workspace",
+                text="Save Workspace Snapshot",
                 icon=self.style().standardIcon(QStyle.StandardPixmap.SP_DialogSaveButton),
             )
         )
         corner_layout.addWidget(
             self._make_menu_bar_action_button(
                 action=self._action_load_workspace_snapshot,
-                text="Load Workspace",
+                text="Load Workspace Snapshot",
                 icon=self.style().standardIcon(QStyle.StandardPixmap.SP_DialogOpenButton),
             )
         )
@@ -1017,7 +1017,7 @@ class HistoricalDataManagerWindow(QMainWindow):
     def _build_status_bar(self) -> None:
         status_bar = QStatusBar(self)
         status_bar.setSizeGripEnabled(False)
-        status_bar.showMessage("Historical Data Manager ready")
+        status_bar.showMessage("Research Suite ready")
         self.setStatusBar(status_bar)
         self._status_bar = status_bar
 
@@ -1224,8 +1224,8 @@ class HistoricalDataManagerWindow(QMainWindow):
         if not chart_options:
             QMessageBox.information(
                 self,
-                "Save Study Setup",
-                "Open a historical chart before saving a study setup.",
+                "Save Study Environment",
+                "Open a historical chart before saving a study environment.",
             )
             return
 
@@ -1235,14 +1235,14 @@ class HistoricalDataManagerWindow(QMainWindow):
             parent=self,
         )
         if dialog.exec() != QDialog.Accepted:
-            self._set_status("Study setup save cancelled")
+            self._set_status("Study environment save cancelled")
             return
 
         if dialog.save_mode() == "update" and not dialog.selected_existing_setup_id():
             QMessageBox.information(
                 self,
-                "Save Study Setup",
-                "Select an existing study setup to update.",
+                "Save Study Environment",
+                "Select an existing study environment to update.",
             )
             return
 
@@ -1250,7 +1250,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         if panel is None:
             QMessageBox.warning(
                 self,
-                "Save Study Setup",
+                "Save Study Environment",
                 "Selected source chart is no longer available.",
             )
             return
@@ -1260,7 +1260,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(
                 self,
-                "Save Study Setup",
+                "Save Study Environment",
                 f"Could not serialize chart studies: {exc!r}",
             )
             return
@@ -1268,7 +1268,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         if not studies:
             QMessageBox.information(
                 self,
-                "Save Study Setup",
+                "Save Study Environment",
                 "The selected chart has no studies to save.",
             )
             return
@@ -1294,17 +1294,17 @@ class HistoricalDataManagerWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(
                 self,
-                "Save Study Setup",
-                f"Could not save study setup: {exc!r}",
+                "Save Study Environment",
+                f"Could not save study environment: {exc!r}",
             )
             return
 
         action_text = "Updated" if dialog.save_mode() == "update" else "Saved"
-        self._set_status(f"{action_text} study setup: {saved.display_name}")
+        self._set_status(f"{action_text} study environment: {saved.display_name}")
         QMessageBox.information(
             self,
-            "Save Study Setup",
-            f"{action_text} study setup '{saved.display_name}'.",
+            "Save Study Environment",
+            f"{action_text} study environment '{saved.display_name}'.",
         )
 
     def _load_study_setup_objects(self):
@@ -1515,8 +1515,8 @@ class HistoricalDataManagerWindow(QMainWindow):
         if not chart_options:
             QMessageBox.information(
                 self,
-                "Load Study Setup",
-                "Open a historical chart before loading a study setup.",
+                "Load Study Environment",
+                "Open a historical chart before loading a study environment.",
             )
             return
 
@@ -1524,8 +1524,8 @@ class HistoricalDataManagerWindow(QMainWindow):
         if not setups:
             QMessageBox.information(
                 self,
-                "Load Study Setup",
-                "No saved study setups were found.",
+                "Load Study Environment",
+                "No saved study environments were found.",
             )
             return
 
@@ -1545,7 +1545,7 @@ class HistoricalDataManagerWindow(QMainWindow):
             parent=self,
         )
         if dialog.exec() != QDialog.Accepted:
-            self._set_status("Study setup load cancelled")
+            self._set_status("Study environment load cancelled")
             return
 
         store = self._chart_study_setup_store()
@@ -1554,8 +1554,8 @@ class HistoricalDataManagerWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(
                 self,
-                "Load Study Setup",
-                f"Could not load study setup: {exc!r}",
+                "Load Study Environment",
+                f"Could not load study environment: {exc!r}",
             )
             return
 
@@ -1564,7 +1564,7 @@ class HistoricalDataManagerWindow(QMainWindow):
         if panel is None:
             QMessageBox.warning(
                 self,
-                "Load Study Setup",
+                "Load Study Environment",
                 "Selected target chart is no longer available.",
             )
             return
@@ -1577,16 +1577,16 @@ class HistoricalDataManagerWindow(QMainWindow):
         if not compatibility_report.can_load:
             QMessageBox.warning(
                 self,
-                "Load Study Setup",
-                "Selected setup cannot be loaded:\n\n"
+                "Load Study Environment",
+                "Selected study environment cannot be loaded:\n\n"
                 + format_compatibility_report(compatibility_report),
             )
             return
         if compatibility_report.status == PRESET_STATUS_WARNING:
             QMessageBox.warning(
                 self,
-                "Load Study Setup",
-                "Selected setup will load with warnings:\n\n"
+                "Load Study Environment",
+                "Selected study environment will load with warnings:\n\n"
                 + format_compatibility_report(compatibility_report),
             )
 
@@ -1598,8 +1598,8 @@ class HistoricalDataManagerWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(
                 self,
-                "Load Study Setup",
-                f"Could not apply study setup: {exc!r}",
+                "Load Study Environment",
+                f"Could not apply study environment: {exc!r}",
             )
             return
 
@@ -1608,20 +1608,20 @@ class HistoricalDataManagerWindow(QMainWindow):
         if errors:
             QMessageBox.warning(
                 self,
-                "Load Study Setup",
+                "Load Study Environment",
                 f"Applied {applied_count} study/studies with errors:\n"
                 + "\n".join(str(error) for error in errors[:8]),
             )
             return
 
         self._set_status(
-            f"Loaded study setup '{setup.display_name}' "
+            f"Loaded study environment '{setup.display_name}' "
             f"({applied_count} study/studies)"
         )
         QMessageBox.information(
             self,
-            "Load Study Setup",
-            f"Loaded study setup '{setup.display_name}' "
+            "Load Study Environment",
+            f"Loaded study environment '{setup.display_name}' "
             f"onto the selected chart.",
         )
 

@@ -239,8 +239,8 @@ class HistoricalChartPanel(
         """
         Return the chart dataset identity used as informational preset metadata.
 
-        The descriptor is not a persistence path and does not bind a study setup
-        to the source market partition.
+        The descriptor is not a persistence path and does not bind a study
+        environment to the source market partition.
         """
         return {
             "exchange": self._exchange,
@@ -250,7 +250,7 @@ class HistoricalChartPanel(
         }
 
     def study_setup_recap_entries(self) -> list[dict[str, Any]]:
-        """Return compact study metadata for study setup save/load dialogs."""
+        """Return compact study metadata for study environment save/load dialogs."""
         entries: list[dict[str, Any]] = []
         for study in self._study_registry.list_all():
             entries.append(
@@ -269,7 +269,7 @@ class HistoricalChartPanel(
 
     def export_serialized_studies(self) -> list[dict[str, Any]]:
         """
-        Export chart-local studies as durable, JSON-safe study setup payloads.
+        Export chart-local studies as durable, JSON-safe study environment payloads.
 
         Runtime render keys, computed values, and controller projection state are
         intentionally excluded by the chart study serialization layer.
@@ -681,7 +681,7 @@ class HistoricalChartPanel(
         mode: str = "append",
     ) -> dict[str, Any]:
         """
-        Apply serialized study setup entries through the normal chart apply path.
+        Apply serialized study environment entries through the normal chart apply path.
 
         The method restores durable study intent through the controller, then
         reapplies chart-local style after each study is registered. It does not
@@ -689,7 +689,7 @@ class HistoricalChartPanel(
         """
         normalized_mode = str(mode or "append").strip().lower()
         if normalized_mode not in {"append", "replace"}:
-            raise ValueError(f"Unsupported study setup load mode: {mode!r}")
+            raise ValueError(f"Unsupported study environment load mode: {mode!r}")
 
         normalized_studies: list[dict[str, Any]] = []
         errors: list[str] = []
@@ -820,7 +820,7 @@ class HistoricalChartPanel(
         self._is_floating = bool(floating)
         if self._is_floating:
             self._float_button.setText("Dock")
-            self._float_button.setToolTip("Dock this chart back into Historical Data Manager")
+            self._float_button.setToolTip("Dock this chart back into Research Suite")
             self._close_button.setToolTip("Close this floating chart")
             self._position_combo.setEnabled(False)
             self._position_combo.setToolTip("Dock this chart to change its workspace position")

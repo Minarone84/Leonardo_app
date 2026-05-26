@@ -174,7 +174,7 @@ class ToolCalculationWidget(QGroupBox):
         self._collections_button.clicked.connect(self._open_collection_dialog)
 
         self._study_setup_export_button = QPushButton(
-            "Create Recipes from Study Setup...",
+            "Create Recipes from Study Environment...",
             self,
         )
         self._study_setup_export_button.setEnabled(False)
@@ -384,7 +384,7 @@ class ToolCalculationWidget(QGroupBox):
         market = self._market
         if market is None:
             self.status_message.emit(
-                "Select a dataset before creating recipes from a Study Setup"
+                "Select a dataset before creating recipes from a Study Environment"
             )
             return
 
@@ -508,7 +508,7 @@ class ToolCalculationWidget(QGroupBox):
             else ""
         )
         self.status_message.emit(
-            f"Study Setup export saved {saved_count} recipe(s){collection_text}"
+            f"Study Environment export saved {saved_count} recipe(s){collection_text}"
         )
 
     def _load_recipe_requested(self, recipe_obj: object) -> None:

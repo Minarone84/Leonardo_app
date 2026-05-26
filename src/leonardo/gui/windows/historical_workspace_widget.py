@@ -282,7 +282,7 @@ class HistoricalWorkspaceWidget(QWidget):
         - each panel owns its own chart-session/controller teardown
 
         This method exists specifically for shell-close teardown so the
-        Historical Data Manager can ask the workspace to release its embedded
+        Research Suite can ask the workspace to release its embedded
         sessions without reaching into controller internals itself.
         """
         for panel in list(self._embedded_panels()):

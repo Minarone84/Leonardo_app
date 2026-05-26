@@ -126,7 +126,7 @@ def evaluate_study_setup_compatibility(
     target_panel: Any | None,
     load_mode: str,
 ) -> PresetCompatibilityReport:
-    """Evaluate whether a saved chart study setup can load onto a target chart."""
+    """Evaluate whether a saved chart study environment can load onto a target chart."""
     issues: list[PresetCompatibilityIssue] = []
 
     normalized_mode = str(load_mode or "").strip().lower()
@@ -134,7 +134,7 @@ def evaluate_study_setup_compatibility(
         issues.append(
             _broken(
                 "invalid_load_mode",
-                f"Unsupported study setup load mode: {load_mode!r}.",
+                f"Unsupported study environment load mode: {load_mode!r}.",
                 {"load_mode": load_mode},
             )
         )

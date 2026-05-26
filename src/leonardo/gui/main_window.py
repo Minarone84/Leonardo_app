@@ -133,7 +133,7 @@ class MainWindow(QMainWindow):
         self._act_open_ohlcv_maintenance.triggered.connect(self._open_ohlcv_maintenance)
         historical_menu.addAction(self._act_open_ohlcv_maintenance)
 
-        self._act_open_hist_manager = QAction("Historical Data Manager", self)
+        self._act_open_hist_manager = QAction("Research Suite", self)
         self._act_open_hist_manager.setEnabled(False)
         self._act_open_hist_manager.triggered.connect(self._open_historical_data_manager)
         historical_menu.addAction(self._act_open_hist_manager)
@@ -321,7 +321,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Window manager missing")
             return
         wm.open_historical_data_manager(core_bridge=self._core, parent=self)
-        self.statusBar().showMessage("Historical Data Manager opened")
+        self.statusBar().showMessage("Research Suite opened")
 
     # ---- Realtime + Signals (state-driven GUI) ----
 

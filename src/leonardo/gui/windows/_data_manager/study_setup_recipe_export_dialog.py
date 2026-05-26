@@ -1,4 +1,4 @@
-"""Dialog for persisting recipe definitions from saved chart Study Setups."""
+"""Dialog for persisting recipe definitions from saved chart Study Environments."""
 
 from __future__ import annotations
 
@@ -44,7 +44,7 @@ from leonardo.data.naming import MarketId
 
 
 class StudySetupRecipeExportDialog(QDialog):
-    """Data Manager dialog for exporting saved Study Setups to recipe definitions.
+    """Data Manager dialog for exporting saved Study Environments to recipe definitions.
 
     The dialog owns user selection and report display only. Study classification,
     recipe payload construction, and persistence remain delegated to the B1/B2
@@ -75,7 +75,7 @@ class StudySetupRecipeExportDialog(QDialog):
         )
         self._current_plan: StudySetupRecipeExportPlan | None = None
 
-        self.setWindowTitle("Create Recipes from Study Setup")
+        self.setWindowTitle("Create Recipes from Study Environment")
         self.resize(1220, 740)
         self.setMinimumSize(1080, 640)
 
@@ -85,7 +85,7 @@ class StudySetupRecipeExportDialog(QDialog):
 
         context = QLabel(
             (
-                "Select a saved Study Setup, preview exportability, then save "
+                "Select a saved Study Environment, preview exportability, then save "
                 "recipe definitions. This does not calculate artifacts."
             ),
             self,
@@ -97,7 +97,7 @@ class StudySetupRecipeExportDialog(QDialog):
         body.setSpacing(10)
         root.addLayout(body, 1)
 
-        setup_group = QGroupBox("Saved Study Setups", self)
+        setup_group = QGroupBox("Saved Study Environments", self)
         setup_layout = QVBoxLayout(setup_group)
         setup_layout.setContentsMargins(8, 12, 8, 8)
         setup_layout.setSpacing(8)
@@ -109,7 +109,7 @@ class StudySetupRecipeExportDialog(QDialog):
         self._setup_list.currentItemChanged.connect(lambda *_: self._refresh_plan())
         setup_layout.addWidget(self._setup_list, 1)
 
-        self._refresh_setups_button = QPushButton("Refresh Setups", setup_group)
+        self._refresh_setups_button = QPushButton("Refresh Environments", setup_group)
         self._refresh_setups_button.clicked.connect(self.refresh_setups)
         setup_layout.addWidget(self._refresh_setups_button)
 
@@ -120,7 +120,7 @@ class StudySetupRecipeExportDialog(QDialog):
         detail_layout.setContentsMargins(8, 12, 8, 8)
         detail_layout.setSpacing(8)
 
-        self._setup_summary = QLabel("Select a saved Study Setup.", detail_group)
+        self._setup_summary = QLabel("Select a saved Study Environment.", detail_group)
         self._setup_summary.setWordWrap(True)
         detail_layout.addWidget(self._setup_summary)
 
@@ -209,7 +209,7 @@ class StudySetupRecipeExportDialog(QDialog):
         self.refresh_setups()
 
     def refresh_setups(self) -> None:
-        """Reload saved Study Setups from the configured preset store."""
+        """Reload saved Study Environments from the configured preset store."""
 
         selected_setup_id = self.selected_setup_id()
         self._setup_list.blockSignals(True)
@@ -228,7 +228,7 @@ class StudySetupRecipeExportDialog(QDialog):
             item.setToolTip(
                 "\n".join(
                     [
-                        f"Setup ID: {summary.setup_id}",
+                        f"Environment ID: {summary.setup_id}",
                         f"Description: {summary.description or '(none)'}",
                         f"Path: {summary.path}",
                     ]
@@ -242,10 +242,10 @@ class StudySetupRecipeExportDialog(QDialog):
 
         self._setup_list.blockSignals(False)
         self._refresh_plan()
-        self.status_message.emit(f"Loaded {len(summaries)} saved Study Setup(s)")
+        self.status_message.emit(f"Loaded {len(summaries)} saved Study Environment(s)")
 
     def selected_setup_id(self) -> str:
-        """Return the currently highlighted Study Setup id."""
+        """Return the currently highlighted Study Environment id."""
 
         item = self._setup_list.currentItem()
         if item is None:
@@ -272,14 +272,14 @@ class StudySetupRecipeExportDialog(QDialog):
         try:
             return self._setup_store.load_setup(setup_id)
         except Exception as exc:
-            self._set_report_text(f"Failed to load Study Setup: {exc!r}")
+            self._set_report_text(f"Failed to load Study Environment: {exc!r}")
             return None
 
     def _refresh_plan(self) -> None:
         setup = self._selected_setup()
         if setup is None:
             self._current_plan = None
-            self._setup_summary.setText("Select a saved Study Setup.")
+            self._setup_summary.setText("Select a saved Study Environment.")
             self._fill_candidates(())
             self._plan_text.setPlainText("")
             self._refresh_buttons()
@@ -307,7 +307,7 @@ class StudySetupRecipeExportDialog(QDialog):
         self._report_text.clear()
         self._refresh_collection_defaults(plan)
         self._refresh_buttons()
-        self.status_message.emit(f"Study Setup export plan ready: {setup.display_name}")
+        self.status_message.emit(f"Study Environment export plan ready: {setup.display_name}")
 
     def _target_market_for_setup(self, setup: ChartStudySetup) -> dict[str, str] | None:
         if _has_complete_market(setup.created_from):
@@ -399,14 +399,14 @@ class StudySetupRecipeExportDialog(QDialog):
         candidate_ids = self.checked_candidate_ids()
         if not candidate_ids:
             self._set_report_text("Select one or more exportable candidates to save.")
-            self.status_message.emit("No Study Setup export candidates selected")
+            self.status_message.emit("No Study Environment export candidates selected")
             return
         self._persist(candidate_ids)
 
     def _save_all_exportable(self) -> None:
         if not self._exportable_candidate_ids():
             self._set_report_text("The current plan has no exportable candidates.")
-            self.status_message.emit("No exportable Study Setup candidates")
+            self.status_message.emit("No exportable Study Environment candidates")
             return
         self._persist(None)
 
@@ -431,10 +431,10 @@ class StudySetupRecipeExportDialog(QDialog):
                 overwrite_collection=True,
             )
         except Exception as exc:
-            message = f"Failed to persist Study Setup recipes: {exc!r}"
+            message = f"Failed to persist Study Environment recipes: {exc!r}"
             self._set_report_text(message)
             self.status_message.emit(message)
-            QMessageBox.critical(self, "Study Setup Export Failed", message)
+            QMessageBox.critical(self, "Study Environment Export Failed", message)
             return
 
         self._set_report_text(_persistence_report_text(report))
@@ -445,7 +445,7 @@ class StudySetupRecipeExportDialog(QDialog):
         return "\n".join(
             [
                 f"Name: {setup.display_name}",
-                f"Setup ID: {setup.setup_id}",
+                f"Environment ID: {setup.setup_id}",
                 f"Description: {setup.description or '(none)'}",
                 f"Created from: {_market_text(setup.created_from)}",
                 f"Studies: {len(setup.studies)}",
@@ -552,7 +552,7 @@ def _persistence_report_text(report: StudySetupRecipeExportPersistenceReport) ->
 
 def _persistence_status_line(report: StudySetupRecipeExportPersistenceReport) -> str:
     return (
-        "Study Setup recipe export: "
+        "Study Environment recipe export: "
         f"{report.summary.get('saved', 0)} saved, "
         f"{report.summary.get('failed', 0)} failed, "
         f"{report.summary.get('blocked', 0)} blocked"

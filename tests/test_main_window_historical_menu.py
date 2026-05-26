@@ -12,7 +12,8 @@ def test_main_window_exposes_historical_menu_for_ohlcv_maintenance() -> None:
     assert "historical_menu.addAction(self._act_open_ohlcv_maintenance)" in source
     assert 'QAction("Historical Download Manager", self)' in source
     assert 'QAction("OHLCV Maintenance...", self)' in source
-    assert 'QAction("Historical Data Manager", self)' in source
+    assert 'QAction("Research Suite", self)' in source
+    assert "Research Suite opened" in source
     assert "self._act_open_ohlcv_maintenance.triggered.connect(self._open_ohlcv_maintenance)" in source
     assert "self._act_open_ohlcv_maintenance.setEnabled(True)" in source
 

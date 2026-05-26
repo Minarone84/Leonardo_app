@@ -37,8 +37,8 @@ def test_historical_data_manager_defines_case_a_study_setup_actions() -> None:
 
     assert "_action_save_study_setup" in source
     assert "_action_load_study_setup" in source
-    assert 'QAction("Save Study Setup..."' in source
-    assert 'QAction("Load Study Setup..."' in source
+    assert 'QAction("Save Study Environment..."' in source
+    assert 'QAction("Load Study Environment..."' in source
     assert "self._on_save_study_setup" in source
     assert "self._on_load_study_setup" in source
 
@@ -75,8 +75,8 @@ def test_save_and_load_dialogs_have_required_concepts() -> None:
     assert "_name_edit" in source
     assert "_description_edit" in source
     assert "_source_chart_combo" in source
-    assert "Save as new Study Setup" in source
-    assert "Update existing Study Setup" in source
+    assert "Save as new Study Environment" in source
+    assert "Update existing Study Environment" in source
     assert "_existing_setup_combo" in source
     assert "def save_mode" in source
     assert "def selected_existing_setup_id" in source

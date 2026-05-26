@@ -64,7 +64,7 @@ def _dataset_text(data: Mapping[str, Any]) -> str:
 
 
 class SaveStudySetupDialog(QDialog):
-    """Collect user metadata and source-chart choice for a study setup save."""
+    """Collect user metadata and source-chart choice for a study environment save."""
 
     def __init__(
         self,
@@ -80,14 +80,14 @@ class SaveStudySetupDialog(QDialog):
             setup.setup_id: setup for setup in self._existing_setups
         }
 
-        self.setWindowTitle("Save Study Setup")
+        self.setWindowTitle("Save Study Environment")
         self.resize(760, 560)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
         root.setSpacing(10)
 
-        form_group = QGroupBox("Setup Details", self)
+        form_group = QGroupBox("Environment Details", self)
         form = QFormLayout(form_group)
         form.setContentsMargins(10, 14, 10, 10)
         form.setSpacing(8)
@@ -97,9 +97,9 @@ class SaveStudySetupDialog(QDialog):
         mode_layout.setContentsMargins(0, 0, 0, 0)
         mode_layout.setSpacing(12)
 
-        self._save_new_radio = QRadioButton("Save as new Study Setup", mode_row)
+        self._save_new_radio = QRadioButton("Save as new Study Environment", mode_row)
         self._update_existing_radio = QRadioButton(
-            "Update existing Study Setup",
+            "Update existing Study Environment",
             mode_row,
         )
         self._save_new_radio.setChecked(True)
@@ -118,10 +118,10 @@ class SaveStudySetupDialog(QDialog):
         self._existing_setup_combo.currentIndexChanged.connect(
             self._on_existing_setup_changed
         )
-        form.addRow("Existing setup", self._existing_setup_combo)
+        form.addRow("Existing environment", self._existing_setup_combo)
 
         self._name_edit = QLineEdit(form_group)
-        self._name_edit.setPlaceholderText("Study setup name")
+        self._name_edit.setPlaceholderText("Study environment name")
         self._name_edit.textChanged.connect(self._refresh_save_enabled)
         form.addRow("Name", self._name_edit)
 
@@ -164,11 +164,11 @@ class SaveStudySetupDialog(QDialog):
         self._refresh_save_enabled()
 
     def display_name(self) -> str:
-        """Return the user-facing study setup name entered in the dialog."""
+        """Return the user-facing study environment name entered in the dialog."""
         return self._name_edit.text().strip()
 
     def description(self) -> str:
-        """Return the optional study setup description entered in the dialog."""
+        """Return the optional study environment description entered in the dialog."""
         return self._description_edit.toPlainText().strip()
 
     def save_mode(self) -> str:
@@ -247,7 +247,7 @@ class SaveStudySetupDialog(QDialog):
 
 
 class LoadStudySetupDialog(QDialog):
-    """Collect setup, target-chart, and append/replace choices for loading."""
+    """Collect environment, target-chart, and append/replace choices for loading."""
 
     def __init__(
         self,
@@ -267,7 +267,7 @@ class LoadStudySetupDialog(QDialog):
         self._setups_loader = setups_loader
         self._current_compatibility_report = ready_report()
 
-        self.setWindowTitle("Load Study Setup")
+        self.setWindowTitle("Load Study Environment")
         self.resize(900, 620)
 
         root = QVBoxLayout(self)
@@ -278,7 +278,7 @@ class LoadStudySetupDialog(QDialog):
         body.setSpacing(10)
         root.addLayout(body, 1)
 
-        list_group = QGroupBox("Saved Study Setups", self)
+        list_group = QGroupBox("Saved Study Environments", self)
         list_layout = QVBoxLayout(list_group)
         list_layout.setContentsMargins(10, 14, 10, 10)
         list_layout.setSpacing(8)
@@ -290,7 +290,7 @@ class LoadStudySetupDialog(QDialog):
         list_layout.addWidget(self._setup_list, 1)
         body.addWidget(list_group, 4)
 
-        detail_group = QGroupBox("Setup Details", self)
+        detail_group = QGroupBox("Environment Details", self)
         detail_layout = QVBoxLayout(detail_group)
         detail_layout.setContentsMargins(10, 14, 10, 10)
         detail_layout.setSpacing(8)
@@ -355,7 +355,7 @@ class LoadStudySetupDialog(QDialog):
         self._refresh_details()
 
     def selected_setup_id(self) -> str:
-        """Return the storage identity for the selected study setup."""
+        """Return the storage identity for the selected study environment."""
         item = self._setup_list.currentItem()
         if item is None:
             return ""
@@ -406,7 +406,7 @@ class LoadStudySetupDialog(QDialog):
         delete_button = self._delete_button
 
         if setup is None:
-            self._detail_text.setPlainText("Select a saved study setup.")
+            self._detail_text.setPlainText("Select a saved study environment.")
             self._current_compatibility_report = ready_report()
             self._compatibility_text.setPlainText("")
             if load_button is not None:
@@ -443,16 +443,16 @@ class LoadStudySetupDialog(QDialog):
         if setup is None:
             QMessageBox.information(
                 self,
-                "Delete Study Setup",
-                "Select a saved study setup to delete.",
+                "Delete Study Environment",
+                "Select a saved study environment to delete.",
             )
             self._refresh_details()
             return
         if self._delete_setup is None:
             QMessageBox.warning(
                 self,
-                "Delete Study Setup",
-                "Study setup deletion is not available in this context.",
+                "Delete Study Environment",
+                "Study environment deletion is not available in this context.",
             )
             self._refresh_details()
             return
@@ -464,15 +464,15 @@ class LoadStudySetupDialog(QDialog):
         except Exception as exc:
             QMessageBox.warning(
                 self,
-                "Delete Study Setup",
-                f"Could not delete study setup.\n{exc!r}",
+                "Delete Study Environment",
+                f"Could not delete study environment.\n{exc!r}",
             )
             return
         if not deleted:
             QMessageBox.warning(
                 self,
-                "Delete Study Setup",
-                "Could not delete study setup.\nThe selected saved study setup was not found.",
+                "Delete Study Environment",
+                "Could not delete study environment.\nThe selected saved study environment was not found.",
             )
             self._reload_setups_after_delete(setup.setup_id)
             return
@@ -482,8 +482,8 @@ class LoadStudySetupDialog(QDialog):
     def _confirm_delete_setup(self, setup: ChartStudySetup) -> bool:
         dialog = QMessageBox(self)
         dialog.setIcon(QMessageBox.Icon.Warning)
-        dialog.setWindowTitle("Delete Study Setup")
-        dialog.setText(f'Delete study setup "{setup.display_name}"?')
+        dialog.setWindowTitle("Delete Study Environment")
+        dialog.setText(f'Delete study environment "{setup.display_name}"?')
         dialog.setInformativeText("This action cannot be undone.")
         delete_button = dialog.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
         dialog.addButton("Cancel", QMessageBox.ButtonRole.RejectRole)

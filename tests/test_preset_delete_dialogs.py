@@ -54,7 +54,7 @@ def _study_setup(setup_id: str, display_name: str) -> ChartStudySetup:
         setup_id=setup_id,
         content_hash="",
         display_name=display_name,
-        description="Reusable study setup",
+        description="Reusable study environment",
         created_at_ms=1000,
         updated_at_ms=1000,
         created_from={

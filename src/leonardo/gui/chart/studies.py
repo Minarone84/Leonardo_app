@@ -92,7 +92,7 @@ class StudyUserMetadata:
     """
     Human-authored semantic metadata attached to a chart-local study.
 
-    The metadata is persisted with study setup and workspace snapshot payloads.
+    The metadata is persisted with study environment and workspace snapshot payloads.
     It does not participate in computation, rendering, styling, or artifact
     identity decisions.
     """

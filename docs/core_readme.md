@@ -473,6 +473,7 @@ Validated behavior:
 - resulting runtime outputs are trimmed downstream to the active resident slice before rendering
 - apply does not persist artifacts
 - apply remains chart-session scoped
+- Research Suite preflight/progress presentation is GUI-owned; controller calculation and result signals remain the Apply boundary
 
 ### Save
 
@@ -637,7 +638,9 @@ Source-drifted artifacts are classified as stale and become planner-actionable o
 
 The current update workflow targets recipe collections only. It is not a dataset-wide update scan, arbitrary dependency graph inference engine, background task runner, or CoreBridge API surface.
 
-Research Suite artifact save follows the same reproducibility boundary as Data Manager save-only artifact calculation. When the historical chart Financial Tools flow saves an artifact, the corresponding recipe is saved or reused first through the Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store. Equivalent recipe payloads reuse deterministic recipe identity, and saved artifact sidecars record non-identity recipe metadata: `recipe_id`, `recipe_hash`, and `recipe_hash_short`. Applying a study remains chart-local and does not save recipes or artifacts. Saving a Study Environment or Workspace Snapshot also does not directly save recipes.
+Research Suite artifact save follows the same reproducibility boundary as Data Manager save-only artifact calculation. When the historical chart Financial Tools flow saves an artifact, the corresponding recipe is saved or reused first through the Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store. Equivalent recipe payloads reuse deterministic recipe identity, and saved artifact sidecars record non-identity recipe metadata: `recipe_id`, `recipe_hash`, and `recipe_hash_short`.
+
+Study application remains chart-local and non-persistent. Saving a Study Environment or Workspace Snapshot also does not directly persist recipes.
 
 ### Research Suite saved-object update semantics
 

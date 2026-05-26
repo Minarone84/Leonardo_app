@@ -702,11 +702,14 @@ Financial-tool apply works like this:
 
 `full dataset compute → controller renderable filtering → controller resident-local projection → panel chart-local identity/style resolution → workspace pane application → renderer draw`
 
+Financial Tools Apply first passes through a chart-panel-owned preflight/progress dialog. The dialog is display and user-confirmation only: it shows the selected tool title, chart/dataset context, and `Input bars to process: N`; supports pre-execution cancel; then shows indeterminate progress while synchronous Apply runs. It does not calculate tools or register studies directly.
+
 Important rules:
 
 - compute may be full-dataset
 - render payload is resident-local only
 - non-renderable outputs stay out of the chart
+- study registration remains in the existing panel success path after controller `apply_succeeded`
 - style remains downstream of computation
 - when a study requires historical segmented conditional rendering, that segmented renderer-facing payload is resolved upstream before workspace/pane handoff
 
@@ -741,7 +744,7 @@ Study Environment and Workspace Snapshot save dialogs support Save as new and Up
 
 Notebook dirty-state prompts and free-text formatting remain separate from chart/study/data workflows. Save / Don't Save / Cancel protects notebook editor changes before close or replacement, and rich-text formatting persists through notebook fields only.
 
-Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the Data Manager-visible recipe store before artifact persistence continues. Applying a tool/study remains chart-local and non-persistent. Saving a Study Environment or Workspace Snapshot does not directly save recipes, and Workspace Snapshots are restoration objects rather than Data Manager export objects.
+Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the Data Manager-visible recipe store before artifact persistence continues. Study application remains chart-local and non-persistent. Saving a Study Environment or Workspace Snapshot does not directly persist recipes, and Workspace Snapshots are restoration objects rather than Data Manager export objects.
 
 Research Suite exposes managers for saved Study Environments and Workspace Snapshots. The Study Environment Manager can inspect environments/studies, edit top-level details, edit per-study serialized `user_metadata`, and delete through store APIs. The Workspace Snapshot Manager can inspect snapshots/charts/studies, display `notebook_ref`, edit top-level details, and delete through store APIs. Embedded Workspace Snapshot study metadata is read-only in RS4.
 

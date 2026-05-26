@@ -453,6 +453,8 @@ It does **not** compute studies, apply panes, or own renderer payloads.
 
 The study lifecycle begins when a financial tool is applied to a chart.
 
+When requested from the Financial Tools window, Apply first passes through a chart-panel preflight/progress dialog. The dialog supports pre-execution cancel, then shows indeterminate progress while synchronous Apply runs. The lifecycle below still begins with controller execution and preserves the existing panel/registry/workspace path.
+
 ### Apply flow
 
 `controller → panel → registry → workspace → renderer`

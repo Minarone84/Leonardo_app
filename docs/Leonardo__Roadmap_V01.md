@@ -490,7 +490,8 @@ Implemented baseline:
   - Research Suite is the user-facing name for the historical chart research/design area; internal names such as `HistoricalDataManagerWindow`, `ChartStudySetup`, `StudySetupRecipeExportPlanner`, schema fields, IDs, and store paths remain stable.
   - Research Suite artifact save saves or reuses the corresponding reproducible recipe in the Data Manager-visible `ArtifactRecipeStore(historical_root=...)` before artifact persistence continues.
   - Artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as non-identity recipe metadata.
-  - Applying a study remains chart-local and non-persistent; saving a Study Environment or Workspace Snapshot does not directly save recipes.
+  - Study application remains chart-local and non-persistent.
+  - Saving a Study Environment or Workspace Snapshot does not directly persist recipes.
   - `StudyEnvironmentManagerDialog` lists saved Study Environments, shows contained studies, edits top-level details, edits per-study serialized `user_metadata`, and deletes through `ChartStudySetupStore` APIs.
   - `WorkspaceSnapshotManagerDialog` lists saved Workspace Snapshots, shows saved charts/studies and `notebook_ref`, edits top-level details, and deletes through `HistoricalWorkspaceSnapshotStore` APIs.
   - Embedded Workspace Snapshot study metadata is read-only in RS4.
@@ -514,6 +515,14 @@ Implemented baseline:
   - The save dialog does not mutate the live chart registry because serialized save payloads do not contain durable chart-session instance IDs.
   - Study Environment Manager remains the post-save editor for saved serialized `user_metadata`.
   - Study metadata semantics, computation, rendering, style, Workspace Snapshot behavior, Notebook behavior, artifact/recipe behavior, and Data Manager workflows are unchanged.
+
+- M22 Financial Tools Apply preflight/progress is accepted:
+  - Financial Tools Apply opens a chart-panel-owned preflight/progress dialog before controller execution.
+  - The dialog shows tool title, chart/dataset context, `Input bars to process: N`, progress/status text, and dialog-visible errors.
+  - It supports pre-execution cancel; once synchronous Apply starts, progress is indeterminate and Cancel is disabled.
+  - Existing controller calculation, `apply_succeeded`, panel success handling, workspace series application, and `ChartStudyRegistry.add(...)` registration remain the path.
+  - Financial Tools calculation semantics and chart-local/non-persistent behavior are unchanged.
+  - Study Environment, Workspace Snapshot, Notebook, Data Manager, and Analysis Database workflows are unchanged.
 
 Next direction:
 
@@ -590,6 +599,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.29: Financial Tools Apply preflight sync. Documents the chart-panel preflight/progress dialog, `Input bars to process: N`, pre-execution cancel, indeterminate progress during synchronous Apply, dialog-visible success/failure completion, preserved controller/panel study-registration path, and unchanged chart-local/non-persistent boundaries.
+
 v0.28: Study Environment metadata placement RS7 sync. Documents removal of the chart-row/header metadata action placement, Save/Update Study Environment per-study metadata controls, serialized payload writeback, Study Environment Manager post-save editing, and unchanged live chart registry/Data Manager behavior.
 
 v0.27: Research Suite notebook UX RS5 sync. Documents notebook dirty-state tracking, Save / Don't Save / Cancel close/replace behavior, rich-text formatting palettes for notebook free-text fields, plain-text compatibility, optional parallel HTML fields, and unchanged Study Environment / Workspace Snapshot / Data Manager boundaries.

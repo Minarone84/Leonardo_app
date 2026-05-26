@@ -325,7 +325,9 @@ Current artifact recipe / recovery UI behavior:
 - update execution supports selected actions and all actionable actions, reports completed/skipped/failed/blocked results including partial failures, and refreshes saved artifact and Analysis Database lists after execution;
 - Data Manager refreshes recipe, recipe collection, saved artifact, and database lists after successful persistence/recovery/rebuild/create/extend where relevant, but it does not classify artifact freshness or materialize dataframes itself.
 
-Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the same Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store. Artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as recipe metadata. Applying a study remains chart-local and non-persistent, and saving a Study Environment or Workspace Snapshot does not directly save recipes.
+Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the same Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store. Artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as recipe metadata.
+
+Study application remains chart-local and non-persistent. Saving a Study Environment or Workspace Snapshot does not directly persist recipes.
 
 Current OHLCV loadability behavior:
 
@@ -1319,6 +1321,7 @@ Apply:
 - compute may run on the full canonical dataset
 - render payload sent to the chart is resident-local only
 - no persistence occurs
+- confirmed through a chart-panel-owned preflight/progress dialog before execution
 
 Save:
 
@@ -1328,6 +1331,8 @@ Save:
 - saved CSV-backed artifacts are accompanied by `.meta.json` sidecars owned by the Core/data persistence layer
 
 This distinction must stay explicit. GUI code may display and request saved artifacts, but it must not define the sidecar contract or reconstruct artifact identity locally.
+
+Financial Tools Apply opens a preflight/progress dialog from the historical chart panel. The dialog shows the selected tool title, chart/dataset context, `Input bars to process: N`, progress state, and status/error text. Cancel is available before execution starts. Once synchronous Apply begins, progress is indeterminate, Cancel is disabled, and OK remains disabled until success or failure. Success continues through the existing controller `apply_succeeded` signal, panel success handler, workspace series application, and `ChartStudyRegistry.add(...)` path. Failure is shown in the dialog and allows OK/Close without changing the chart registration path.
 
 Saved source selection in `FinancialToolsManagerWindow` consumes saved artifact sidecar column metadata when available. Valid `.meta.json` `selectable` / `analysis_usable` metadata is source-selection truth; CSV-header fallback exists only for legacy, missing, or malformed sidecars.
 

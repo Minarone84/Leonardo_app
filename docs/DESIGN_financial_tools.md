@@ -406,6 +406,10 @@ Properties:
 - rendered series are trimmed to the active resident slice
 - no persistence occurs
 - chart payload is resident-local only
+- a chart-panel-owned preflight/progress dialog confirms Financial Tools Apply before controller execution
+- the dialog reports input rows as `Input bars to process: N`, not non-null output rows
+- Cancel is available before execution starts and disabled during synchronous Apply
+- progress is indeterminate while calculation runs
 
 ### Save
 
@@ -423,6 +427,8 @@ Apply and Save may share compute semantics but they do not share render scope.
 
 Apply is render-scoped.
 Save is persistence-scoped.
+
+The Apply dialog is a chart-panel orchestration surface only. The existing controller computes, emits `apply_succeeded` or an error, and the panel success handler applies workspace series and updates `ChartStudyRegistry`.
 
 ### Saved artifact metadata sidecars
 
@@ -455,11 +461,11 @@ Save-only artifact calculation through Data Manager requires accepted OHLCV befo
 
 Data Manager lineage hardening is implemented for save-only artifact calculation. Saved derived artifact sidecars record the accepted source OHLCV provenance under `source_ohlcv.snapshot`, including source validation status, quality status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. The source snapshot is not part of tool identity, naming, params, bindings, or recipe identity. Recovery planning can compare the recorded snapshot against current accepted OHLCV truth and classify source-drifted artifacts as stale. Regeneration remains an explicit recovery action through the existing planner/regenerator/executor path; source-drift classification does not change financial-tool identity, recipe identity, or apply/save semantics.
 
-Data Manager recipe-collection update planning now consumes that recovery classification for saved recipe collections. `DataManagerUpdateService` may plan and execute selected/all actionable regeneration actions, but regeneration still flows through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`, preserving the Apply vs Save boundary and the normal save-only artifact calculation path. Broader dataset-wide update orchestration remains future work.
+Data Manager recipe-collection update planning now consumes that recovery classification for saved recipe collections. `DataManagerUpdateService` may plan and execute selected/all actionable regeneration actions, but regeneration still flows through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`, preserving the runtime/persistence boundary and the normal save-only calculation path for artifacts. Broader dataset-wide update orchestration remains future work.
 
 Research Suite artifact save persists or reuses the corresponding recipe in the Data Manager-visible `ArtifactRecipeStore(historical_root=...)` before saving the artifact values. Equivalent recipe payloads reuse deterministic recipe identity, and artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as non-identity recipe metadata. Applying a tool/study remains chart-local and does not persist recipes or artifacts.
 
-Saved Study Environments can be planned into Data Manager artifact recipe definitions without calculating artifacts. `StudySetupRecipeExportPlanner` consumes serialized chart study payloads, uses `get_tool_spec`, `format_output_names`, and `format_output_signals` for output previews, excludes chart-only style/runtime/pane/render fields, and carries `StudyUserMetadata` only as report context. `StudySetupRecipeExportPersistenceService` persists selected/all exportable candidates as recipes and optional ordered recipe collections through the artifact recipe stores. This path preserves the Apply vs Save distinction: chart studies provide saved intent, but saving a Study Environment does not directly save recipes and recipe export does not execute financial-tool runtime.
+Saved Study Environments can be planned into Data Manager artifact recipe definitions without calculating artifacts. `StudySetupRecipeExportPlanner` consumes serialized chart study payloads, uses `get_tool_spec`, `format_output_names`, and `format_output_signals` for output previews, excludes chart-only style/runtime/pane/render fields, and carries `StudyUserMetadata` only as report context. `StudySetupRecipeExportPersistenceService` persists selected/all exportable candidates as recipes and optional ordered recipe collections through the artifact recipe stores. This path preserves the runtime/persistence distinction: chart studies provide saved intent. Saving a Study Environment does not directly persist recipes, and recipe export does not execute financial-tool runtime.
 
 Recipe collections can feed draft Analysis Database creation or extension only after current saved artifacts already exist. `RecipeCollectionDatabasePlanner` resolves up-to-date artifacts into source/column previews from recovery status, and `RecipeCollectionDatabaseService` creates or extends draft manifests from those previews. Missing or stale artifacts remain update/recovery concerns; database creation from a collection does not calculate artifacts, execute recipes, or materialize `dataframe.csv`.
 

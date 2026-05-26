@@ -469,7 +469,7 @@ The Research Suite window (`HistoricalDataManagerWindow` internally) owns the No
 Notebook responsibilities are split deliberately:
 
 - `HistoricalNotebookWindow` is a GUI-owned in-memory editor. It displays and edits notebook content, emits user intents, and does not own durable persistence.
-- The Research Suite window owns the `Notes` menu actions, coordinates `HistoricalNotebookStore`, resolves notebook `Go` requests to active chart panels, applies runtime POI/Potential Trade markers to matching charts, and performs durable auto-save-on-close through the store boundary.
+- The Research Suite window owns the `Notes` menu actions, coordinates `HistoricalNotebookStore`, resolves notebook `Go` requests to active chart panels, applies runtime POI/Potential Trade markers to matching charts, and routes save/update requests through the store boundary.
 - `HistoricalNotebookStore` owns durable notebook JSON files under `chart_presets/notebooks` and must remain free of GUI / PySide imports.
 - `HistoricalWorkspaceSnapshotStore` stores only an optional `notebook_ref` with notebook identity/display metadata. It does not embed notebook content.
 - Notebook Manager owns assignment/unassignment UX, assignment summaries, notebook deletion, and cleanup of referencing `notebook_ref` values when an assigned notebook is deleted.
@@ -484,6 +484,13 @@ Notebook tabs contain structured `Notes`, `Potential Trades`, and `Point of Inte
 - Point of Interest rows expose `Go | Delete | Date / Time | Title | Description`;
 - row deletion always asks for confirmation;
 - Date / Time double-click navigation is disabled, so explicit Go buttons are the only notebook navigation path.
+
+Notebook free-text fields support basic rich-text formatting:
+
+- compact formatting palettes sit beside Add Note, Add Trade, and Add Point of Interest;
+- supported controls are bold, underline, text color, bullet list, and numbered list;
+- formatting applies to notebook description, note text, trade note text, POI title, and POI description;
+- IDs, timestamps, dates, numeric fields, dataset identity, symbol/timeframe fields, and direction/outcome selectors remain plain fields.
 
 Potential Trades and POI `Go` buttons emit `goto_requested(chart_key, ts_ms)`. The notebook window does not move charts directly. `HistoricalDataManagerWindow` performs active-chart lookup and delegates chart centering through `HistoricalChartPanel` and `HistoricalChartController`.
 
@@ -503,6 +510,10 @@ Notebook JSON may include additive `annotation_settings` for `poi_marker_offset`
 The menu-bar corner quick actions include an optional `Notebook` button before the Study Environment buttons. It opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
 
 Notebook save supports explicit Save as new and Update existing modes. Update existing uses `HistoricalNotebookStore.update_notebook(...)` to preserve `notebook_id` and `created_at_ms`, advance `updated_at_ms`, recompute `content_hash`, and atomically overwrite through the store. Save as new creates a distinct notebook identity and does not repoint existing Workspace Snapshot `notebook_ref` values. Create New Notebook clears prior loaded identity before refreshing workspace charts.
+
+Dirty-state protection is editor-owned. The notebook editor tracks edits to name, description, table cells, combo cells, row add/delete actions, chart tab deletion, annotation offsets, and chart refresh payload changes. Dirty notebooks prompt with Save / Don't Save / Cancel before close, Create New Notebook, Load Notebook, assigned notebook replacement, or Workspace Snapshot assigned-notebook replacement. Save proceeds only after the existing save flow succeeds; Don't Save continues without writing; Cancel aborts the close/load/replace action.
+
+Notebook persistence preserves plain-text compatibility. Free-text values remain populated in the existing plain fields, while formatted content may be stored in optional parallel HTML fields such as `description_html`, `note_html`, and `title_html`. Old plain-text notebooks load without a separate upgrade step, and `content_hash` includes formatted HTML fields when present.
 
 ### Saved Study Environment and Workspace Snapshot save/update/delete/management
 
@@ -1430,7 +1441,7 @@ This README therefore documents the current ownership contract and validated cod
 The GUI currently provides:
 
 - 8-slot adaptive historical workspace with Scroll 4 / Fit 8 modes, dock-back slot preservation, and chart Position controls
-- Historical Notebook support for workspace-linked notes, Potential Trades, POIs, row-level delete, explicit Go navigation, assigned snapshot notebooks, auto-save-on-close, and runtime POI/PT chart annotations
+- Historical Notebook support for workspace-linked notes, Potential Trades, POIs, row-level delete, explicit Go navigation, assigned snapshot notebooks, dirty close/load replacement prompts, rich-text free-text formatting, and runtime POI/PT chart annotations
 - Notebook Manager ownership for notebook assignment/unassignment, assignment summaries, and confirmed notebook deletion
 - Pan Anchor horizontal synchronization across active historical charts
 - confirmed delete actions for saved Study Environments and Workspace Snapshots
@@ -1586,6 +1597,7 @@ Recommended tooling (in the GUI package):
 
 ## Change log
 
+- **v3.27 (2026-05-26)** - Research Suite notebook UX RS5 sync: documented notebook dirty-state protection, Save / Don't Save / Cancel close/replace flow, rich-text formatting palettes for notebook free-text fields, plain-text compatibility, and optional parallel HTML fields.
 - **v3.26 (2026-05-26)** - Research Suite RS1-RS4 sync: documented Research Suite terminology, artifact-save recipe persistence and sidecar recipe metadata, notebook Save as new / Update existing, and Study Environment / Workspace Snapshot managers with read-only embedded snapshot study metadata.
 - **v3.25 (2026-05-26)** - Historical Study metadata action and save update-mode sync: documented visible `Metadata...` actions on applied price overlay rows and oscillator headers, plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. Update existing preserves IDs through store-owned persistence and does not create extra saved items.
 - **v3.24 (2026-05-26)** - Study metadata and Data Manager recipe-to-database workflow sync: documented chart-local `StudyUserMetadata`, `Create Recipes from Study Environment...`, C1 geography reporting, C2 recipe-collection artifact resolution, C3 draft database create/extend service, and C4 `Create/Extend Database...` UI while preserving no-calculation and no-materialization boundaries.
@@ -1595,7 +1607,7 @@ Recommended tooling (in the GUI package):
 
 - **v3.21 (2026-05-22)** — Historical download/Core capability sync: Historical Download Manager capability display remains GUI intent/display only, while CoreBridge resolves exchange capabilities through the registered Core `ExchangeRegistry`; downloader adapter acquisition is registry-backed, normalized audit snapshots remain GUI-displayable, and GUI ownership boundaries are unchanged.
 
-- **v3.20 (2026-05-22)** — Historical Notebook and workspace final polish: Notebook Manager owns assignment and deletion, Notes rows no longer navigate, Trades became Potential Trades, Potential Trades support explicit Long/Short direction and runtime green/red arrow annotations, POI/PT marker offsets persist in notebook `annotation_settings`, notebooks auto-save on close, saved Study Environment and Workspace Snapshot load dialogs gained confirmed Delete actions, Research Suite opens maximized, and Pan Anchor provides optional horizontal timestamp-based pan synchronization across active charts.
+- **v3.20 (2026-05-22)** — Historical Notebook and workspace final polish: Notebook Manager owns assignment and deletion, Notes rows no longer navigate, Trades became Potential Trades, Potential Trades support explicit Long/Short direction and runtime green/red arrow annotations, POI/PT marker offsets persist in notebook `annotation_settings`, saved Study Environment and Workspace Snapshot load dialogs gained confirmed Delete actions, Research Suite opens maximized, and Pan Anchor provides optional horizontal timestamp-based pan synchronization across active charts. Later RS5 updates added dirty close/load replacement prompts.
 
 - **v3.19 (2026-05-21)** — Historical Notebook workflow: added `Notes` menu notebook actions, `HistoricalNotebookStore` persistence, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level `Go` buttons, runtime POI chart annotations, and the menu-bar `Notebook` quick action. Study Environments remain notebook-free and POI markers remain runtime annotations rather than hidden studies.
 

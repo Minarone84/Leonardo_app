@@ -182,6 +182,18 @@ Updating an existing Notebook preserves its `notebook_id`, preserves `created_at
 
 Research Suite managers use store-owned update/delete APIs. The Study Environment Manager may edit serialized study `user_metadata`; the Workspace Snapshot Manager displays embedded study metadata read-only in RS4.
 
+## Notebook rich-text persistence
+
+Notebook free-text fields preserve plain-text compatibility. Existing fields such as `description`, note/trade `note`, POI `title`, and POI `description` remain populated with plain text for compatibility, search, and fallback display.
+
+Formatted free-text content may be stored in optional parallel HTML fields:
+
+- `description_html`
+- `note_html`
+- `title_html`
+
+Old notebooks without these HTML fields remain valid. IDs, timestamps, dates, numeric fields, dataset identity, symbol/timeframe fields, and direction/outcome selectors remain plain. Notebook `content_hash` includes optional HTML fields when they are present.
+
 ## Adding a new indicator
 
 1. Add an indicator contract in `tool_contracts/manifests/indicators.py`.

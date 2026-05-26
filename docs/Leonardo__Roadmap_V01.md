@@ -411,7 +411,7 @@ Implemented baseline:
   - Notes rows no longer navigate; Potential Trades rows have explicit `Go`, `Delete`, empty-by-default `Direction`, and Long/Short marker semantics.
   - Potential Trade Long markers render as green upward arrows below bars; Potential Trade Short markers render as red downward arrows above bars.
   - Notebook JSON persists additive `annotation_settings` for POI, PT Long, and PT Short marker offsets.
-  - Notebooks auto-save on close through the Research Suite/store boundary.
+  - Later RS5 notebook UX superseded the earlier close-save path with Save / Don't Save / Cancel dirty-state confirmation.
   - Study Environment and Workspace Snapshot load dialogs expose confirmed Delete actions; Workspace Snapshot deletion does not delete referenced notebooks.
   - Research Suite opens maximized.
   - Pan Anchor is accepted as an off-by-default, horizontal-only, timestamp-center pan synchronization mode across active charts in the same Research Suite.
@@ -496,6 +496,16 @@ Implemented baseline:
   - Embedded Workspace Snapshot study metadata is read-only in RS4.
   - No recipe creation, artifact calculation, Workspace Snapshot export, assigned-notebook deletion, or Analysis Database creation is part of those dialogs.
 
+- M20 Research Suite notebook UX RS5 workflow is accepted:
+  - Notebook editor dirty tracking covers name, description, table edits, combo edits, row add/delete, chart tab deletion, annotation offsets, and chart refresh payload changes.
+  - Dirty notebooks prompt with Save / Don't Save / Cancel before close, Create New Notebook, Load Notebook, assigned notebook replacement, or Workspace Snapshot assigned-notebook replacement.
+  - Save proceeds only when the existing save flow succeeds; Don't Save proceeds without writing; Cancel aborts the close/load/replace action.
+  - Notebook formatting palettes sit beside Add Note, Add Trade, and Add Point of Interest.
+  - Free-text formatting supports bold, underline, text color, bullet list, and numbered list for notebook description, note text, trade note text, POI title, and POI description.
+  - Plain fields remain populated and formatted content may be stored in optional parallel HTML fields such as `description_html`, `note_html`, and `title_html`.
+  - Old plain-text notebooks remain loadable, and formatted HTML fields participate in notebook `content_hash` when present.
+  - Notebook formatting does not change Study Environment, Workspace Snapshot, Data Manager, artifact, recipe, or database workflows.
+
 Next direction:
 
 - Treat the current Historical Download Manager M7/M13 behavior as the accepted OHLCV ingestion and preliminary-validation baseline.
@@ -571,6 +581,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.27: Research Suite notebook UX RS5 sync. Documents notebook dirty-state tracking, Save / Don't Save / Cancel close/replace behavior, rich-text formatting palettes for notebook free-text fields, plain-text compatibility, optional parallel HTML fields, and unchanged Study Environment / Workspace Snapshot / Data Manager boundaries.
+
 v0.26: Research Suite RS1-RS4 sync. Documents Research Suite user-facing terminology, artifact save recipe persistence in the Data Manager-visible recipe store, artifact sidecar recipe metadata, Notebook Save as new / Update existing, and saved Study Environment / Workspace Snapshot management dialogs. Embedded Workspace Snapshot study metadata is read-only in RS4. No recipe creation, artifact calculation, or Analysis Database creation is part of those dialogs.
 
 v0.25: Historical Study metadata action and preset update workflow. Documents visible `Metadata...` actions for applied price overlay rows and oscillator pane headers, plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. Update existing preserves storage IDs through store-owned persistence, preserves Workspace Snapshot `notebook_ref` behavior, and does not create extra saved preset IDs.
@@ -589,7 +601,7 @@ v0.19: Historical apply/save/recovery hardening. Documents Historical Download c
 
 v0.18: Core-boundary repair and exchange-registry baseline. Documents normalized audit event handling, implemented HistoricalDatasetService cache invalidation APIs, downloader post-write dataset-cache invalidation, pyproject runtime dependency truth, and the minimal Core `ExchangeRegistry` capability provider used by CoreBridge and HistoricalDownloader while keeping Bybit as the only default adapter.
 
-v0.17: Notebook / preset delete / Pan Anchor polish. Documents Notebook Manager assignment/delete ownership, Notes/Potential Trades/POI final row layouts, Potential Trades Long/Short runtime markers, annotation offset persistence, notebook auto-save-on-close, confirmed saved Study Environment and Workspace Snapshot deletion, maximized Research Suite opening, and off-by-default Pan Anchor horizontal timestamp-based pan synchronization.
+v0.17: Notebook / preset delete / Pan Anchor polish. Documents Notebook Manager assignment/delete ownership, Notes/Potential Trades/POI final row layouts, Potential Trades Long/Short runtime markers, annotation offset persistence, confirmed saved Study Environment and Workspace Snapshot deletion, maximized Research Suite opening, and off-by-default Pan Anchor horizontal timestamp-based pan synchronization. Later RS5 documentation supersedes the old close-save wording with dirty-state Save / Don't Save / Cancel behavior.
 
 v0.16: Notebook and Workspace Snapshot integration. Documents NotebookStore persistence, Notes menu actions, save/load/assign Notebook workflows, Workspace Snapshot `notebook_ref`, dataset-keyed notebook chart tabs, structured Notes/Trades/POI rows, row-level Go To buttons, runtime POI chart markers, and the Open Notebook quick action. Study Environments remain notebook-free and POI markers remain runtime chart annotations rather than hidden studies.
 

@@ -196,7 +196,12 @@ Accepted notebook behavior includes:
 - Update existing preserves `notebook_id` and `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and atomically overwrites through the store;
 - Create New Notebook clears the prior loaded identity before refreshing workspace charts;
 - Save as new creates a distinct notebook identity and does not repoint existing Workspace Snapshot `notebook_ref` values;
-- notebooks auto-save on close through the existing Research Suite / store boundary;
+- dirty notebooks prompt with Save / Don't Save / Cancel before close or replacement, including Create New Notebook, Load Notebook, assigned notebook replacement, and Workspace Snapshot assigned-notebook replacement;
+- Save uses the existing save flow and proceeds only after success, Don't Save proceeds without writing, and Cancel aborts the close/load/replace action;
+- notebook free-text fields support basic formatting through compact palettes beside Add Note, Add Trade, and Add Point of Interest;
+- rich-text controls target only notebook description, note text, trade note text, POI title, and POI description; dates, timestamps, numeric fields, IDs, dataset identity, symbol/timeframe fields, and direction/outcome selectors remain plain;
+- notebook free-text fields keep plain-text values and may also store formatted HTML in parallel fields such as `description_html`, `note_html`, and `title_html`;
+- old plain-text notebooks continue to load, and formatted HTML fields participate in notebook `content_hash` when present;
 - a compact menu-bar `Notebook` quick action before the Study Environment actions opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
 
 Study Environments remain notebook-free. Notebook data belongs to the notebook store and Workspace Snapshot association belongs to `notebook_ref` only.

@@ -647,6 +647,10 @@ Research Suite artifact save follows the same reproducibility boundary as Data M
 
 `HistoricalNotebookStore.update_notebook(...)` replaces an existing saved Notebook while preserving `notebook_id` and `created_at_ms`, advancing `updated_at_ms`, recomputing `content_hash`, and writing through the store-owned atomic overwrite path.
 
+Notebook dirty state is GUI/editor-owned. `HistoricalNotebookWindow` tracks unsaved editor changes and the Research Suite coordinates Save / Don't Save / Cancel close/replace confirmation, but durable persistence, identity preservation, timestamps, hashes, duplicate checks, and atomic writes remain store-owned.
+
+Notebook rich-text persistence preserves compatibility fields. Plain notebook text stays in `description`, note `note`, POI `title`, and POI `description` fields; formatted free text may be stored in optional parallel HTML fields such as `description_html`, `note_html`, and `title_html`. Existing plain-text notebooks remain valid, and `content_hash` includes formatted HTML fields when present.
+
 GUI dialogs and manager dialogs collect Save as new / Update existing, rename, description, delete, and metadata-edit intent only. They must not manually write JSON, calculate hashes, manage preset identity, delete files directly, or own atomic persistence behavior. Research Suite user-facing terminology does not rename internal classes, schema fields, IDs, or store paths.
 
 ### Study Environment recipe export semantics

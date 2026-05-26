@@ -10,12 +10,14 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import Any, Iterable, Literal, Mapping
 
+from leonardo.data.historical.artifact_metadata_contracts import ArtifactMetadataEntry
 from leonardo.data.historical.paths import HistoricalPaths
 from leonardo.data.naming import MarketId, canonicalize
 
 ARTIFACT_RECIPE_SCHEMA_VERSION = 1
 ARTIFACT_RECIPE_TYPE = "artifact_recipe"
 ARTIFACT_RECIPE_DATASET_DIR = "artifact_recipes"
+ARTIFACT_RECIPE_METADATA_NAMESPACE = "artifact_recipe"
 
 ArtifactRecipeToolType = Literal["indicator", "oscillator", "construct"]
 
@@ -237,6 +239,51 @@ class ArtifactRecipe:
             created_at_ms=int(data.get("created_at_ms", 0)),
             updated_at_ms=int(data.get("updated_at_ms", 0)),
         )
+
+
+def artifact_recipe_metadata_entries(recipe: ArtifactRecipe) -> tuple[ArtifactMetadataEntry, ...]:
+    """
+    Build non-identity artifact sidecar metadata for a saved recipe.
+
+    The entries link a persisted artifact to the reusable recipe that can
+    reproduce it. They do not affect artifact identity, file naming, or recipe
+    identity.
+    """
+    return (
+        ArtifactMetadataEntry(
+            namespace=ARTIFACT_RECIPE_METADATA_NAMESPACE,
+            key="recipe_id",
+            value=recipe.recipe_id,
+            value_type="string",
+            label="Source artifact recipe ID",
+            description="Reusable artifact recipe saved for this artifact.",
+            tags=("artifact_recipe", "lineage"),
+            searchable=True,
+            identity_affecting=False,
+        ),
+        ArtifactMetadataEntry(
+            namespace=ARTIFACT_RECIPE_METADATA_NAMESPACE,
+            key="recipe_hash",
+            value=recipe.recipe_hash,
+            value_type="string",
+            label="Source artifact recipe hash",
+            description="Stable hash of the reusable artifact recipe.",
+            tags=("artifact_recipe", "lineage"),
+            searchable=True,
+            identity_affecting=False,
+        ),
+        ArtifactMetadataEntry(
+            namespace=ARTIFACT_RECIPE_METADATA_NAMESPACE,
+            key="recipe_hash_short",
+            value=recipe.recipe_hash_short,
+            value_type="string",
+            label="Source artifact recipe short hash",
+            description="Short stable hash of the reusable artifact recipe.",
+            tags=("artifact_recipe", "lineage"),
+            searchable=True,
+            identity_affecting=False,
+        ),
+    )
 
 
 @dataclass(frozen=True)

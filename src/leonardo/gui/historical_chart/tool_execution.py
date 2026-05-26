@@ -5,6 +5,11 @@ from typing import Any, Dict
 
 import pandas as pd
 
+from leonardo.data.historical.artifact_recipe_store import (
+    ArtifactRecipe,
+    ArtifactRecipeStore,
+    artifact_recipe_metadata_entries,
+)
 from leonardo.data.historical.derived_store_csv import DerivedCsvStore
 from leonardo.data.historical.utc_dependency_sources import (
     load_saved_peaks_troughs_dataframe,
@@ -282,6 +287,16 @@ class HistoricalChartToolExecutionMixin:
             "source_artifacts": self._lineage_source_artifacts_from_payload(payload),
         }
 
+    def _save_artifact_recipe(self, payload: Dict[str, Any]) -> ArtifactRecipe:
+        """
+        Persist the reusable artifact recipe for an explicit artifact save.
+
+        Recipe persistence uses the same historical root and store contract as
+        Data Manager so saved recipes remain discoverable outside the chart.
+        """
+        store = ArtifactRecipeStore(historical_root=self._historical_root())
+        return store.save_recipe(payload, overwrite=True)
+
     def save_financial_tool(self, payload: Dict[str, Any]) -> None:
         """
         Persist a financial tool result computed on the FULL canonical historical dataset.
@@ -335,6 +350,18 @@ class HistoricalChartToolExecutionMixin:
             return
 
         try:
+            recipe = self._save_artifact_recipe(payload)
+        except Exception as e:
+            save_meta["error"] = f"Failed to save artifact recipe before artifact save: {e!r}"
+            self.save_failed.emit(save_meta)
+            self.error.emit(save_meta["error"])
+            return
+
+        save_meta["recipe_id"] = recipe.recipe_id
+        save_meta["recipe_hash"] = recipe.recipe_hash
+        save_meta["recipe_hash_short"] = recipe.recipe_hash_short
+
+        try:
             full_df = self._load_full_dataset_dataframe()
         except Exception as e:
             save_meta["error"] = f"Failed to load full historical dataset for save: {e!r}"
@@ -373,6 +400,7 @@ class HistoricalChartToolExecutionMixin:
                 return
 
         save_metadata = self._save_metadata_payload(payload, dict(params))
+        save_metadata["metadata"] = artifact_recipe_metadata_entries(recipe)
         save_meta["params_status"] = save_metadata["params_status"]
         save_meta["bindings_status"] = save_metadata["bindings_status"]
 

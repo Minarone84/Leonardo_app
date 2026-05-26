@@ -30,6 +30,7 @@ from leonardo.gui.chart.study_serialization import (
     deserialize_study_style_payload,
     deserialize_study_user_metadata_payload,
     serialize_chart_study,
+    serialize_study_user_metadata,
     validate_serialized_chart_study,
 )
 from leonardo.gui.chart.workspace import ChartWorkspaceWidget
@@ -263,6 +264,7 @@ class HistoricalChartPanel(
                     "source_kind": study.computation.source_kind,
                     "input_bindings": dict(study.computation.input_bindings),
                     "visible": bool(study.style.visible),
+                    "user_metadata": serialize_study_user_metadata(study.user_metadata),
                 }
             )
         return entries
@@ -1035,13 +1037,6 @@ class HistoricalChartPanel(
             except Exception:
                 pass
 
-        metadata_signal = getattr(price_pane, "study_metadata_requested", None)
-        if metadata_signal is not None:
-            try:
-                metadata_signal.connect(self._on_price_pane_study_metadata_requested)
-            except Exception:
-                pass
-
         remove_signal = getattr(price_pane, "study_remove_requested", None)
         if remove_signal is not None:
             try:
@@ -1075,13 +1070,6 @@ class HistoricalChartPanel(
         if edit_signal is not None:
             try:
                 edit_signal.connect(self._on_oscillator_pane_study_edit_requested)
-            except Exception:
-                pass
-
-        metadata_signal = getattr(pane, "study_metadata_requested", None)
-        if metadata_signal is not None:
-            try:
-                metadata_signal.connect(self._on_oscillator_pane_study_metadata_requested)
             except Exception:
                 pass
 

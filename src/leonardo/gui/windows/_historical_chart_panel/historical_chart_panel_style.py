@@ -21,9 +21,7 @@ from leonardo.gui.chart.studies import (
     PANE_TARGET_PRICE,
     StudyFillStyle,
     StudySignalStyle,
-    StudyUserMetadata,
 )
-from leonardo.gui.windows._historical_chart_panel.study_metadata_dialog import StudyMetadataDialog
 from leonardo.gui.windows._historical_chart_panel.study_style_dialog import StudyStyleDialog
 
 
@@ -1130,63 +1128,6 @@ class HistoricalChartPanelStyleMixin:
 
         patch = dialog.style_patch()
         self._apply_study_style_patch(study.instance_id, patch)
-
-    def _on_price_pane_study_metadata_requested(self, render_key: str) -> None:
-        normalized = str(render_key).strip()
-        if not normalized:
-            self._on_error("Cannot edit study metadata: empty identifier.")
-            return
-
-        study = self._study_registry.get(normalized)
-        if study is None:
-            study = self._find_study_by_render_key(normalized)
-
-        if study is None:
-            self._on_error(
-                f"Cannot edit study metadata: identifier '{normalized}' is not registered."
-            )
-            return
-
-        self._open_study_metadata_dialog(study)
-
-    def _on_oscillator_pane_study_metadata_requested(self, instance_id: str) -> None:
-        normalized_id = str(instance_id).strip()
-        if not normalized_id:
-            self._on_error("Cannot edit oscillator study metadata: empty instance_id.")
-            return
-
-        study = self._study_registry.get(normalized_id)
-        if study is None:
-            self._on_error(
-                f"Cannot edit oscillator study metadata: unknown instance_id '{normalized_id}'."
-            )
-            return
-
-        self._open_study_metadata_dialog(study)
-
-    def _open_study_metadata_dialog(self, study: ChartStudyInstance) -> None:
-        dialog = StudyMetadataDialog(
-            display_name=study.display_name,
-            current_metadata=study.user_metadata,
-            parent=self,
-        )
-        if dialog.exec() != int(QDialog.Accepted):
-            return
-
-        self._apply_study_user_metadata(study.instance_id, dialog.user_metadata())
-
-    def _apply_study_user_metadata(
-        self,
-        instance_id: str,
-        user_metadata: StudyUserMetadata,
-    ) -> None:
-        study = self._study_registry.get(instance_id)
-        if study is None:
-            self._on_error(f"Cannot apply study metadata: unknown instance_id '{instance_id}'.")
-            return
-
-        self._study_registry.update_user_metadata(instance_id, user_metadata)
-        self._on_error(f"Updated metadata for study '{study.display_name}'.")
 
     def _apply_study_style_patch(self, instance_id: str, patch: Dict[str, Any]) -> None:
         study = self._study_registry.get(instance_id)

@@ -84,6 +84,10 @@ def test_save_and_load_dialogs_have_required_concepts() -> None:
     assert "Append to existing studies" in source
     assert "Replace existing studies" in source
     assert "Study Recap" in source
+    assert "Study Metadata" in source
+    assert "_metadata_table" in source
+    assert "def studies_with_metadata" in source
+    assert "serialize_study_user_metadata" in source
     assert "Created from" in source
     assert '"Delete"' in source
     assert "delete_setup" in source
@@ -119,14 +123,12 @@ def test_chart_panel_exports_and_loads_serialized_studies_through_panel_owner() 
     assert "runtime.render_keys" not in apply_body
 
 
-def test_study_metadata_dialog_and_actions_are_chart_local() -> None:
+def test_study_metadata_dialog_remains_but_chart_controls_do_not_expose_action() -> None:
     panel_source = _source(PANEL)
-    apply_source = _source(STUDY_APPLY_MIXIN)
     dialog_source = _source(METADATA_DIALOG)
     overlay_source = _source(OVERLAY_ROWS)
     price_source = _source(PRICE_PANE)
     oscillator_source = _source(OSCILLATOR_PANE)
-    metadata_body = _function_source(STYLE_MIXIN, "_open_study_metadata_dialog")
 
     assert "class StudyMetadataDialog" in dialog_source
     assert "_important_check" in dialog_source
@@ -134,31 +136,28 @@ def test_study_metadata_dialog_and_actions_are_chart_local() -> None:
     assert "_description_edit" in dialog_source
     assert "StudyUserMetadata" in dialog_source
 
-    assert "metadata_requested = Signal(str)" in overlay_source
-    assert '_metadata_btn.setText("Metadata...")' in overlay_source
-    assert '_metadata_btn.setText("M")' not in overlay_source
-    assert "study_metadata_requested = Signal(str)" in price_source
-    assert "study_metadata_requested = Signal(str)" in oscillator_source
-    assert '_metadata_btn.setText("Metadata...")' in oscillator_source
-    assert '_metadata_btn.setText("Meta")' not in oscillator_source
-    assert "_on_price_pane_study_metadata_requested" in panel_source
-    assert "_on_oscillator_pane_study_metadata_requested" in panel_source
+    overlay_metadata_signal = "metadata" + "_requested = Signal(str)"
+    pane_metadata_signal = "study_" + "metadata" + "_requested = Signal(str)"
+    price_handler = "_on_price_pane_study_" + "metadata" + "_requested"
+    oscillator_handler = "_on_oscillator_pane_study_" + "metadata" + "_requested"
 
-    assert "StudyMetadataDialog" in metadata_body
-    assert "_apply_study_user_metadata" in metadata_body
-    assert "apply_financial_tool" not in metadata_body
-    assert "with_user_metadata" in apply_source
+    assert overlay_metadata_signal not in overlay_source
+    assert "_metadata_btn" not in overlay_source
+    assert pane_metadata_signal not in price_source
+    assert pane_metadata_signal not in oscillator_source
+    assert "_metadata_btn" not in oscillator_source
+    assert price_handler not in panel_source
+    assert oscillator_handler not in panel_source
 
 
-def test_study_metadata_apply_path_updates_only_user_metadata() -> None:
-    body = _function_source(STYLE_MIXIN, "_apply_study_user_metadata")
+def test_study_environment_save_dialog_updates_only_serialized_user_metadata() -> None:
+    body = _function_source(DIALOGS, "studies_with_metadata")
 
-    assert "self._study_registry.update_user_metadata(instance_id, user_metadata)" in body
+    assert 'payload["user_metadata"] = dict(metadata_payloads[index])' in body
+    assert "deepcopy(dict(study))" in body
     assert "apply_financial_tool" not in body
-    assert "_reapply_study_render_series" not in body
-    assert "with_style" not in body
-    assert "with_runtime" not in body
-    assert "with_computation" not in body
+    assert "save_recipe" not in body
+    assert "calculate_and_save" not in body
 
 
 def test_data_manager_save_and_load_paths_use_store_and_panel_helpers() -> None:
@@ -166,7 +165,8 @@ def test_data_manager_save_and_load_paths_use_store_and_panel_helpers() -> None:
     load_body = _function_source(HDM, "_on_load_study_setup")
 
     assert "ChartStudySetupStore" in _source(HDM)
-    assert "panel.export_serialized_studies()" in save_body
+    assert "exported_studies = panel.export_serialized_studies()" in save_body
+    assert "studies = dialog.studies_with_metadata(exported_studies)" in save_body
     assert "existing_setups=self._load_study_setup_objects()" in save_body
     assert "store.create_setup" in save_body
     assert "store.save_setup" in save_body

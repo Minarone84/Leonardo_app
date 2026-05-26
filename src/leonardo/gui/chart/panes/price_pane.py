@@ -40,7 +40,6 @@ class PricePane(QWidget):
 
     study_style_requested = Signal(str)
     study_edit_requested = Signal(str)
-    study_metadata_requested = Signal(str)
     study_remove_requested = Signal(str)
 
     def __init__(
@@ -324,7 +323,6 @@ class PricePane(QWidget):
             row = _StudyRow(row_key, parent=self._study_rows_host)
             row.style_requested.connect(self.study_style_requested)
             row.edit_requested.connect(self.study_edit_requested)
-            row.metadata_requested.connect(self.study_metadata_requested)
             row.remove_requested.connect(self.study_remove_requested)
             row.value_toggled.connect(self._on_overlay_row_value_toggled)
             self._study_rows_layout.addWidget(row)

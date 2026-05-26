@@ -33,7 +33,6 @@ class OscillatorPane(QWidget):
 
     study_style_requested = Signal(str)
     study_edit_requested = Signal(str)
-    study_metadata_requested = Signal(str)
     study_remove_requested = Signal(str)
     pane_move_up_requested = Signal(str)
     pane_move_down_requested = Signal(str)
@@ -114,12 +113,6 @@ class OscillatorPane(QWidget):
         self._style_btn.setToolTip("Edit display style")
         self._style_btn.clicked.connect(self._emit_style)
         self._header_layout.addWidget(self._style_btn, 0)
-
-        self._metadata_btn = QToolButton(self._header_host)
-        self._metadata_btn.setText("Metadata...")
-        self._metadata_btn.setToolTip("Edit study metadata")
-        self._metadata_btn.clicked.connect(self._emit_metadata)
-        self._header_layout.addWidget(self._metadata_btn, 0)
 
         self._edit_btn = QToolButton(self._header_host)
         self._edit_btn.setText("Edit")
@@ -433,10 +426,6 @@ class OscillatorPane(QWidget):
     def _emit_edit(self) -> None:
         if self._study_instance_id:
             self.study_edit_requested.emit(self._study_instance_id)
-
-    def _emit_metadata(self) -> None:
-        if self._study_instance_id:
-            self.study_metadata_requested.emit(self._study_instance_id)
 
     def _emit_remove(self) -> None:
         if self._study_instance_id:

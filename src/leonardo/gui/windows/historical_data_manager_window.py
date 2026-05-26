@@ -1302,7 +1302,7 @@ class HistoricalDataManagerWindow(QMainWindow):
             return
 
         try:
-            studies = panel.export_serialized_studies()
+            exported_studies = panel.export_serialized_studies()
         except Exception as exc:
             QMessageBox.warning(
                 self,
@@ -1311,13 +1311,15 @@ class HistoricalDataManagerWindow(QMainWindow):
             )
             return
 
-        if not studies:
+        if not exported_studies:
             QMessageBox.information(
                 self,
                 "Save Study Environment",
                 "The selected chart has no studies to save.",
             )
             return
+
+        studies = dialog.studies_with_metadata(exported_studies)
 
         store = self._chart_study_setup_store()
         try:

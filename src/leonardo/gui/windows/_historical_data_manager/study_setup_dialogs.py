@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any, Mapping, Sequence
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -18,12 +21,23 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPlainTextEdit,
     QRadioButton,
+    QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
 )
 
 from leonardo.data.chart_presets.study_setup_store import ChartStudySetup
+from leonardo.gui.chart.studies import (
+    STUDY_DATASET_ROLE_VALUES,
+    StudyUserMetadata,
+    normalize_study_dataset_role,
+)
+from leonardo.gui.chart.study_serialization import (
+    deserialize_study_user_metadata_payload,
+    serialize_study_user_metadata,
+)
 from leonardo.gui.windows._historical_data_manager.preset_compatibility import (
     PresetCompatibilityReport,
     format_compatibility_report,
@@ -63,6 +77,41 @@ def _dataset_text(data: Mapping[str, Any]) -> str:
     return " / ".join(part for part in parts if part) or "Unknown dataset"
 
 
+def _metadata_from_study(study: Mapping[str, Any]) -> StudyUserMetadata:
+    raw = study.get("user_metadata")
+    payload = raw if isinstance(raw, Mapping) else {}
+    return deserialize_study_user_metadata_payload(payload)
+
+
+def _metadata_from_payload(payload: Mapping[str, Any]) -> StudyUserMetadata:
+    return deserialize_study_user_metadata_payload(payload)
+
+
+def _study_display_name(study: Mapping[str, Any]) -> str:
+    return str(study.get("display_name", "") or study.get("tool_key", "") or "Study")
+
+
+def _study_tool_text(study: Mapping[str, Any]) -> str:
+    family = str(study.get("family", "") or "").strip()
+    tool_key = str(study.get("tool_key", "") or "").strip()
+    return f"{family}/{tool_key}" if family and tool_key else family or tool_key
+
+
+def _role_label(role: str) -> str:
+    if role == "utc":
+        return "UTC"
+    return str(role or "").replace("_", " ").title()
+
+
+def _set_combo_role(combo: QComboBox, value: object) -> None:
+    role = normalize_study_dataset_role(value)
+    for index in range(combo.count()):
+        if combo.itemData(index) == role:
+            combo.setCurrentIndex(index)
+            return
+    combo.setCurrentIndex(0)
+
+
 class SaveStudySetupDialog(QDialog):
     """Collect user metadata and source-chart choice for a study environment save."""
 
@@ -79,9 +128,11 @@ class SaveStudySetupDialog(QDialog):
         self._existing_setups_by_id = {
             setup.setup_id: setup for setup in self._existing_setups
         }
+        self._metadata_payloads_by_position = self._initial_metadata_payloads_by_position()
+        self._metadata_table_updating = False
 
         self.setWindowTitle("Save Study Environment")
-        self.resize(760, 560)
+        self.resize(900, 680)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -151,6 +202,17 @@ class SaveStudySetupDialog(QDialog):
 
         root.addWidget(recap_group, 1)
 
+        metadata_group = QGroupBox("Study Metadata", self)
+        metadata_layout = QVBoxLayout(metadata_group)
+        metadata_layout.setContentsMargins(10, 14, 10, 10)
+        metadata_layout.setSpacing(8)
+
+        self._metadata_table = QTableWidget(0, 5, metadata_group)
+        self._configure_metadata_table()
+        metadata_layout.addWidget(self._metadata_table, 1)
+
+        root.addWidget(metadata_group, 1)
+
         self._buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Save
             | QDialogButtonBox.StandardButton.Cancel,
@@ -187,6 +249,29 @@ class SaveStudySetupDialog(QDialog):
         data = self._source_chart_combo.currentData()
         return int(data) if isinstance(data, int) else 0
 
+    def studies_with_metadata(
+        self,
+        studies: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """
+        Return serialized study payloads with dialog metadata applied by row order.
+
+        Study environment payloads do not persist chart-session instance ids.
+        The dialog is populated from the same selected chart order used for
+        export, so row order is the narrow compatibility-safe mapping boundary.
+        """
+
+        metadata_payloads = self._metadata_payloads_for_position(
+            self.selected_chart_position()
+        )
+        updated: list[dict[str, Any]] = []
+        for index, study in enumerate(studies):
+            payload = deepcopy(dict(study))
+            if index < len(metadata_payloads):
+                payload["user_metadata"] = dict(metadata_payloads[index])
+            updated.append(payload)
+        return updated
+
     def _selected_chart_option(self) -> dict[str, Any]:
         position = self.selected_chart_position()
         for option in self._chart_options:
@@ -221,6 +306,22 @@ class SaveStudySetupDialog(QDialog):
         self._name_edit.setText(setup.display_name)
         self._description_edit.setPlainText(setup.description)
 
+    def _configure_metadata_table(self) -> None:
+        table = self._metadata_table
+        table.setHorizontalHeaderLabels(
+            ["Study", "Tool", "Important", "Dataset role", "Description"]
+        )
+        table.setSelectionBehavior(QTableWidget.SelectRows)
+        table.setSelectionMode(QTableWidget.SingleSelection)
+        table.setEditTriggers(QTableWidget.NoEditTriggers)
+        table.verticalHeader().setVisible(False)
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(4, QHeaderView.Stretch)
+
     def _refresh_recap(self) -> None:
         option = self._selected_chart_option()
         studies = list(option.get("studies", []) or [])
@@ -231,7 +332,140 @@ class SaveStudySetupDialog(QDialog):
         ]
         lines.extend(_study_recap_lines(studies) or ["No studies on this chart."])
         self._recap_text.setPlainText("\n".join(lines))
+        self._populate_metadata_table(studies)
         self._refresh_save_enabled()
+
+    def _populate_metadata_table(self, studies: Sequence[Mapping[str, Any]]) -> None:
+        table = self._metadata_table
+        position = self.selected_chart_position()
+        metadata_payloads = self._metadata_payloads_for_position(position)
+        self._metadata_table_updating = True
+        try:
+            table.setRowCount(0)
+            for row, study in enumerate(studies):
+                table.insertRow(row)
+                self._set_read_only_item(row, 0, _study_display_name(study))
+                self._set_read_only_item(row, 1, _study_tool_text(study))
+
+                metadata = _metadata_from_payload(
+                    metadata_payloads[row] if row < len(metadata_payloads) else {}
+                )
+
+                important_check = QCheckBox(table)
+                important_check.setChecked(metadata.important)
+                important_check.toggled.connect(
+                    lambda checked, row_index=row: self._set_row_important(
+                        row_index,
+                        checked,
+                    )
+                )
+                table.setCellWidget(row, 2, important_check)
+
+                role_combo = QComboBox(table)
+                for role in STUDY_DATASET_ROLE_VALUES:
+                    role_combo.addItem(_role_label(role), role)
+                _set_combo_role(role_combo, metadata.dataset_role)
+                role_combo.currentIndexChanged.connect(
+                    lambda _index, row_index=row, combo=role_combo: self._set_row_role(
+                        row_index,
+                        combo.currentData(),
+                    )
+                )
+                table.setCellWidget(row, 3, role_combo)
+
+                description_edit = QLineEdit(table)
+                description_edit.setText(metadata.description)
+                description_edit.setPlaceholderText("Study metadata description")
+                description_edit.textChanged.connect(
+                    lambda text, row_index=row: self._set_row_description(
+                        row_index,
+                        text,
+                    )
+                )
+                table.setCellWidget(row, 4, description_edit)
+        finally:
+            self._metadata_table_updating = False
+
+    def _set_read_only_item(self, row: int, column: int, text: str) -> None:
+        item = QTableWidgetItem(str(text))
+        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+        self._metadata_table.setItem(row, column, item)
+
+    def _set_row_important(self, row: int, checked: bool) -> None:
+        if self._metadata_table_updating:
+            return
+        metadata = self._metadata_for_row(row)
+        self._set_metadata_for_row(
+            row,
+            StudyUserMetadata(
+                important=bool(checked),
+                dataset_role=metadata.dataset_role,
+                description=metadata.description,
+            ),
+        )
+
+    def _set_row_role(self, row: int, role: object) -> None:
+        if self._metadata_table_updating:
+            return
+        metadata = self._metadata_for_row(row)
+        self._set_metadata_for_row(
+            row,
+            StudyUserMetadata(
+                important=metadata.important,
+                dataset_role=normalize_study_dataset_role(role),
+                description=metadata.description,
+            ),
+        )
+
+    def _set_row_description(self, row: int, description: str) -> None:
+        if self._metadata_table_updating:
+            return
+        metadata = self._metadata_for_row(row)
+        self._set_metadata_for_row(
+            row,
+            StudyUserMetadata(
+                important=metadata.important,
+                dataset_role=metadata.dataset_role,
+                description=str(description or "").strip(),
+            ),
+        )
+
+    def _metadata_for_row(self, row: int) -> StudyUserMetadata:
+        metadata_payloads = self._metadata_payloads_for_position(
+            self.selected_chart_position()
+        )
+        if 0 <= row < len(metadata_payloads):
+            return _metadata_from_payload(metadata_payloads[row])
+        return StudyUserMetadata()
+
+    def _set_metadata_for_row(self, row: int, metadata: StudyUserMetadata) -> None:
+        metadata_payloads = self._metadata_payloads_for_position(
+            self.selected_chart_position()
+        )
+        if 0 <= row < len(metadata_payloads):
+            metadata_payloads[row] = serialize_study_user_metadata(metadata)
+
+    def _metadata_payloads_for_position(self, position: int) -> list[dict[str, Any]]:
+        if position not in self._metadata_payloads_by_position:
+            option = self._selected_chart_option()
+            self._metadata_payloads_by_position[position] = [
+                serialize_study_user_metadata(_metadata_from_study(study))
+                for study in list(option.get("studies", []) or [])
+                if isinstance(study, Mapping)
+            ]
+        return self._metadata_payloads_by_position[position]
+
+    def _initial_metadata_payloads_by_position(self) -> dict[int, list[dict[str, Any]]]:
+        payloads_by_position: dict[int, list[dict[str, Any]]] = {}
+        for option in self._chart_options:
+            position = int(option.get("position", 0) or 0)
+            studies = list(option.get("studies", []) or [])
+            payloads_by_position[position] = [
+                serialize_study_user_metadata(_metadata_from_study(study))
+                for study in studies
+                if isinstance(study, Mapping)
+            ]
+        return payloads_by_position
 
     def _refresh_save_enabled(self) -> None:
         save_button = self._buttons.button(QDialogButtonBox.StandardButton.Save)

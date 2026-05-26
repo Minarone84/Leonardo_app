@@ -201,6 +201,50 @@ def test_same_snapshot_id_can_be_overwritten_without_duplicate_name_error(
     assert overwritten.content_hash != saved.content_hash
 
 
+def test_update_snapshot_reuses_id_preserves_notebook_ref_and_replaces_payload(
+    tmp_path: Path,
+) -> None:
+    store, _root = _store(tmp_path)
+    saved = store.save_snapshot(
+        store.create_snapshot(
+            display_name="Notebook Workspace",
+            description="Original snapshot",
+            workspace=_workspace_payload(),
+            charts=[_chart_payload()],
+            notebook_ref={"notebook_id": "nb_1", "display_name": "Notebook 1"},
+            snapshot_id="snapshot_with_notebook",
+            created_at_ms=1000,
+            updated_at_ms=1000,
+        )
+    )
+
+    updated = store.update_snapshot(
+        snapshot_id=saved.snapshot_id,
+        display_name="Notebook Workspace Updated",
+        description="Updated from current workspace",
+        workspace=_workspace_payload(mode="fit_8"),
+        charts=[_chart_payload(position=2, studies=[_study_payload(tool_key="rsi")])],
+    )
+
+    assert updated.snapshot_id == saved.snapshot_id
+    assert updated.display_name == "Notebook Workspace Updated"
+    assert updated.description == "Updated from current workspace"
+    assert updated.created_at_ms == saved.created_at_ms
+    assert updated.updated_at_ms >= saved.updated_at_ms
+    assert updated.content_hash != saved.content_hash
+    assert updated.workspace["visualization_mode"] == "fit_8"
+    assert updated.charts[0]["position"] == 2
+    assert updated.charts[0]["studies"][0]["tool_key"] == "rsi"
+    assert updated.charts[0]["studies"][0]["user_metadata"] == {
+        "important": True,
+        "description": "Main trend study.",
+        "dataset_role": "supporting_indicator",
+    }
+    assert updated.notebook_ref == {"notebook_id": "nb_1", "display_name": "Notebook 1"}
+    assert len(list(store.root_dir.glob("*.json"))) == 1
+    assert store.load_snapshot(saved.snapshot_id) == updated
+
+
 def test_wrong_object_type_is_rejected(tmp_path: Path) -> None:
     store, root = _store(tmp_path)
     root.mkdir(parents=True)

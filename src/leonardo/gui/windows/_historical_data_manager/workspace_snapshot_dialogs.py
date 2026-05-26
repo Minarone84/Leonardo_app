@@ -5,6 +5,7 @@ from typing import Any, Mapping, Sequence
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QComboBox,
     QDialog,
     QDialogButtonBox,
     QFormLayout,
@@ -109,11 +110,16 @@ class SaveWorkspaceSnapshotDialog(QDialog):
         self,
         *,
         snapshot_payload: Mapping[str, Any],
+        existing_snapshots: Sequence[HistoricalWorkspaceSnapshot] = (),
         detached_reserved_slot_count: int = 0,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._snapshot_payload = dict(snapshot_payload)
+        self._existing_snapshots = list(existing_snapshots)
+        self._existing_snapshots_by_id = {
+            snapshot.snapshot_id: snapshot for snapshot in self._existing_snapshots
+        }
         self._detached_reserved_slot_count = int(detached_reserved_slot_count)
 
         self.setWindowTitle("Save Workspace Snapshot")
@@ -127,6 +133,37 @@ class SaveWorkspaceSnapshotDialog(QDialog):
         form = QFormLayout(form_group)
         form.setContentsMargins(10, 14, 10, 10)
         form.setSpacing(8)
+
+        mode_row = QWidget(form_group)
+        mode_layout = QHBoxLayout(mode_row)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(12)
+
+        self._save_new_radio = QRadioButton("Save as new Workspace Snapshot", mode_row)
+        self._update_existing_radio = QRadioButton(
+            "Update existing Workspace Snapshot",
+            mode_row,
+        )
+        self._save_new_radio.setChecked(True)
+        self._update_existing_radio.setEnabled(bool(self._existing_snapshots))
+        self._save_new_radio.toggled.connect(self._on_save_mode_changed)
+        self._update_existing_radio.toggled.connect(self._on_save_mode_changed)
+        mode_layout.addWidget(self._save_new_radio)
+        mode_layout.addWidget(self._update_existing_radio)
+        mode_layout.addStretch(1)
+        form.addRow("Mode", mode_row)
+
+        self._existing_snapshot_combo = QComboBox(form_group)
+        for snapshot in self._existing_snapshots:
+            self._existing_snapshot_combo.addItem(
+                snapshot.display_name,
+                snapshot.snapshot_id,
+            )
+        self._existing_snapshot_combo.setEnabled(False)
+        self._existing_snapshot_combo.currentIndexChanged.connect(
+            self._on_existing_snapshot_changed
+        )
+        form.addRow("Existing snapshot", self._existing_snapshot_combo)
 
         self._name_edit = QLineEdit(form_group)
         self._name_edit.setPlaceholderText("Workspace snapshot name")
@@ -169,6 +206,44 @@ class SaveWorkspaceSnapshotDialog(QDialog):
         """Return the optional workspace snapshot description."""
         return self._description_edit.toPlainText().strip()
 
+    def save_mode(self) -> str:
+        """Return whether the dialog should save a new snapshot or update one."""
+        if self._update_existing_radio.isChecked():
+            return "update"
+        return "new"
+
+    def selected_existing_snapshot_id(self) -> str:
+        """Return the selected snapshot identity for update mode."""
+        data = self._existing_snapshot_combo.currentData()
+        return str(data or "").strip()
+
+    def _selected_existing_snapshot(self) -> HistoricalWorkspaceSnapshot | None:
+        snapshot_id = self.selected_existing_snapshot_id()
+        if not snapshot_id:
+            return None
+        return self._existing_snapshots_by_id.get(snapshot_id)
+
+    def _on_save_mode_changed(self, *_args: object) -> None:
+        is_update = self.save_mode() == "update"
+        self._existing_snapshot_combo.setEnabled(
+            is_update and self._existing_snapshot_combo.count() > 0
+        )
+        if is_update:
+            self._preload_existing_snapshot_details()
+        self._refresh_save_enabled()
+
+    def _on_existing_snapshot_changed(self, *_args: object) -> None:
+        if self.save_mode() == "update":
+            self._preload_existing_snapshot_details()
+        self._refresh_save_enabled()
+
+    def _preload_existing_snapshot_details(self) -> None:
+        snapshot = self._selected_existing_snapshot()
+        if snapshot is None:
+            return
+        self._name_edit.setText(snapshot.display_name)
+        self._description_edit.setPlainText(snapshot.description)
+
     def _refresh_recap(self) -> None:
         workspace = self._snapshot_payload.get("workspace", {}) or {}
         charts = self._snapshot_payload.get("charts", []) or []
@@ -196,7 +271,12 @@ class SaveWorkspaceSnapshotDialog(QDialog):
         if save_button is None:
             return
         charts = self._snapshot_payload.get("charts", []) or []
-        save_button.setEnabled(bool(self.display_name()) and bool(charts))
+        has_update_target = (
+            self.save_mode() != "update" or bool(self.selected_existing_snapshot_id())
+        )
+        save_button.setEnabled(
+            bool(self.display_name()) and bool(charts) and has_update_target
+        )
 
 
 class LoadWorkspaceSnapshotDialog(QDialog):

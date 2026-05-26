@@ -75,6 +75,11 @@ def test_save_and_load_dialogs_have_required_concepts() -> None:
     assert "_name_edit" in source
     assert "_description_edit" in source
     assert "_source_chart_combo" in source
+    assert "Save as new Study Setup" in source
+    assert "Update existing Study Setup" in source
+    assert "_existing_setup_combo" in source
+    assert "def save_mode" in source
+    assert "def selected_existing_setup_id" in source
     assert "_target_chart_combo" in source
     assert "Append to existing studies" in source
     assert "Replace existing studies" in source
@@ -162,8 +167,11 @@ def test_data_manager_save_and_load_paths_use_store_and_panel_helpers() -> None:
 
     assert "ChartStudySetupStore" in _source(HDM)
     assert "panel.export_serialized_studies()" in save_body
+    assert "existing_setups=self._load_study_setup_objects()" in save_body
     assert "store.create_setup" in save_body
     assert "store.save_setup" in save_body
+    assert "store.update_setup" in save_body
+    assert "dialog.save_mode() == \"update\"" in save_body
     assert "store.load_setup" in load_body
     assert "delete_setup=self._chart_study_setup_store().delete_setup" in load_body
     assert "setups_loader=self._load_study_setup_objects" in load_body

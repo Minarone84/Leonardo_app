@@ -111,6 +111,11 @@ def test_workspace_snapshot_dialogs_have_required_concepts() -> None:
     assert "class LoadWorkspaceSnapshotDialog" in source
     assert "_name_edit" in source
     assert "_description_edit" in source
+    assert "Save as new Workspace Snapshot" in source
+    assert "Update existing Workspace Snapshot" in source
+    assert "_existing_snapshot_combo" in source
+    assert "def save_mode" in source
+    assert "def selected_existing_snapshot_id" in source
     assert "Workspace Recap" in source
     assert "Chart Recap" in source
     assert "_study_recap_lines" in source
@@ -128,8 +133,11 @@ def test_save_path_uses_snapshot_store_and_embedded_chart_export() -> None:
 
     assert "HistoricalWorkspaceSnapshotStore" in source
     assert "workspace.export_workspace_snapshot_payload()" in save_body
+    assert "existing_snapshots=self._load_workspace_snapshot_objects()" in save_body
     assert "store.create_snapshot" in save_body
     assert "store.save_snapshot" in save_body
+    assert "store.update_snapshot" in save_body
+    assert "dialog.save_mode() == \"update\"" in save_body
     assert "detached_reserved_slot_count" in save_body
 
 

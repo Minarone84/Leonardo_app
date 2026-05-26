@@ -70,10 +70,15 @@ class SaveStudySetupDialog(QDialog):
         self,
         *,
         chart_options: Sequence[Mapping[str, Any]],
+        existing_setups: Sequence[ChartStudySetup] = (),
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self._chart_options = [dict(option) for option in chart_options]
+        self._existing_setups = list(existing_setups)
+        self._existing_setups_by_id = {
+            setup.setup_id: setup for setup in self._existing_setups
+        }
 
         self.setWindowTitle("Save Study Setup")
         self.resize(760, 560)
@@ -86,6 +91,34 @@ class SaveStudySetupDialog(QDialog):
         form = QFormLayout(form_group)
         form.setContentsMargins(10, 14, 10, 10)
         form.setSpacing(8)
+
+        mode_row = QWidget(form_group)
+        mode_layout = QHBoxLayout(mode_row)
+        mode_layout.setContentsMargins(0, 0, 0, 0)
+        mode_layout.setSpacing(12)
+
+        self._save_new_radio = QRadioButton("Save as new Study Setup", mode_row)
+        self._update_existing_radio = QRadioButton(
+            "Update existing Study Setup",
+            mode_row,
+        )
+        self._save_new_radio.setChecked(True)
+        self._update_existing_radio.setEnabled(bool(self._existing_setups))
+        self._save_new_radio.toggled.connect(self._on_save_mode_changed)
+        self._update_existing_radio.toggled.connect(self._on_save_mode_changed)
+        mode_layout.addWidget(self._save_new_radio)
+        mode_layout.addWidget(self._update_existing_radio)
+        mode_layout.addStretch(1)
+        form.addRow("Mode", mode_row)
+
+        self._existing_setup_combo = QComboBox(form_group)
+        for setup in self._existing_setups:
+            self._existing_setup_combo.addItem(setup.display_name, setup.setup_id)
+        self._existing_setup_combo.setEnabled(False)
+        self._existing_setup_combo.currentIndexChanged.connect(
+            self._on_existing_setup_changed
+        )
+        form.addRow("Existing setup", self._existing_setup_combo)
 
         self._name_edit = QLineEdit(form_group)
         self._name_edit.setPlaceholderText("Study setup name")
@@ -138,6 +171,17 @@ class SaveStudySetupDialog(QDialog):
         """Return the optional study setup description entered in the dialog."""
         return self._description_edit.toPlainText().strip()
 
+    def save_mode(self) -> str:
+        """Return whether the dialog should save a new setup or update one."""
+        if self._update_existing_radio.isChecked():
+            return "update"
+        return "new"
+
+    def selected_existing_setup_id(self) -> str:
+        """Return the selected setup identity for update mode."""
+        data = self._existing_setup_combo.currentData()
+        return str(data or "").strip()
+
     def selected_chart_position(self) -> int:
         """Return the one-based source chart position selected for saving."""
         data = self._source_chart_combo.currentData()
@@ -149,6 +193,33 @@ class SaveStudySetupDialog(QDialog):
             if int(option.get("position", 0) or 0) == position:
                 return option
         return {}
+
+    def _selected_existing_setup(self) -> ChartStudySetup | None:
+        setup_id = self.selected_existing_setup_id()
+        if not setup_id:
+            return None
+        return self._existing_setups_by_id.get(setup_id)
+
+    def _on_save_mode_changed(self, *_args: object) -> None:
+        is_update = self.save_mode() == "update"
+        self._existing_setup_combo.setEnabled(
+            is_update and self._existing_setup_combo.count() > 0
+        )
+        if is_update:
+            self._preload_existing_setup_details()
+        self._refresh_save_enabled()
+
+    def _on_existing_setup_changed(self, *_args: object) -> None:
+        if self.save_mode() == "update":
+            self._preload_existing_setup_details()
+        self._refresh_save_enabled()
+
+    def _preload_existing_setup_details(self) -> None:
+        setup = self._selected_existing_setup()
+        if setup is None:
+            return
+        self._name_edit.setText(setup.display_name)
+        self._description_edit.setPlainText(setup.description)
 
     def _refresh_recap(self) -> None:
         option = self._selected_chart_option()
@@ -169,7 +240,10 @@ class SaveStudySetupDialog(QDialog):
         option = self._selected_chart_option()
         has_name = bool(self.display_name())
         has_studies = bool(option.get("study_count", 0))
-        save_button.setEnabled(has_name and has_studies)
+        has_update_target = (
+            self.save_mode() != "update" or bool(self.selected_existing_setup_id())
+        )
+        save_button.setEnabled(has_name and has_studies and has_update_target)
 
 
 class LoadStudySetupDialog(QDialog):

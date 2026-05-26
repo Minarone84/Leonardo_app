@@ -304,6 +304,36 @@ class HistoricalWorkspaceSnapshotStore:
         self._atomic_write_json(persisted.to_dict(), path)
         return persisted
 
+    def update_snapshot(
+        self,
+        *,
+        snapshot_id: str,
+        display_name: str,
+        description: str = "",
+        workspace: Mapping[str, Any],
+        charts: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
+    ) -> HistoricalWorkspaceSnapshot:
+        """Replace an existing workspace snapshot while preserving its identity.
+
+        The selected snapshot must already exist. The method preserves the
+        original ``snapshot_id``, ``created_at_ms``, and ``notebook_ref`` values,
+        advances ``updated_at_ms``, recomputes the content hash through the
+        snapshot contract, and persists the replacement through the normal atomic
+        overwrite path.
+        """
+        existing = self.load_snapshot(snapshot_id)
+        updated = self.create_snapshot(
+            display_name=display_name,
+            description=description,
+            workspace=dict(workspace),
+            charts=charts,
+            notebook_ref=existing.notebook_ref,
+            snapshot_id=existing.snapshot_id,
+            created_at_ms=existing.created_at_ms,
+            updated_at_ms=max(int(time.time() * 1000), existing.updated_at_ms + 1),
+        )
+        return self.save_snapshot(updated, overwrite=True)
+
     def load_snapshot(self, snapshot_id: str) -> HistoricalWorkspaceSnapshot:
         path = self.snapshot_path(snapshot_id)
         if not path.exists():

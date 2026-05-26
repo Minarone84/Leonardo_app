@@ -262,6 +262,34 @@ class ChartStudySetupStore:
         self._atomic_write_json(persisted.to_dict(), path)
         return persisted
 
+    def update_setup(
+        self,
+        *,
+        setup_id: str,
+        display_name: str,
+        description: str = "",
+        created_from: Mapping[str, Any] | None = None,
+        studies: list[Mapping[str, Any]] | tuple[Mapping[str, Any], ...],
+    ) -> ChartStudySetup:
+        """Replace an existing study setup while preserving its storage identity.
+
+        The selected setup must already exist. The method preserves the original
+        ``setup_id`` and ``created_at_ms``, advances ``updated_at_ms``,
+        recomputes the content hash through the setup contract, and persists the
+        replacement through the normal atomic overwrite path.
+        """
+        existing = self.load_setup(setup_id)
+        updated = self.create_setup(
+            display_name=display_name,
+            description=description,
+            created_from=dict(created_from or {}),
+            studies=studies,
+            setup_id=existing.setup_id,
+            created_at_ms=existing.created_at_ms,
+            updated_at_ms=max(int(time.time() * 1000), existing.updated_at_ms + 1),
+        )
+        return self.save_setup(updated, overwrite=True)
+
     def load_setup(self, setup_id: str) -> ChartStudySetup:
         path = self.setup_path(setup_id)
         if not path.exists():

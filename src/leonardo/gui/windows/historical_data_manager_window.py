@@ -1225,9 +1225,21 @@ class HistoricalDataManagerWindow(QMainWindow):
             )
             return
 
-        dialog = SaveStudySetupDialog(chart_options=chart_options, parent=self)
+        dialog = SaveStudySetupDialog(
+            chart_options=chart_options,
+            existing_setups=self._load_study_setup_objects(),
+            parent=self,
+        )
         if dialog.exec() != QDialog.Accepted:
             self._set_status("Study setup save cancelled")
+            return
+
+        if dialog.save_mode() == "update" and not dialog.selected_existing_setup_id():
+            QMessageBox.information(
+                self,
+                "Save Study Setup",
+                "Select an existing study setup to update.",
+            )
             return
 
         panel = self._panel_for_chart_position(dialog.selected_chart_position())
@@ -1259,13 +1271,22 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         store = self._chart_study_setup_store()
         try:
-            setup = store.create_setup(
-                display_name=dialog.display_name(),
-                description=dialog.description(),
-                created_from=panel.dataset_descriptor(),
-                studies=studies,
-            )
-            saved = store.save_setup(setup)
+            if dialog.save_mode() == "update":
+                saved = store.update_setup(
+                    setup_id=dialog.selected_existing_setup_id(),
+                    display_name=dialog.display_name(),
+                    description=dialog.description(),
+                    created_from=panel.dataset_descriptor(),
+                    studies=studies,
+                )
+            else:
+                setup = store.create_setup(
+                    display_name=dialog.display_name(),
+                    description=dialog.description(),
+                    created_from=panel.dataset_descriptor(),
+                    studies=studies,
+                )
+                saved = store.save_setup(setup)
         except Exception as exc:
             QMessageBox.warning(
                 self,
@@ -1274,11 +1295,12 @@ class HistoricalDataManagerWindow(QMainWindow):
             )
             return
 
-        self._set_status(f"Saved study setup: {saved.display_name}")
+        action_text = "Updated" if dialog.save_mode() == "update" else "Saved"
+        self._set_status(f"{action_text} study setup: {saved.display_name}")
         QMessageBox.information(
             self,
             "Save Study Setup",
-            f"Saved study setup '{saved.display_name}'.",
+            f"{action_text} study setup '{saved.display_name}'.",
         )
 
     def _load_study_setup_objects(self):
@@ -1328,6 +1350,7 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         dialog = SaveWorkspaceSnapshotDialog(
             snapshot_payload=snapshot_payload,
+            existing_snapshots=self._load_workspace_snapshot_objects(),
             detached_reserved_slot_count=workspace.detached_reserved_slot_count(),
             parent=self,
         )
@@ -1335,15 +1358,32 @@ class HistoricalDataManagerWindow(QMainWindow):
             self._set_status("Workspace snapshot save cancelled")
             return
 
+        if dialog.save_mode() == "update" and not dialog.selected_existing_snapshot_id():
+            QMessageBox.information(
+                self,
+                "Save Workspace Snapshot",
+                "Select an existing workspace snapshot to update.",
+            )
+            return
+
         store = self._workspace_snapshot_store()
         try:
-            snapshot = store.create_snapshot(
-                display_name=dialog.display_name(),
-                description=dialog.description(),
-                workspace=dict(snapshot_payload.get("workspace", {}) or {}),
-                charts=charts,
-            )
-            saved = store.save_snapshot(snapshot)
+            if dialog.save_mode() == "update":
+                saved = store.update_snapshot(
+                    snapshot_id=dialog.selected_existing_snapshot_id(),
+                    display_name=dialog.display_name(),
+                    description=dialog.description(),
+                    workspace=dict(snapshot_payload.get("workspace", {}) or {}),
+                    charts=charts,
+                )
+            else:
+                snapshot = store.create_snapshot(
+                    display_name=dialog.display_name(),
+                    description=dialog.description(),
+                    workspace=dict(snapshot_payload.get("workspace", {}) or {}),
+                    charts=charts,
+                )
+                saved = store.save_snapshot(snapshot)
         except Exception as exc:
             QMessageBox.warning(
                 self,
@@ -1352,11 +1392,12 @@ class HistoricalDataManagerWindow(QMainWindow):
             )
             return
 
-        self._set_status(f"Saved workspace snapshot: {saved.display_name}")
+        action_text = "Updated" if dialog.save_mode() == "update" else "Saved"
+        self._set_status(f"{action_text} workspace snapshot: {saved.display_name}")
         QMessageBox.information(
             self,
             "Save Workspace Snapshot",
-            f"Saved workspace snapshot '{saved.display_name}'.",
+            f"{action_text} workspace snapshot '{saved.display_name}'.",
         )
 
     def _on_load_workspace_snapshot(self) -> None:

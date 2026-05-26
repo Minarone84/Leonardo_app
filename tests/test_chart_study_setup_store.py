@@ -175,6 +175,41 @@ def test_same_setup_id_can_be_overwritten_without_duplicate_name_error(
     assert overwritten.content_hash != saved.content_hash
 
 
+def test_update_setup_reuses_id_and_replaces_current_studies(
+    tmp_path: Path,
+) -> None:
+    store, saved = _saved_setup(tmp_path)
+
+    updated = store.update_setup(
+        setup_id=saved.setup_id,
+        display_name="Momentum Setup Updated",
+        description="Updated from current chart",
+        created_from={
+            "exchange": "bybit",
+            "market_type": "linear",
+            "symbol": "ETHUSDT",
+            "timeframe": "4h",
+        },
+        studies=[_study_payload(tool_key="rsi", period=14)],
+    )
+
+    assert updated.setup_id == saved.setup_id
+    assert updated.display_name == "Momentum Setup Updated"
+    assert updated.description == "Updated from current chart"
+    assert updated.created_at_ms == saved.created_at_ms
+    assert updated.updated_at_ms >= saved.updated_at_ms
+    assert updated.content_hash != saved.content_hash
+    assert updated.created_from["symbol"] == "ETHUSDT"
+    assert updated.studies[0]["tool_key"] == "rsi"
+    assert updated.studies[0]["user_metadata"] == {
+        "important": True,
+        "description": "Main trend study.",
+        "dataset_role": "supporting_indicator",
+    }
+    assert len(list(store.root_dir.glob("*.json"))) == 1
+    assert store.load_setup(saved.setup_id) == updated
+
+
 def test_wrong_object_type_is_rejected(tmp_path: Path) -> None:
     store, root = _store(tmp_path)
     root.mkdir(parents=True)

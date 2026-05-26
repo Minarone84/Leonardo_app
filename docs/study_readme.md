@@ -267,7 +267,7 @@ Fields include:
 - `description`
 - `dataset_role`
 
-Applied historical chart studies expose a visible `Metadata...` action in price overlay rows and oscillator pane headers. The action opens the Study Metadata dialog and updates `StudyUserMetadata` through the chart-local study registry path.
+User-facing metadata editing happens when saving or updating a Study Environment. The Save Study Environment dialog shows one row per current chart study and lets the user set Important, Dataset role, and Description before the environment is persisted.
 
 Important rules:
 
@@ -278,9 +278,10 @@ Important rules:
 - old serialized study payloads load with default metadata values;
 - study serialization/deserialization, Study Environments, and Workspace Snapshots preserve `user_metadata`;
 - computation edit/reapply must preserve existing metadata unless the user explicitly edits it;
-- updating an existing Study Environment stores the current live study metadata into the selected saved environment.
+- saving or updating a Study Environment stores the dialog-selected metadata into cloned serialized study payloads for the selected saved environment;
+- save-dialog metadata edits do not mutate the live chart registry.
 
-Study metadata can be edited from the live chart through `Metadata...` or from saved Study Environments through the Study Environment Manager. The manager edits only serialized `user_metadata`; it does not edit computation params, style, bindings, or recipe definitions.
+After save, Study metadata can be edited from saved Study Environments through the Study Environment Manager. The manager edits only serialized `user_metadata`; it does not edit computation params, style, bindings, or recipe definitions.
 
 ### `StudyDisplayStyle`
 

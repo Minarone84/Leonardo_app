@@ -127,8 +127,10 @@ Accepted behavior includes:
 - `ChartStudyInstance` carries `StudyUserMetadata` with `important`, `description`, and `dataset_role`;
 - study `user_metadata` is semantic/user-facing metadata only and does not affect computation, rendering, style, runtime, artifact identity, or recipe identity;
 - study serialization/deserialization, Study Environments, and Workspace Snapshots preserve `user_metadata`, while old payloads load with default metadata values;
-- applied price overlay rows and oscillator pane headers expose a visible `Metadata...` action that opens the chart-local Study Metadata dialog;
-- the Study Metadata dialog edits Important, Description, and Dataset role through the chart-local metadata update path, and computation edit/reapply preserves it.
+- applied chart study controls focus on chart-local actions such as Style, Edit, and Remove;
+- Save Study Environment / Update existing Study Environment includes per-study metadata controls for Important, Dataset role, and Description;
+- metadata selected in the save/update dialog is applied to the saved serialized Study Environment payload and does not mutate the live chart registry;
+- the Study Environment Manager remains the post-save editor for saved Study Environment metadata.
 
 M6/M6B completed release-check/test reconciliation and full uploaded test validation without production-code changes.
 
@@ -224,7 +226,7 @@ Accepted behavior includes:
 - Workspace Snapshot delete confirmation explicitly mentions a referenced notebook when `notebook_ref` is present;
 - delete dialogs refresh their list and clear stale selection/details after successful deletion.
 
-Research Suite also exposes `Manage Study Environments...` and `Manage Workspace Snapshots...`. `StudyEnvironmentManagerDialog` lists saved environments, shows contained studies, edits top-level name/description, edits per-study serialized `user_metadata` (`important`, `dataset_role`, `description`), preserves study params/style/bindings, and deletes through `ChartStudySetupStore` APIs. `WorkspaceSnapshotManagerDialog` lists saved snapshots, shows saved charts and studies, displays `notebook_ref`, edits top-level name/description, and deletes through `HistoricalWorkspaceSnapshotStore` APIs. Embedded Workspace Snapshot study metadata is read-only in RS4.
+Research Suite also exposes `Manage Study Environments...` and `Manage Workspace Snapshots...`. `StudyEnvironmentManagerDialog` lists saved environments, shows contained studies, edits top-level name/description, edits per-study serialized `user_metadata` (`important`, `dataset_role`, `description`), preserves study params/style/bindings, and deletes through `ChartStudySetupStore` APIs. The Save/Update Study Environment dialog is the pre-save metadata placement point; the manager is the post-save editor. `WorkspaceSnapshotManagerDialog` lists saved snapshots, shows saved charts and studies, displays `notebook_ref`, edits top-level name/description, and deletes through `HistoricalWorkspaceSnapshotStore` APIs. Embedded Workspace Snapshot study metadata is read-only in RS4.
 
 No recipe creation, artifact calculation, Workspace Snapshot export, assigned-notebook deletion, or Analysis Database creation is part of these dialogs.
 

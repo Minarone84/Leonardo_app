@@ -465,7 +465,7 @@ Implemented baseline:
 
 - M17 Study Environment recipe-to-database workflow is accepted:
   - Historical saved studies now carry `StudyUserMetadata` with `important`, `description`, and `dataset_role`.
-  - Applied historical chart studies expose a visible `Metadata...` action in price overlay rows and oscillator pane headers.
+  - RS7 supersedes the earlier visible chart-row/header metadata action placement. Per-study metadata is now selected while saving or updating a Study Environment.
   - Study metadata is semantic/user-facing context only; it does not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth.
   - Study serialization, Study Environments, and Workspace Snapshots preserve `user_metadata`, with backward-compatible defaults for older payloads.
   - `StudySetupRecipeExportPlanner` provides read-only Study Environment to recipe export planning with important-only filtering, exportable / conditional / blocked / skipped classification, recipe payload previews, and collection draft previews.
@@ -505,6 +505,15 @@ Implemented baseline:
   - Plain fields remain populated and formatted content may be stored in optional parallel HTML fields such as `description_html`, `note_html`, and `title_html`.
   - Old plain-text notebooks remain loadable, and formatted HTML fields participate in notebook `content_hash` when present.
   - Notebook formatting does not change Study Environment, Workspace Snapshot, Data Manager, artifact, recipe, or database workflows.
+
+- M21 Study Environment metadata placement cleanup is accepted:
+  - Applied study overlay rows and oscillator pane headers no longer expose the visible metadata action.
+  - Style, Edit, and Remove chart-study controls remain chart-local actions.
+  - Save Study Environment / Update existing Study Environment includes a compact per-study metadata editor for `important`, `dataset_role`, and `description`.
+  - Dialog-selected metadata is applied to cloned serialized study payloads before `ChartStudySetupStore` save/update.
+  - The save dialog does not mutate the live chart registry because serialized save payloads do not contain durable chart-session instance IDs.
+  - Study Environment Manager remains the post-save editor for saved serialized `user_metadata`.
+  - Study metadata semantics, computation, rendering, style, Workspace Snapshot behavior, Notebook behavior, artifact/recipe behavior, and Data Manager workflows are unchanged.
 
 Next direction:
 
@@ -581,11 +590,13 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.28: Study Environment metadata placement RS7 sync. Documents removal of the chart-row/header metadata action placement, Save/Update Study Environment per-study metadata controls, serialized payload writeback, Study Environment Manager post-save editing, and unchanged live chart registry/Data Manager behavior.
+
 v0.27: Research Suite notebook UX RS5 sync. Documents notebook dirty-state tracking, Save / Don't Save / Cancel close/replace behavior, rich-text formatting palettes for notebook free-text fields, plain-text compatibility, optional parallel HTML fields, and unchanged Study Environment / Workspace Snapshot / Data Manager boundaries.
 
 v0.26: Research Suite RS1-RS4 sync. Documents Research Suite user-facing terminology, artifact save recipe persistence in the Data Manager-visible recipe store, artifact sidecar recipe metadata, Notebook Save as new / Update existing, and saved Study Environment / Workspace Snapshot management dialogs. Embedded Workspace Snapshot study metadata is read-only in RS4. No recipe creation, artifact calculation, or Analysis Database creation is part of those dialogs.
 
-v0.25: Historical Study metadata action and preset update workflow. Documents visible `Metadata...` actions for applied price overlay rows and oscillator pane headers, plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. Update existing preserves storage IDs through store-owned persistence, preserves Workspace Snapshot `notebook_ref` behavior, and does not create extra saved preset IDs.
+v0.25: Historical Study metadata action and preset update workflow. Documents the earlier chart-local metadata action baseline plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. RS7 supersedes the chart-row/header metadata placement with Save/Update Study Environment metadata controls.
 
 v0.24: Historical Study recipe-to-database workflow. Documents StudyUserMetadata, chart-local Study Metadata editing/persistence, Study Environment to recipe export planning/persistence/UI, diagnostic AnalysisDatasetGeographyPolicy, recipe-collection artifact resolution planning, AnalysisDatabaseStore manifest directory guard and short temp prefixes, RecipeCollectionDatabaseService draft create/extend behavior, and the Data Manager `Create/Extend Database...` UI. Artifact calculation, recipe execution, Plan Updates execution, database materialization, hard geography enforcement, Workspace Snapshot export to recipes, notebook loading, dataset-wide scanning, arbitrary dependency inference, and background update progress remain out of scope.
 

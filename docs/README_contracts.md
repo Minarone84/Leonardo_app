@@ -172,6 +172,8 @@ Serialized chart studies may include `user_metadata` from `StudyUserMetadata`:
 
 This metadata is user-facing semantic context. It must not define financial-tool contracts, runtime outputs, renderability, chart style, saved artifact identity, recipe identity, or Analysis Database geography truth. `dataset_role` may support warnings and review context, but tool identity and geography detection must use structured tool/source metadata where available.
 
+Save/Update Study Environment writes selected metadata into cloned serialized study payloads before `ChartStudySetupStore` persistence. This is writeback to the saved payload, not mutation of the live chart registry, and it does not change the serialized `user_metadata` schema.
+
 ## Saved Research Suite object update identity
 
 Updating an existing Study Environment preserves its internal `setup_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and replaces the stored study payload through `ChartStudySetupStore.update_setup(...)`. The internal schema/model name remains `ChartStudySetup`.

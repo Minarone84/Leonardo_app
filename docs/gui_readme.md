@@ -20,7 +20,7 @@ It is built around a modular chart engine that supports:
 - Notebook workflow for notes, Potential Trades, POIs, runtime chart annotations, and workspace snapshot notebook references
 - Historical workspace Pan Anchor for optional horizontal pan synchronization across active charts
 - confirmed delete workflows for saved Study Environments, Workspace Snapshots, notebook rows, and notebooks
-- visible chart-local `Metadata...` actions for editing `important`, `description`, and `dataset_role`
+- per-study metadata controls in Save Study Environment / Update existing Study Environment
 - Save as new / Update existing flows for saved Study Environments, Workspace Snapshots, and Notebooks
 - Research Suite managers for saved Study Environments and Workspace Snapshots
 - Data Manager Study Environment to recipe export and recipe collection to draft database workflows
@@ -539,6 +539,8 @@ Rules:
 The Research Suite exposes `Manage Study Environments...` and `Manage Workspace Snapshots...`.
 
 `StudyEnvironmentManagerDialog` lists saved Study Environments, displays environment details and contained studies, edits top-level name/description, edits per-study serialized `user_metadata` (`important`, `dataset_role`, `description`), preserves study params/style/bindings, and deletes through `ChartStudySetupStore` APIs. It does not create recipes or calculate artifacts.
+
+Save Study Environment / Update existing Study Environment includes a compact per-study metadata editor for the studies being saved. The dialog lets the user set Important, Dataset role, and Description before persistence. These choices are written into cloned serialized study payloads for the saved Study Environment; they do not mutate the live chart registry. After save, the Study Environment Manager remains the editor for saved metadata.
 
 `WorkspaceSnapshotManagerDialog` lists saved Workspace Snapshots, displays snapshot details, saved charts and studies, and `notebook_ref`, edits top-level name/description, and deletes through `HistoricalWorkspaceSnapshotStore` APIs. Embedded snapshot study metadata is read-only in RS4.
 
@@ -1143,7 +1145,7 @@ Important: UI actions (style/edit/remove) should target the stable chart-local `
 - `description`
 - `dataset_role`
 
-This metadata persists through study serialization, Study Environments, and Workspace Snapshots. It is preserved across computation edit/reapply and edited through a visible chart-local `Metadata...` action in price overlay study rows and oscillator pane headers. The action opens the Study Metadata dialog for Important, Description, and Dataset role. Metadata edits do not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth; `dataset_role` is a hint only.
+This metadata persists through study serialization, Study Environments, and Workspace Snapshots. Per-study metadata is selected when saving or updating a Study Environment through the Save Study Environment dialog, and saved metadata can later be edited in the Study Environment Manager. The save dialog applies metadata to the serialized Study Environment payload without mutating the live chart registry. Metadata edits do not affect computation, rendering, style, runtime state, artifact identity, recipe identity, or geography truth; `dataset_role` is a hint only.
 
 ### Study lifecycle rules
 
@@ -1599,7 +1601,7 @@ Recommended tooling (in the GUI package):
 
 - **v3.27 (2026-05-26)** - Research Suite notebook UX RS5 sync: documented notebook dirty-state protection, Save / Don't Save / Cancel close/replace flow, rich-text formatting palettes for notebook free-text fields, plain-text compatibility, and optional parallel HTML fields.
 - **v3.26 (2026-05-26)** - Research Suite RS1-RS4 sync: documented Research Suite terminology, artifact-save recipe persistence and sidecar recipe metadata, notebook Save as new / Update existing, and Study Environment / Workspace Snapshot managers with read-only embedded snapshot study metadata.
-- **v3.25 (2026-05-26)** - Historical Study metadata action and save update-mode sync: documented visible `Metadata...` actions on applied price overlay rows and oscillator headers, plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. Update existing preserves IDs through store-owned persistence and does not create extra saved items.
+- **v3.25 (2026-05-26)** - Historical Study metadata action and save update-mode sync: documented the earlier chart-local metadata action baseline plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. RS7 supersedes the chart-row action placement with Save/Update Study Environment metadata controls.
 - **v3.24 (2026-05-26)** - Study metadata and Data Manager recipe-to-database workflow sync: documented chart-local `StudyUserMetadata`, `Create Recipes from Study Environment...`, C1 geography reporting, C2 recipe-collection artifact resolution, C3 draft database create/extend service, and C4 `Create/Extend Database...` UI while preserving no-calculation and no-materialization boundaries.
 - **v3.23 (2026-05-25)** — OHLCV acceptance workflow documentation sync: Historical Download Manager preliminary validation remains non-certifying, OHLCV Maintenance is documented as the explicit validation/repair/source-correction window, Research Suite chart creation is gated to `ok` / `modified` OHLCV, and Data Manager selector/preview behavior now consumes CoreBridge/data-layer loadable catalogs.
 

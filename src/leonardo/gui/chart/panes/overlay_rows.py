@@ -37,7 +37,7 @@ class _StudyRow(QWidget):
         self._edit_btn.clicked.connect(self._emit_edit)
 
         self._metadata_btn = QToolButton(self)
-        self._metadata_btn.setText("M")
+        self._metadata_btn.setText("Metadata...")
         self._metadata_btn.setToolTip("Edit study metadata")
         self._metadata_btn.clicked.connect(self._emit_metadata)
 

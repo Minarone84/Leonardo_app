@@ -1,0 +1,554 @@
+{
+  "charts": [
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "ADAUSDT",
+        "timeframe": "1h"
+      },
+      "position": 1,
+      "price_view_state": {},
+      "studies": [
+        {
+          "display_name": "Peaks & Troughs",
+          "family": "indicator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "price",
+          "params": {},
+          "required_inputs": [
+            "high",
+            "low"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "peak_fractal_11": {
+                "color": "#22C55E",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": -18,
+                "marker_shape": "triangle_down",
+                "marker_size": 14,
+                "marker_text": "11",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": false
+              },
+              "peak_fractal_3": {
+                "color": "#22C55E",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": -18,
+                "marker_shape": "triangle_down",
+                "marker_size": 14,
+                "marker_text": "3",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": false
+              },
+              "peak_fractal_5": {
+                "color": "#22C55E",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": -18,
+                "marker_shape": "triangle_down",
+                "marker_size": 14,
+                "marker_text": "5",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": false
+              },
+              "peak_fractal_7": {
+                "color": "#FFA500",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": -18,
+                "marker_shape": "triangle_down",
+                "marker_size": 14,
+                "marker_text": "7",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              },
+              "peak_fractal_9": {
+                "color": "#22C55E",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": -18,
+                "marker_shape": "triangle_down",
+                "marker_size": 14,
+                "marker_text": "9",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": false
+              },
+              "trough_fractal_11": {
+                "color": "#EF4444",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 18,
+                "marker_shape": "triangle_up",
+                "marker_size": 14,
+                "marker_text": "11",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": false
+              },
+              "trough_fractal_3": {
+                "color": "#EF4444",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 18,
+                "marker_shape": "triangle_up",
+                "marker_size": 14,
+                "marker_text": "3",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": false
+              },
+              "trough_fractal_5": {
+                "color": "#00C8FF",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 18,
+                "marker_shape": "triangle_up",
+                "marker_size": 14,
+                "marker_text": "5",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": false
+              },
+              "trough_fractal_7": {
+                "color": "#BA68C8",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 18,
+                "marker_shape": "triangle_up",
+                "marker_size": 14,
+                "marker_text": "7",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              },
+              "trough_fractal_9": {
+                "color": "#EF4444",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 18,
+                "marker_shape": "triangle_up",
+                "marker_size": 14,
+                "marker_text": "9",
+                "marker_text_color": "#000000",
+                "render_mode": "marker",
+                "show_label": true,
+                "show_value": true,
+                "visible": false
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "peaks_troughs",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        },
+        {
+          "display_name": "OBV",
+          "family": "oscillator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "oscillator",
+          "params": {},
+          "required_inputs": [
+            "close",
+            "volume"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "obv": {
+                "color": "#E5E7EB",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "obv",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        }
+      ],
+      "viewport": {
+        "center_ts_ms": 1778302800000,
+        "fallback_global_index": 45070,
+        "visible_bars": 500
+      }
+    },
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "30m"
+      },
+      "position": 2,
+      "price_view_state": {},
+      "studies": [
+        {
+          "display_name": "BB(14,2.0)",
+          "family": "indicator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "price",
+          "params": {
+            "period": 14,
+            "std": 2.0
+          },
+          "required_inputs": [
+            "close"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {
+              "bb_band": {
+                "color": "#22C55E",
+                "fill_id": "bb_band",
+                "opacity": 0.12,
+                "signal_a": "bb_upper_band",
+                "signal_b": "bb_lower_band",
+                "visible": true
+              }
+            },
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "bb_lower_band": {
+                "color": "#60A5FA",
+                "line_style": "dashed",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              },
+              "bb_middle": {
+                "color": "#FFD666",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              },
+              "bb_upper_band": {
+                "color": "#2962FF",
+                "line_style": "dashed",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "bb",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        }
+      ],
+      "viewport": {
+        "center_ts_ms": 1778650200000,
+        "fallback_global_index": 107510,
+        "visible_bars": 500
+      }
+    },
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "SOLUSDT",
+        "timeframe": "15m"
+      },
+      "position": 3,
+      "price_view_state": {},
+      "studies": [
+        {
+          "display_name": "RSI(14)",
+          "family": "oscillator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "oscillator",
+          "params": {
+            "period": 14
+          },
+          "required_inputs": [
+            "close"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "rsi_14": {
+                "color": "#A855F7",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "rsi",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        },
+        {
+          "display_name": "HCK(13,48)",
+          "family": "indicator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "price",
+          "params": {
+            "fast_vwap_l": 13,
+            "slow_vwap_l": 48
+          },
+          "required_inputs": [
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {
+              "hck_band": {
+                "color": "#94A3B8",
+                "fill_id": "hck_band",
+                "opacity": 0.12,
+                "signal_a": "fast_vwap",
+                "signal_b": "slow_vwap",
+                "visible": true
+              }
+            },
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "fast_vwap": {
+                "color": "#22C55E",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              },
+              "slow_vwap": {
+                "color": "#EF4444",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [
+              {
+                "config": {
+                  "condition": {
+                    "lhs_signal": "fast_vwap",
+                    "operator": "gt",
+                    "rhs_signal": "slow_vwap",
+                    "scope": "historical"
+                  },
+                  "targets": [
+                    {
+                      "false_color": "#EF4444",
+                      "signal": "fast_vwap",
+                      "true_color": "#22C55E"
+                    },
+                    {
+                      "false_color": "#EF4444",
+                      "signal": "slow_vwap",
+                      "true_color": "#22C55E"
+                    }
+                  ]
+                },
+                "enabled": true,
+                "module_key": "conditional_line_color"
+              },
+              {
+                "config": {
+                  "condition": {
+                    "lhs_signal": "fast_vwap",
+                    "operator": "gt",
+                    "rhs_signal": "slow_vwap",
+                    "scope": "historical"
+                  },
+                  "false_color": "#EF4444",
+                  "false_opacity": 0.08,
+                  "target_fill_id": "hck_band",
+                  "true_color": "#22C55E",
+                  "true_opacity": 0.08
+                },
+                "enabled": true,
+                "module_key": "conditional_fill_color"
+              }
+            ],
+            "visible": true
+          },
+          "tool_key": "hck",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        }
+      ],
+      "viewport": {
+        "center_ts_ms": 1778970600000,
+        "fallback_global_index": 160794,
+        "visible_bars": 500
+      }
+    },
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "BTCUSDT",
+        "timeframe": "1w"
+      },
+      "position": 4,
+      "price_view_state": {},
+      "studies": [],
+      "viewport": {
+        "center_ts_ms": 1627862400000,
+        "fallback_global_index": 71,
+        "visible_bars": 500
+      }
+    }
+  ],
+  "content_hash": "c5f1b4c54a9896e68fc195c4f76084241d40c76075a188e0091e63607550724c",
+  "created_at_ms": 1779783252437,
+  "description": "",
+  "display_name": "TEST_D",
+  "notebook_ref": null,
+  "object_type": "historical_workspace_snapshot",
+  "schema_version": 1,
+  "snapshot_id": "b4ae05892adf4d61b990e10a5348fd13",
+  "updated_at_ms": 1779783252437,
+  "workspace": {
+    "visualization_mode": "scroll_4"
+  }
+}

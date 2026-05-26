@@ -130,8 +130,12 @@ def test_study_metadata_dialog_and_actions_are_chart_local() -> None:
     assert "StudyUserMetadata" in dialog_source
 
     assert "metadata_requested = Signal(str)" in overlay_source
+    assert '_metadata_btn.setText("Metadata...")' in overlay_source
+    assert '_metadata_btn.setText("M")' not in overlay_source
     assert "study_metadata_requested = Signal(str)" in price_source
     assert "study_metadata_requested = Signal(str)" in oscillator_source
+    assert '_metadata_btn.setText("Metadata...")' in oscillator_source
+    assert '_metadata_btn.setText("Meta")' not in oscillator_source
     assert "_on_price_pane_study_metadata_requested" in panel_source
     assert "_on_oscillator_pane_study_metadata_requested" in panel_source
 
@@ -139,6 +143,17 @@ def test_study_metadata_dialog_and_actions_are_chart_local() -> None:
     assert "_apply_study_user_metadata" in metadata_body
     assert "apply_financial_tool" not in metadata_body
     assert "with_user_metadata" in apply_source
+
+
+def test_study_metadata_apply_path_updates_only_user_metadata() -> None:
+    body = _function_source(STYLE_MIXIN, "_apply_study_user_metadata")
+
+    assert "self._study_registry.update_user_metadata(instance_id, user_metadata)" in body
+    assert "apply_financial_tool" not in body
+    assert "_reapply_study_render_series" not in body
+    assert "with_style" not in body
+    assert "with_runtime" not in body
+    assert "with_computation" not in body
 
 
 def test_data_manager_save_and_load_paths_use_store_and_panel_helpers() -> None:

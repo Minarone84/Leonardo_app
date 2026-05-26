@@ -1,0 +1,183 @@
+{
+  "content_hash": "5354b3fe8dcb106a45b6952f53fb302880e0ecb4787f2d8d1d74d56fd6cf8483",
+  "created_at_ms": 1779782862793,
+  "created_from": {
+    "exchange": "bybit",
+    "market_type": "linear",
+    "symbol": "SOLUSDT",
+    "timeframe": "15m"
+  },
+  "description": "This is a test",
+  "display_name": "SOLUSDT_15m_testC",
+  "object_type": "chart_study_setup",
+  "schema_version": 1,
+  "setup_id": "2cca9e15cfd84b3a8f66ebe19d64c924",
+  "studies": [
+    {
+      "display_name": "RSI(14)",
+      "family": "oscillator",
+      "input_binding_meta": {},
+      "input_bindings": {},
+      "pane_target": "oscillator",
+      "params": {
+        "period": 14
+      },
+      "required_inputs": [
+        "close"
+      ],
+      "saved_artifact_ref": null,
+      "schema_version": 1,
+      "source_kind": "temporary",
+      "style": {
+        "color": "",
+        "fill_styles": {},
+        "line_style": "solid",
+        "line_width": 1,
+        "show_label": true,
+        "show_value": true,
+        "signal_styles": {
+          "rsi_14": {
+            "color": "#A855F7",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          }
+        },
+        "style_modules": [],
+        "visible": true
+      },
+      "tool_key": "rsi",
+      "user_metadata": {
+        "dataset_role": "unspecified",
+        "description": "",
+        "important": false
+      }
+    },
+    {
+      "display_name": "HCK(13,48)",
+      "family": "indicator",
+      "input_binding_meta": {},
+      "input_bindings": {},
+      "pane_target": "price",
+      "params": {
+        "fast_vwap_l": 13,
+        "slow_vwap_l": 48
+      },
+      "required_inputs": [
+        "high",
+        "low",
+        "close",
+        "volume"
+      ],
+      "saved_artifact_ref": null,
+      "schema_version": 1,
+      "source_kind": "temporary",
+      "style": {
+        "color": "",
+        "fill_styles": {
+          "hck_band": {
+            "color": "#94A3B8",
+            "fill_id": "hck_band",
+            "opacity": 0.12,
+            "signal_a": "fast_vwap",
+            "signal_b": "slow_vwap",
+            "visible": true
+          }
+        },
+        "line_style": "solid",
+        "line_width": 1,
+        "show_label": true,
+        "show_value": true,
+        "signal_styles": {
+          "fast_vwap": {
+            "color": "#22C55E",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          },
+          "slow_vwap": {
+            "color": "#EF4444",
+            "line_style": "solid",
+            "line_width": 1,
+            "marker_offset_px": 0,
+            "marker_shape": "",
+            "marker_size": 0,
+            "marker_text": "",
+            "marker_text_color": "",
+            "render_mode": "line",
+            "show_label": true,
+            "show_value": true,
+            "visible": true
+          }
+        },
+        "style_modules": [
+          {
+            "config": {
+              "condition": {
+                "lhs_signal": "fast_vwap",
+                "operator": "gt",
+                "rhs_signal": "slow_vwap",
+                "scope": "historical"
+              },
+              "targets": [
+                {
+                  "false_color": "#EF4444",
+                  "signal": "fast_vwap",
+                  "true_color": "#22C55E"
+                },
+                {
+                  "false_color": "#EF4444",
+                  "signal": "slow_vwap",
+                  "true_color": "#22C55E"
+                }
+              ]
+            },
+            "enabled": true,
+            "module_key": "conditional_line_color"
+          },
+          {
+            "config": {
+              "condition": {
+                "lhs_signal": "fast_vwap",
+                "operator": "gt",
+                "rhs_signal": "slow_vwap",
+                "scope": "historical"
+              },
+              "false_color": "#EF4444",
+              "false_opacity": 0.08,
+              "target_fill_id": "hck_band",
+              "true_color": "#22C55E",
+              "true_opacity": 0.08
+            },
+            "enabled": true,
+            "module_key": "conditional_fill_color"
+          }
+        ],
+        "visible": true
+      },
+      "tool_key": "hck",
+      "user_metadata": {
+        "dataset_role": "unspecified",
+        "description": "",
+        "important": false
+      }
+    }
+  ],
+  "updated_at_ms": 1779782862793
+}

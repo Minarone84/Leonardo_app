@@ -104,12 +104,12 @@
       "trades": []
     }
   ],
-  "content_hash": "3ebf38d057f2f9edffba3832e08199d035160e959aca094e35a5428f75dd67d5",
+  "content_hash": "d76cd8517481e9f1cd9a814ee85e7e7d7b405e5521e8ec0a7cefae8077441cf2",
   "created_at_ms": 1779372983436,
   "description": "",
   "display_name": "Test_A",
   "notebook_id": "8756e27bc04f4f288be55f2e99c4a44f",
   "object_type": "historical_workspace_notebook",
   "schema_version": 1,
-  "updated_at_ms": 1779722494449
+  "updated_at_ms": 1779782950668
 }

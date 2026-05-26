@@ -116,7 +116,7 @@ class OscillatorPane(QWidget):
         self._header_layout.addWidget(self._style_btn, 0)
 
         self._metadata_btn = QToolButton(self._header_host)
-        self._metadata_btn.setText("Meta")
+        self._metadata_btn.setText("Metadata...")
         self._metadata_btn.setToolTip("Edit study metadata")
         self._metadata_btn.clicked.connect(self._emit_metadata)
         self._header_layout.addWidget(self._metadata_btn, 0)

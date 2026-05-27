@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Optional, Any
@@ -30,6 +31,10 @@ from leonardo.data.naming import (
     normalize_symbol,
     normalize_timeframe,
 )
+
+
+_LIVE_PROGRESS_MESSAGES = {"download progress", "download batch progress"}
+_PROGRESS_UI_THROTTLE_SECONDS = 0.25
 
 
 @dataclass(frozen=True)
@@ -137,6 +142,12 @@ class DownloadTaskMonitorDialog(QDialog):
         self._failed_timeframe: Optional[str] = None
         self._batch_terminal_status: Optional[str] = None
         self._batch_validation_dialog_shown = False
+        self._last_live_progress_render_at = 0.0
+        self._pending_live_progress: Optional[tuple[str, dict[str, object], str]] = None
+        self._progress_bar_states: dict[int, tuple[int, int, int, str]] = {}
+        self._progress_flush_timer = QTimer(self)
+        self._progress_flush_timer.setSingleShot(True)
+        self._progress_flush_timer.timeout.connect(self._flush_pending_live_progress)
 
         self.title_lbl = QLabel("Preparing download task...")
         self.title_lbl.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -238,18 +249,57 @@ class DownloadTaskMonitorDialog(QDialog):
         if event_timeframe is not None:
             self._current_timeframe = event_timeframe
         summary = self._event_summary(message, fields)
-        self.status_lbl.setText(summary)
-        self.append_log(message, summary)
         self._record_event(message, fields)
-        self._update_progress(message, fields)
-
         terminal = message in self._TERMINAL_MESSAGES or (message == "download validated" and not is_batch_job)
+
+        if message in _LIVE_PROGRESS_MESSAGES and not terminal:
+            self._queue_or_render_live_progress(message, fields, summary)
+        else:
+            self._flush_pending_live_progress()
+            self._render_event_progress(message, fields, summary)
+
         if terminal:
+            self._progress_flush_timer.stop()
             self._render_final_recap(message, fields, is_batch_job=is_batch_job)
             self.stop_btn.setEnabled(False)
             self.ok_btn.setEnabled(True)
             if message == "download batch completed":
                 self._show_batch_validation_dialog_once()
+
+    def _queue_or_render_live_progress(self, message: str, fields: dict[str, object], summary: str) -> None:
+        now = time.monotonic()
+        if (
+            self._last_live_progress_render_at <= 0.0
+            or now - self._last_live_progress_render_at >= _PROGRESS_UI_THROTTLE_SECONDS
+        ):
+            self._progress_flush_timer.stop()
+            self._pending_live_progress = None
+            self._render_event_progress(message, fields, summary)
+            self._last_live_progress_render_at = now
+            return
+
+        self._pending_live_progress = (message, dict(fields), summary)
+        remaining_ms = max(
+            1,
+            int((_PROGRESS_UI_THROTTLE_SECONDS - (now - self._last_live_progress_render_at)) * 1000),
+        )
+        self._progress_flush_timer.start(remaining_ms)
+
+    def _flush_pending_live_progress(self) -> None:
+        pending = self._pending_live_progress
+        if pending is None:
+            return
+        self._pending_live_progress = None
+        self._progress_flush_timer.stop()
+        message, fields, summary = pending
+        self._render_event_progress(message, fields, summary)
+        self._last_live_progress_render_at = time.monotonic()
+
+    def _render_event_progress(self, message: str, fields: dict[str, object], summary: str) -> None:
+        if self.status_lbl.text() != summary:
+            self.status_lbl.setText(summary)
+        self.append_log(message, summary)
+        self._update_progress(message, fields)
 
     def _record_event(self, message: str, fields: dict[str, object]) -> None:
         timeframe = self._timeframe_from_fields(fields)
@@ -442,22 +492,43 @@ class DownloadTaskMonitorDialog(QDialog):
             value = None
 
         if value is None:
-            bar.setRange(0, 100)
-            bar.setValue(0)
-            bar.setFormat(f"{label}: waiting")
+            self._set_progress_bar_state(bar, 0, 100, 0, f"{label}: waiting")
             return
 
         pct = max(0, min(100, int(round(value * 100))))
-        bar.setRange(0, 100)
-        bar.setValue(pct)
-        bar.setFormat(f"{label}: {pct}%")
+        self._set_progress_bar_state(bar, 0, 100, pct, f"{label}: {pct}%")
+
+    def _set_progress_bar_state(
+        self,
+        bar: QProgressBar,
+        minimum: int,
+        maximum: int,
+        value: int,
+        text: str,
+    ) -> None:
+        state = (minimum, maximum, value, text)
+        key = id(bar)
+        if self._progress_bar_states.get(key) == state:
+            return
+
+        if bar.minimum() != minimum or bar.maximum() != maximum:
+            bar.setRange(minimum, maximum)
+        if bar.value() != value:
+            bar.setValue(value)
+        if bar.format() != text:
+            bar.setFormat(text)
+        self._progress_bar_states[key] = state
 
     def _update_progress(self, message: str, fields: dict[str, object]) -> None:
         if message == "download batch started":
             self._set_bar_ratio(self.overall_progress, 0.0, label="Overall progress")
-            self.current_progress.setRange(0, 100)
-            self.current_progress.setValue(0)
-            self.current_progress.setFormat(f"{self._current_timeframe_label()}: waiting")
+            self._set_progress_bar_state(
+                self.current_progress,
+                0,
+                100,
+                0,
+                f"{self._current_timeframe_label()}: waiting",
+            )
             return
 
         if message == "download batch item started":
@@ -492,8 +563,20 @@ class DownloadTaskMonitorDialog(QDialog):
             return
 
         if message in {"download failed", "download cancelled", "download batch failed", "download batch cancelled"}:
-            self.overall_progress.setFormat("Overall progress: stopped")
-            self.current_progress.setFormat(f"{self._current_timeframe_label()}: stopped")
+            self._set_progress_bar_state(
+                self.overall_progress,
+                self.overall_progress.minimum(),
+                self.overall_progress.maximum(),
+                self.overall_progress.value(),
+                "Overall progress: stopped",
+            )
+            self._set_progress_bar_state(
+                self.current_progress,
+                self.current_progress.minimum(),
+                self.current_progress.maximum(),
+                self.current_progress.value(),
+                f"{self._current_timeframe_label()}: stopped",
+            )
 
     def _render_final_recap(self, message: str, fields: dict[str, object], *, is_batch_job: bool) -> None:
         status = self._terminal_status(message, fields, is_batch_job=is_batch_job)
@@ -906,6 +989,8 @@ class HistoricalDownloadWindow(QMainWindow):
         self._is_batch_job = False
         self._task_dialog: Optional[DownloadTaskMonitorDialog] = None
         self._dialog_event_keys_seen: set[tuple[object, object, object]] = set()
+        self._last_live_status_render_at = 0.0
+        self._pending_live_status: Optional[str] = None
 
         self._submit_fut = None
         self._submit_watch = QTimer(self)
@@ -1017,6 +1102,10 @@ class HistoricalDownloadWindow(QMainWindow):
         self._poll = QTimer(self)
         self._poll.setInterval(500)
         self._poll.timeout.connect(self._poll_progress)
+
+        self._live_status_timer = QTimer(self)
+        self._live_status_timer.setSingleShot(True)
+        self._live_status_timer.timeout.connect(self._flush_pending_live_status)
 
         self._refresh_markets()
 
@@ -1134,8 +1223,38 @@ class HistoricalDownloadWindow(QMainWindow):
         return int(s)
 
     def _set_status(self, msg: str) -> None:
+        if self._status_text == msg:
+            return
         self._status_text = msg
         self.status_panel.setPlainText(msg)
+
+    def _set_live_progress_status(self, msg: str) -> None:
+        now = time.monotonic()
+        if (
+            self._last_live_status_render_at <= 0.0
+            or now - self._last_live_status_render_at >= _PROGRESS_UI_THROTTLE_SECONDS
+        ):
+            self._live_status_timer.stop()
+            self._pending_live_status = None
+            self._last_live_status_render_at = now
+            self._set_status(msg)
+            return
+
+        self._pending_live_status = msg
+        remaining_ms = max(
+            1,
+            int((_PROGRESS_UI_THROTTLE_SECONDS - (now - self._last_live_status_render_at)) * 1000),
+        )
+        self._live_status_timer.start(remaining_ms)
+
+    def _flush_pending_live_status(self) -> None:
+        pending = self._pending_live_status
+        if pending is None:
+            return
+        self._pending_live_status = None
+        self._live_status_timer.stop()
+        self._last_live_status_render_at = time.monotonic()
+        self._set_status(pending)
 
     def _set_running(self, running: bool) -> None:
         self.start_btn.setEnabled(not running)
@@ -1604,6 +1723,8 @@ class HistoricalDownloadWindow(QMainWindow):
                 continue
 
             msg = ev.get("message", "")
+            if msg not in _LIVE_PROGRESS_MESSAGES:
+                self._flush_pending_live_status()
 
             if msg == "download batch started":
                 timeframes = fields.get("timeframes") or []
@@ -1638,7 +1759,7 @@ class HistoricalDownloadWindow(QMainWindow):
             if msg == "download batch progress":
                 completed = fields.get("completed_timeframes") or []
                 remaining = fields.get("remaining_timeframes") or []
-                self._set_status(
+                self._set_live_progress_status(
                     "Batch progress.\n"
                     f"overall={self._fmt_progress(fields.get('progress_ratio'))} "
                     f"completed={self._fmt(fields.get('completed_count'))}/{self._fmt(fields.get('total_timeframes'))}\n"
@@ -1774,7 +1895,7 @@ class HistoricalDownloadWindow(QMainWindow):
                 return
 
             if msg == "download progress":
-                self._set_status(
+                self._set_live_progress_status(
                     f"Progress: page={fields.get('page')} "
                     f"page_fetched={fields.get('page_fetched')} "
                     f"total_rows={fields.get('total_rows')} "

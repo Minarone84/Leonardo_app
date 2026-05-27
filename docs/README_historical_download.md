@@ -104,6 +104,7 @@ The Historical Download Manager now supports:
 • newly downloaded OHLCV metadata written as `validation.status = "unknown"` and `quality.validation_status = "not_validated"`
 • preliminary `ERROR` results highlighted in bold red and `WARNING` results highlighted with warning styling in the task monitor/final recap
 • manual OHLCV Maintenance validation required before downloaded data is accepted/loadable
+• GUI-layer Download Manager progress throttling/coalescing for live progress and batch-progress display, with final completion/error/cancel/validation states flushed immediately
 • local +1 point font bump for Historical Download Manager windows, preflight confirmation, task monitor, and recap/status text widgets
 
 The GUI displays this state. It does not become the execution owner.
@@ -180,7 +181,7 @@ Generated derived artifacts and Analysis Database materializations record accept
 Artifact recipe lifecycle is separate from saved artifact value storage. `ArtifactRecipeStore` owns reusable single-recipe JSON files, while `ArtifactRecipeCollectionStore` owns ordered collection JSON files with embedded recipe snapshots and optional dependency/source-database metadata. Recovery services may inspect these files to plan or request regeneration, but CSV artifact writing remains owned by the calculation/persistence path and Analysis Database materialization remains store-owned.
 The Data Manager recipe-collection update workflow can plan and execute selected/all actionable artifact regeneration and linked Analysis Database rebuild actions after OHLCV is accepted. It uses the existing recovery and rebuild services; ingestion/download workflows do not execute those updates.
 
-Data Manager can also create or extend draft Analysis Database manifests from recipe collections when the expected artifacts are already current and resolved. That workflow uses recovery status and Analysis Database services; it does not calculate missing artifacts, run recipe updates, materialize `dataframe.csv`, or change OHLCV ingestion/acceptance rules.
+Data Manager can also extend an existing selected Analysis Database from recipe collections when the expected artifacts are already current and resolved. That workflow uses recovery status and Analysis Database services; Database seed creator remains the only user-facing Analysis Database creation path. No missing-artifact calculation, recipe update execution, `dataframe.csv` materialization, or OHLCV ingestion/acceptance rule change is part of that flow.
 
 ------------------------------------------------------------
 3. Core Historical Downloader
@@ -380,6 +381,7 @@ Responsibilities
 • submit confirmed single-timeframe or multi-timeframe jobs
 • observe normalized audit events
 • display progress, preliminary validation, cancellation, and final recap state
+• coalesce/throttle live progress display while preserving final progress accuracy
 • highlight preliminary validation `ERROR` and `WARNING` results clearly
 • direct users to OHLCV Maintenance for explicit validation, repair, or source correction
 • request cancellation through CoreBridge
@@ -412,6 +414,8 @@ Async Safety
 
 The task monitor dialog is a display surface. The Stop button requests Core cancellation and then waits for a terminal audit event such as `download cancelled` or `download batch cancelled`.
 
+Progress display throttling is GUI-layer only. Live `download progress` / `download batch progress` events are coalesced around 250 ms, the latest pending progress is retained, and pending state is forced before completion, error, cancel, and final validation. Downloader/provider requests, OHLCV CSV output, metadata sidecars, validation/loadability, and audit event contracts are preserved.
+
 ------------------------------------------------------------
 8. Audit Integration
 ------------------------------------------------------------
@@ -440,6 +444,8 @@ Events include:
 • download batch failed
 
 Audit is now part of the global runtime observability system, not just a local feature.
+
+The GUI may coalesce repeated live progress events before repainting widgets, but it does not alter emitted audit history or downloader task semantics.
 
 ------------------------------------------------------------
 9. Dependency Diagram

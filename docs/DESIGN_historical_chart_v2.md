@@ -486,6 +486,8 @@ The panel reuses already rendered/projected data and rebuilds only chart-local v
 
 For historical conditional studies such as HCK, that visual payload may be a segmented renderer-facing expansion of the logical study outputs. That segmented derivation remains panel/resolver-owned and must not be moved into workspace or renderer ownership.
 
+The Study Style editor exposes Apply / OK / Cancel. Apply commits the current style to the live chart without closing the dialog, OK applies and closes, and Cancel closes without applying further unapplied edits or rolling back changes already committed through Apply. White / `#FFFFFF` is available in the style palettes.
+
 ---
 
 ### 11.5 Notebook Runtime Annotation Boundary
@@ -494,7 +496,7 @@ Historical Notebook POI and Potential Trade markers are chart annotations, not s
 
 Durable notebook truth lives in `HistoricalNotebookStore`. A Workspace Snapshot may reference that notebook through `notebook_ref`, but it must not embed notebook content in the snapshot payload.
 
-Notebook editing is a Research Suite GUI concern. Dirty notebooks prompt with Save / Don't Save / Cancel before close or replacement. Notebook free-text fields can store styled content through optional parallel HTML fields while preserving plain text. Rich-text controls target only research-note text fields, not dates, numeric fields, identifiers, dataset identity, or selector fields.
+Notebook editing is a Research Suite GUI concern. Dirty notebooks prompt with Save / Don't Save / Cancel before close or replacement. Notebook free-text fields can store styled content through optional parallel HTML fields while preserving plain text. Rich-text controls target only research-note text fields, not dates, numeric fields, identifiers, dataset identity, or selector fields. Notebook assignment/unassignment refreshes the visible notebook indicator immediately when the changed snapshot matches the current workspace snapshot; this does not reload the workspace or change `notebook_ref` persistence.
 
 When notebook overlays are enabled, `HistoricalDataManagerWindow` derives runtime marker payloads from notebook POI rows and eligible Potential Trades rows, then sends them to matching active `HistoricalChartPanel` instances through narrow notebook-marker APIs. The chart layer receives already-derived annotation payloads.
 
@@ -743,6 +745,10 @@ This metadata is semantic context for saved research workflows. Chart-applied st
 Study Environment and Workspace Snapshot save dialogs support Save as new and Update existing modes. Update existing overwrites the selected saved item while preserving its storage ID and creation timestamp. Workspace Snapshot update preserves `notebook_ref` and does not change notebook ownership. Notebook save supports the same Save as new / Update existing semantics through `HistoricalNotebookStore.update_notebook(...)`.
 
 Notebook dirty-state prompts and free-text formatting remain separate from chart/study/data workflows. Save / Don't Save / Cancel protects notebook editor changes before close or replacement, and rich-text formatting persists through notebook fields only.
+
+Workspace Snapshot load uses a GUI-owned preflight/loading flow before the existing synchronous restore. The preflight shows snapshot name, description, chart count, chart recap, notebook assignment, and replacement warning; cancel aborts before restore. Confirmed load uses an indeterminate loading state and preserves dirty notebook confirmation and notebook indicator refresh.
+
+Restore remains synchronous, non-cancellable after it starts, and non-transactional.
 
 Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the Data Manager-visible recipe store before artifact persistence continues. Study application remains chart-local and non-persistent. Saving a Study Environment or Workspace Snapshot does not directly persist recipes, and Workspace Snapshots are restoration objects rather than Data Manager export objects.
 

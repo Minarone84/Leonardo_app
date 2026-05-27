@@ -163,6 +163,8 @@ The GUI may display capabilities and request work, but it must not own historica
 
 Download-time validation is notification/reporting only. `HistoricalDatasetValidator` checks the written CSV and the task monitor can report preliminary `OK`, `WARNING`, or `ERROR`, but download completion does not certify data as accepted. Manual OHLCV Maintenance validation is required before a dataset becomes loadable for charts or Data Manager workflows.
 
+Download Manager progress throttling is a GUI-layer display optimization. The GUI coalesces live progress/audit updates and suppresses redundant progress-bar calls while preserving final completion, error, cancel, and validation flushes. Downloader/provider requests, OHLCV CSV output, metadata sidecars, validation/loadability, and audit event contracts are unchanged.
+
 ---
 
 ## Application and Service Lifecycle
@@ -656,6 +658,10 @@ Notebook rich-text persistence preserves compatibility fields. Plain notebook te
 
 GUI dialogs and manager dialogs collect Save as new / Update existing, rename, description, delete, and metadata-edit intent only. They must not manually write JSON, calculate hashes, manage preset identity, delete files directly, or own atomic persistence behavior. Research Suite user-facing terminology does not rename internal classes, schema fields, IDs, or store paths.
 
+Workspace Snapshot load preflight/loading is GUI-owned confirmation and progress presentation. It does not change snapshot schema, store persistence, notebook reference semantics, dirty-notebook confirmation, or the synchronous restore contract. Notebook assignment indicator refresh is also UI state synchronization; `notebook_ref` storage remains store-owned.
+
+Style editor Apply uses the existing chart style update path. It commits current visual style to the live chart without changing study computation, serialization, Study Environment persistence, Workspace Snapshot persistence, or Data Manager behavior.
+
 ### Study Environment recipe export semantics
 
 Saved chart studies may carry `StudyUserMetadata` in serialized `user_metadata` with `important`, `description`, and `dataset_role`. This metadata is semantic context only. It does not change financial-tool computation, render payloads, style, runtime state, artifact identity, recipe identity, or Analysis Database geography truth.
@@ -672,7 +678,7 @@ Study Environment save/update metadata placement is GUI orchestration before sto
 
 `RecipeCollectionDatabasePlanner` owns read-only recipe collection to Analysis Database component planning. It consumes `ArtifactRecoveryPlanner` status, resolves only current/up-to-date artifacts into Analysis Database source/column previews, preserves collection order, reports duplicate planned database columns, and blocks missing, stale, source-drifted, freshness-unknown, blocked, and cross-market artifacts from component previews. It does not create or edit manifests, calculate artifacts, execute recipes, or materialize databases.
 
-`RecipeCollectionDatabaseService` owns C2 plan application to Analysis Database manifests. It can create a new draft manifest through `AnalysisDatabaseStore.build_draft_manifest(...)` / `save_manifest(...)`, or extend an existing manifest through `AnalysisDatabaseComponentEditor.add_components(...)`. Extension preserves existing components and relies on the component editor for draft/materialization reset behavior. The service integrates geography reports, applies the raw-volume policy for new recipe-collection drafts, and blocks duplicate/missing/market-mismatch cases. It does not materialize `dataframe.csv`, calculate artifacts, execute recipes, or run recipe-collection update execution.
+`RecipeCollectionDatabaseService` owns C2 plan application to Analysis Database manifests. Its draft-manifest construction method remains a data-layer compatibility contract, but the GUI no longer exposes collection-driven Analysis Database creation; Database seed creator remains the only user-facing creation workflow. The selected-database collection flow uses `AnalysisDatabaseComponentEditor.add_components(...)`, preserves existing components, and relies on the component editor for draft/materialization reset behavior. The service integrates geography reports and blocks duplicate/missing/market-mismatch cases. It does not own `dataframe.csv` materialization, artifact calculation, recipe execution, or recipe-collection update execution.
 
 ### Artifact identity fields
 
@@ -873,6 +879,7 @@ The Leonardo Core provides:
 - observable runtime lifecycle and state
 - explicit distinction between compute truth and render truth
 - Core-supervised historical OHLCV download planning, execution, cancellation, preliminary validation reporting, and audit emission
+- GUI-layer Download Manager progress coalescing while preserving Core/provider/download persistence contracts
 - OHLCV Maintenance service ownership for explicit validation, repair, source-invalid handling, source correction provenance, and modified status stamping
 
 It is:

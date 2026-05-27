@@ -197,6 +197,7 @@ Responsibilities include:
 - showing preliminary `ERROR` results in bold red and preliminary `WARNING` results in warning styling;
 - showing that newly downloaded OHLCV remains `validation.status = "unknown"` and `quality.validation_status = "not_validated"`;
 - directing users to Historical -> OHLCV Maintenance for explicit validation, repair, or source correction;
+- throttling/coalescing live progress display in the GUI layer while forcing pending progress to flush on completion, error, cancel, and final validation;
 - applying a local +1 point font bump to Historical Download Manager related windows/dialogs without changing the global application font;
 - requesting Stop/Cancel through CoreBridge.
 
@@ -207,6 +208,8 @@ It must not:
 - build or reinterpret historical range plans locally;
 - execute downloads directly;
 - own async task lifecycle or cancellation truth.
+
+Download Manager progress throttling is display-only. `HistoricalDownloadWindow._poll_progress()` still observes Core audit snapshots through a GUI `QTimer`; live `download progress` / `download batch progress` events are coalesced around 250 ms, the latest pending progress is retained, final states flush immediately, and redundant same-state progress-bar updates are suppressed without changing downloader/provider/OHLCV persistence semantics.
 
 Accepted limit behavior:
 
@@ -273,7 +276,7 @@ Responsibilities include:
 - creating recipes from saved Study Environments through `Create Recipes from Study Environment...`;
 - checking recipe-collection recovery status, regenerating planner-actionable artifacts, and rebuilding linked Analysis Databases through data-layer recovery services;
 - planning and executing recipe-collection-scoped updates through `Plan Updates...` and `DataManagerUpdateService`;
-- creating or extending draft Analysis Databases from current recipe-collection artifacts through `Create/Extend Database...`;
+- extending a selected existing Analysis Database from current recipe-collection artifacts through `Extend Database from Collection...`;
 - previewing tabular artifacts in a read-only dataframe view;
 - exposing explicit data-check / metadata-restore workflows.
 
@@ -288,22 +291,23 @@ Current Analysis Database UI behavior:
 - duplicate visible database names are rejected for the same market/timeframe partition during draft creation and rename;
 - saved artifact rows use checkboxes for selection; highlighting is focus/preview only;
 - checked saved artifact columns feed the `Database seed creator` only;
-- `Database seed creator` creates a draft `manifest.json` from checked artifact columns and does not materialize `dataframe.csv`;
+- `Database seed creator` is the only user-facing Analysis Database creation path; it creates a draft `manifest.json` from checked artifact columns and does not materialize `dataframe.csv`;
 - `Database Builder` rows include checkboxes, and selected-database actions are enabled only when exactly one database is checked;
 - `Build Selected Database` is enabled for draft/unmaterialized databases and opens a dedicated build dialog;
-- the build dialog auto-loads saved indicators, oscillators, and constructs for the selected market, highlights already-present database components with a subtle yellow background, and materializes `dataframe.csv` from the existing manifest recipe without changing components;
+- the build dialog auto-loads saved indicators, oscillators, and constructs for the selected market, highlights already-present database components for review, and materializes `dataframe.csv` from the existing manifest recipe without changing components;
 - `Rebuild Selected Database` is enabled for materialized databases and rewrites `dataframe.csv` from the same saved manifest recipe;
 - build/rebuild preserves the same `database_id`, folder, display name, feature sources, feature columns, and recipe hash while updating materialization metadata;
 - build/rebuild does not add, remove, or replace artifact components and does not run duplicate visible-name validation as if a new database were being created;
-- `Edit Selected Database Components...` opens a dedicated component editor, auto-loads saved artifacts for the selected market, highlights already-present components, and supports explicit add/remove/replace actions;
+- `Edit Selected Database Components...` opens a dedicated component editor, auto-loads saved artifacts for the selected market, highlights already-present Saved Artifact Columns with light green `#C8F7C5` background, black foreground, and bold font, and supports explicit add/remove/replace actions;
 - saving component changes intentionally changes the manifest recipe, resets materialization to draft, removes stale `dataframe.csv` when present, and requires a later build;
-- `Create/Extend Database...` opens from saved recipe collection controls and displays C2 resolved components, blockers, warnings, duplicate columns, and geography reports before calling C3 create/extend services;
-- recipe collection database creation saves a draft manifest only, and recipe collection database extension appends resolved components only through the C3 data-layer service;
-- raw OHLCV volume selection for recipe-collection draft creation is passed as Auto / Include / Exclude, with policy owned by the data-layer service;
+- `Extend Database from Collection...` opens from the selected Analysis Database workflow, requires an existing selected database, and displays C2 resolved components, blockers, warnings, duplicate columns, and geography reports before any mutation;
+- recipe collection database extension appends resolved components only through `RecipeCollectionDatabaseService.extend_database_from_plan(...)` after `Confirm Database Extension`;
+- the GUI no longer offers collection-driven database creation; the retained backend create method remains a data-layer compatibility contract;
 - missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market collection artifacts remain visible as blocked plan items and are not silently included;
 - rename and delete are exposed as user actions, but durable mutation is store-owned;
 - Data Manager opens maximized and uses a compact layout where the top row contains Dataset and Calculate and Save Tool Outputs, the middle row contains DataFrame Preview and Saved Indicators / Oscillators / Constructs, and the lower area keeps Data Checks / Metadata Tools plus Database seed creator on the left with Database Builder on the right;
-- main Data Manager widgets use the shared right-side `make_button_rack(...)` action layout;
+- main Data Manager widgets use the shared right-side `make_button_rack(...)` action layout with a 260px minimum action rack width;
+- the artifact calculator popup opens with a 900x620 minimum size so Calculate and Save Tool Outputs controls remain readable;
 - DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack;
 - saved artifact actions use the shared button rack so the list retains content width;
 - Database Builder gives the database list and manifest/details area equal display space;
@@ -323,7 +327,8 @@ Current artifact recipe / recovery UI behavior:
 - `Plan Updates...` opens a recipe-collection update dialog backed by `DataManagerUpdateService`;
 - the update dialog displays service-produced plan items, actions, blockers, warnings, and execution reports;
 - update execution supports selected actions and all actionable actions, reports completed/skipped/failed/blocked results including partial failures, and refreshes saved artifact and Analysis Database lists after execution;
-- Data Manager refreshes recipe, recipe collection, saved artifact, and database lists after successful persistence/recovery/rebuild/create/extend where relevant, but it does not classify artifact freshness or materialize dataframes itself.
+- Data Manager refreshes recipe, recipe collection, saved artifact, and database lists after successful persistence, recovery, rebuild, or selected-database collection updates where relevant.
+- Dataframe materialization remains outside GUI ownership.
 
 Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the same Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store. Artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as recipe metadata.
 
@@ -361,7 +366,9 @@ Data Manager lineage hardening, source-drift classification, and update planning
 
 The implemented update UI is recipe-collection scoped and follows the existing `ToolCalculationWidget` local data-layer service pattern rather than adding CoreBridge update-plan APIs. It is not a dataset-wide Update Manager dashboard, arbitrary dependency graph workflow, or background task/progress monitor.
 
-Study Environment recipe export and recipe collection database create/extend are also local Data Manager workflows that display data-layer plans and reports. They do not calculate artifacts, execute recipes, run update plans, export Workspace Snapshots, or materialize databases.
+Study Environment recipe export and selected-database collection extension are also local Data Manager workflows that display data-layer plans and reports.
+
+They do not calculate artifacts, execute recipes, run update plans, export Workspace Snapshots, offer collection-driven database creation, or materialize databases.
 
 
 ## Historical Workspace Model
@@ -509,7 +516,7 @@ POI rows and eligible Potential Trades rows may be projected onto matching activ
 
 Notebook JSON may include additive `annotation_settings` for `poi_marker_offset`, `pt_long_marker_offset`, and `pt_short_marker_offset`. Existing notebooks without these values load with defaults, and legacy `pt_marker_offset` is only a compatibility fallback. These settings are notebook annotation state, not Study Environment state and not Workspace Snapshot assignment truth.
 
-The menu-bar corner quick actions include an optional `Notebook` button before the Study Environment buttons. It opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
+The menu-bar corner quick actions include an optional `Notebook` button before the Study Environment buttons. It opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available. Notebook assignment/unassignment emits a narrow refresh path so the visible notebook indicator updates immediately for the current workspace snapshot without reloading the workspace.
 
 Notebook save supports explicit Save as new and Update existing modes. Update existing uses `HistoricalNotebookStore.update_notebook(...)` to preserve `notebook_id` and `created_at_ms`, advance `updated_at_ms`, recompute `content_hash`, and atomically overwrite through the store. Save as new creates a distinct notebook identity and does not repoint existing Workspace Snapshot `notebook_ref` values. Create New Notebook clears prior loaded identity before refreshing workspace charts.
 
@@ -533,6 +540,11 @@ The Study Environment and Workspace Snapshot load dialogs expose confirmed Delet
 
 Rules:
 
+- loading a Workspace Snapshot first shows a preflight dialog with snapshot name, description, chart count, chart recap, notebook assignment, and a warning that current workspace content will be replaced or added to;
+- preflight Cancel aborts before restore;
+- confirmed load switches to an indeterminate loading state during the existing synchronous GUI-thread restore;
+- restore does not offer mid-restore cancellation, and failure is reported cleanly;
+- the restore path is not transactional if a later chart restore fails after partial UI mutation;
 - deleting a saved Study Environment uses `ChartStudySetupStore.delete_setup(setup_id)` and does not remove currently applied chart studies;
 - deleting a Workspace Snapshot uses `HistoricalWorkspaceSnapshotStore.delete_snapshot(snapshot_id)` and does not delete referenced notebooks, datasets, saved Study Environments, or saved artifacts;
 - when a snapshot references a notebook, the delete confirmation states that the notebook will not be deleted;
@@ -1192,6 +1204,8 @@ Style changes must never trigger recomputation.
 
 Style reapply must only rebuild render payloads with updated visual state.
 
+The Style editor exposes Apply / OK / Cancel. Style editor Apply commits the current style to the live chart while keeping the dialog open; OK applies and closes; Cancel closes without applying further unapplied edits and does not roll back changes already explicitly committed through Apply. White / `#FFFFFF` is available in the style palettes.
+
 ---
 
 ## Default Style Source of Truth
@@ -1448,7 +1462,7 @@ This README therefore documents the current ownership contract and validated cod
 The GUI currently provides:
 
 - 8-slot adaptive historical workspace with Scroll 4 / Fit 8 modes, dock-back slot preservation, and chart Position controls
-- Historical Notebook support for workspace-linked notes, Potential Trades, POIs, row-level delete, explicit Go navigation, assigned snapshot notebooks, dirty close/load replacement prompts, rich-text free-text formatting, and runtime POI/PT chart annotations
+- Historical Notebook support for workspace-linked notes, Potential Trades, POIs, row-level delete, explicit Go navigation, assigned snapshot notebooks with immediate notebook indicator refresh, dirty close/load replacement prompts, rich-text free-text formatting, and runtime POI/PT chart annotations
 - Notebook Manager ownership for notebook assignment/unassignment, assignment summaries, and confirmed notebook deletion
 - Pan Anchor horizontal synchronization across active historical charts
 - confirmed delete actions for saved Study Environments and Workspace Snapshots
@@ -1470,7 +1484,9 @@ The GUI currently provides:
 - centralized Runtime Inspector diagnostics
 - OHLCV Maintenance for explicit validation, repair, source-invalid reporting, provenance-recorded source correction, and modified status display
 - Research Suite chart creation limited to accepted `ok` / `modified` OHLCV datasets through CoreBridge/HistoricalDatasetService loadability gates
-- managed Data Manager window for accepted-OHLCV dataset/artifact preparation, metadata-aware Analysis Database seed creation, separate build/rebuild, explicit component editing, recipe/collection recovery, compact maximized M6F layout, larger recipe/collection dialogs, rename/delete, and read-only preview workflows
+- managed Data Manager window for accepted-OHLCV dataset/artifact preparation, metadata-aware Analysis Database seed creation, selected Analysis Database extension from recipe collections, separate build/rebuild, explicit component editing, recipe/collection recovery, compact maximized M6F layout, readable dialog/button rack polish, rename/delete, and read-only preview workflows
+- Workspace Snapshot load preflight with indeterminate synchronous loading state
+- Download Manager progress throttling/coalescing in the GUI layer
 - polling-based runtime visibility
 - explicit `CoreBridge`-owned realtime control boundary
 
@@ -1604,15 +1620,16 @@ Recommended tooling (in the GUI package):
 
 ## Change log
 
+- **v3.28 (2026-05-28)** - Post-smoke correction sync: documented DM3 extend-only recipe collection database workflow, DM2 Data Manager dialog/highlight polish, RS8 Style editor Apply behavior, RS9 notebook indicator refresh, RS10 Workspace Snapshot load preflight/loading, and DL1 Download Manager GUI-layer progress throttling.
 - **v3.27 (2026-05-26)** - Research Suite notebook UX RS5 sync: documented notebook dirty-state protection, Save / Don't Save / Cancel close/replace flow, rich-text formatting palettes for notebook free-text fields, plain-text compatibility, and optional parallel HTML fields.
 - **v3.26 (2026-05-26)** - Research Suite RS1-RS4 sync: documented Research Suite terminology, artifact-save recipe persistence and sidecar recipe metadata, notebook Save as new / Update existing, and Study Environment / Workspace Snapshot managers with read-only embedded snapshot study metadata.
 - **v3.25 (2026-05-26)** - Historical Study metadata action and save update-mode sync: documented the earlier chart-local metadata action baseline plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. RS7 supersedes the chart-row action placement with Save/Update Study Environment metadata controls.
-- **v3.24 (2026-05-26)** - Study metadata and Data Manager recipe-to-database workflow sync: documented chart-local `StudyUserMetadata`, `Create Recipes from Study Environment...`, C1 geography reporting, C2 recipe-collection artifact resolution, C3 draft database create/extend service, and C4 `Create/Extend Database...` UI while preserving no-calculation and no-materialization boundaries.
+- **v3.24 (2026-05-26)** - Study metadata and Data Manager recipe-to-database workflow sync: documented chart-local `StudyUserMetadata`, `Create Recipes from Study Environment...`, C1 geography reporting, C2 recipe-collection artifact resolution, and C3 data-layer draft/extend service. DM3 later superseded the user-facing collection database workflow with selected-database-only extension while preserving no-calculation and no-materialization boundaries.
 - **v3.23 (2026-05-25)** — OHLCV acceptance workflow documentation sync: Historical Download Manager preliminary validation remains non-certifying, OHLCV Maintenance is documented as the explicit validation/repair/source-correction window, Research Suite chart creation is gated to `ok` / `modified` OHLCV, and Data Manager selector/preview behavior now consumes CoreBridge/data-layer loadable catalogs.
 
 - **v3.22 (2026-05-22)** — Historical apply/save/recovery hardening: Financial Tool Manager saved-source selection now consumes sidecar column metadata, historical runtime projection prefers explicit timeline/index alignment before legacy positional fallback, chart save and save-only artifact calculation share result-to-save-dataframe conversion, and UTC dependency preparation/recovery intent resolution are centralized while preserving chart/session ownership boundaries.
 
-- **v3.21 (2026-05-22)** — Historical download/Core capability sync: Historical Download Manager capability display remains GUI intent/display only, while CoreBridge resolves exchange capabilities through the registered Core `ExchangeRegistry`; downloader adapter acquisition is registry-backed, normalized audit snapshots remain GUI-displayable, and GUI ownership boundaries are unchanged.
+- **v3.21 (2026-05-22)** — Historical download/Core capability sync: Historical Download Manager capability display remains GUI intent/display only, while CoreBridge resolves exchange capabilities through the registered Core `ExchangeRegistry`; downloader adapter acquisition is registry-backed, normalized audit snapshots remain GUI-displayable, and GUI ownership boundaries are preserved.
 
 - **v3.20 (2026-05-22)** — Historical Notebook and workspace final polish: Notebook Manager owns assignment and deletion, Notes rows no longer navigate, Trades became Potential Trades, Potential Trades support explicit Long/Short direction and runtime green/red arrow annotations, POI/PT marker offsets persist in notebook `annotation_settings`, saved Study Environment and Workspace Snapshot load dialogs gained confirmed Delete actions, Research Suite opens maximized, and Pan Anchor provides optional horizontal timestamp-based pan synchronization across active charts. Later RS5 updates added dirty close/load replacement prompts.
 

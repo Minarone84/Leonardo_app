@@ -139,6 +139,8 @@ Normal CSV-backed artifacts use:
 
 This applies to OHLCV, indicator, oscillator, and construct CSV artifacts. Analysis Databases use `manifest.json` as the metadata sidecar for `dataframe.csv`.
 
+Analysis Database creation is a user-facing `Database seed creator` workflow. Recipe collections may extend a selected Analysis Database through C2 planning and `RecipeCollectionDatabaseService.extend_database_from_plan(...)`, but the GUI does not expose collection-driven database creation. Extension does not materialize databases, calculate artifacts, or execute recipes.
+
 The sidecar may include:
 
 - artifact identity (`unique_id`, `artifact_id`, `artifact_uid`);
@@ -162,6 +164,8 @@ The `source_ohlcv.snapshot` entry is metadata/lineage only. It records the accep
 
 For OHLCV, validation metadata is an acceptance contract owned by the historical data layer. `ok` and `modified` are loadable; `unknown`, `not_validated`, `warning`, `error`, missing/unreadable metadata, metadata mismatch, stale fingerprints, missing validation fingerprints, and missing CSV are blocked. Download-time validation is preliminary reporting only and does not certify a dataset as accepted.
 
+Download Manager progress throttling is a GUI display concern. Coalescing live progress updates must not change downloader/provider requests, OHLCV CSV output, metadata sidecars, validation/loadability, or audit event contracts.
+
 ## Serialized chart study metadata
 
 Serialized chart studies may include `user_metadata` from `StudyUserMetadata`:
@@ -183,6 +187,10 @@ Updating an existing Workspace Snapshot preserves its `snapshot_id`, preserves `
 Updating an existing Notebook preserves its `notebook_id`, preserves `created_at_ms`, advances `updated_at_ms`, recomputes `content_hash`, and replaces stored notebook content through `HistoricalNotebookStore.update_notebook(...)`.
 
 Research Suite managers use store-owned update/delete APIs. The Study Environment Manager may edit serialized study `user_metadata`; the Workspace Snapshot Manager displays embedded study metadata read-only in RS4.
+
+Workspace Snapshot load preflight/loading and notebook indicator refresh are GUI state flows. They do not alter snapshot schema, store persistence, notebook persistence, or `notebook_ref` semantics.
+
+Restore remains synchronous, non-cancellable after it starts, and non-transactional.
 
 ## Notebook rich-text persistence
 

@@ -467,7 +467,7 @@ Research Suite artifact save persists or reuses the corresponding recipe in the 
 
 Saved Study Environments can be planned into Data Manager artifact recipe definitions without calculating artifacts. `StudySetupRecipeExportPlanner` consumes serialized chart study payloads, uses `get_tool_spec`, `format_output_names`, and `format_output_signals` for output previews, excludes chart-only style/runtime/pane/render fields, and carries `StudyUserMetadata` only as report context. `StudySetupRecipeExportPersistenceService` persists selected/all exportable candidates as recipes and optional ordered recipe collections through the artifact recipe stores. This path preserves the runtime/persistence distinction: chart studies provide saved intent. Saving a Study Environment does not directly persist recipes, and recipe export does not execute financial-tool runtime.
 
-Recipe collections can feed draft Analysis Database creation or extension only after current saved artifacts already exist. `RecipeCollectionDatabasePlanner` resolves up-to-date artifacts into source/column previews from recovery status, and `RecipeCollectionDatabaseService` creates or extends draft manifests from those previews. Missing or stale artifacts remain update/recovery concerns; database creation from a collection does not calculate artifacts, execute recipes, or materialize `dataframe.csv`.
+Recipe collections can extend an existing selected Analysis Database only after current saved artifacts already exist. `RecipeCollectionDatabasePlanner` resolves up-to-date artifacts into source/column previews from recovery status, and the GUI flow applies those previews through `RecipeCollectionDatabaseService.extend_database_from_plan(...)` after confirmation. Database seed creator remains the only user-facing database creation workflow. Missing or stale artifacts remain update/recovery concerns; no artifact calculation, recipe execution, or `dataframe.csv` materialization happens in this flow.
 
 Restore-only metadata backfill may recreate missing/corrupt sidecars from existing CSV files, but it must not rewrite the CSV value artifact and must not become the normal save path.
 
@@ -512,6 +512,8 @@ Apply-time flow:
 Style-time flow:
 
 `existing rendered series or projected resident-local payload → panel → final chart-local style resolution → workspace reapply`
+
+The Study Style editor exposes Apply / OK / Cancel. Apply commits the current style to the live chart while keeping the dialog open, OK applies and closes, and Cancel closes without applying further unapplied edits or rolling back changes already committed through Apply. White / `#FFFFFF` is available in the style palettes. This style workflow is separate from the Financial Tools Apply preflight/progress dialog and remains visual-only.
 
 ### 9.4 Slice-refresh rule
 

@@ -580,6 +580,8 @@ Validated grouped-control example:
 
 If a renderer appears to have meaningful defaults that are not already present in chart-local study state, the upstream contract is broken.
 
+The Style editor exposes Apply / OK / Cancel. Style editor Apply commits the current style to the live chart while keeping the dialog open; OK applies and closes; Cancel closes without applying further unapplied edits and does not roll back changes already committed through Apply. White / `#FFFFFF` is available in the style palettes. This remains style-only and does not recompute studies.
+
 ### Compatibility rule
 
 The legacy/global study-style fields still exist for compatibility, but they must not overwrite resolved chart-local defaults with neutral placeholder values.

@@ -33,6 +33,7 @@ Important accepted behavior:
 - post-write validation is preliminary reporting only; newly downloaded OHLCV metadata remains `validation.status = "unknown"` and `quality.validation_status = "not_validated"` until OHLCV Maintenance explicitly validates it;
 - the final recap highlights preliminary `ERROR` and `WARNING` results and directs the user to Historical -> OHLCV Maintenance for validation, repair, or source correction;
 - Historical Download Manager related windows/dialogs use a local +1 point font bump without changing the global `QApplication` font;
+- Download Manager progress display is throttled/coalesced at the GUI layer: live progress and batch-progress updates are coalesced around 250 ms, pending state flushes on completion/error/cancel/final validation, and redundant same-state progress bar updates are suppressed;
 - audit sinks normalize subsystem events so GUI snapshots and durable JSONL audit history consume one structured event shape;
 - completed, failed, and cancelled tasks are removed from `TaskManager`'s active task map while remaining preserved in audit history.
 
@@ -62,21 +63,22 @@ Data Manager remains dataset/artifact oriented and separate from chart sessions.
 - no-loadable-dataset guidance that directs users to Historical -> OHLCV Maintenance;
 - OHLCV preview verifies loadability through CoreBridge and uses the data-layer `csv_path` from the loadability report before bounded preview;
 - `Database seed creator` for named draft manifests with a `SYMBOL_timeframe_` default prefix;
+- Database seed creator remains the only user-facing Analysis Database creation workflow;
 - checked saved artifact columns feed the `Database seed creator` only;
 - no-whitespace, no-path-separator, same-market duplicate visible-name rejection for draft creation and rename;
 - `Database Builder` for exactly-one-checkbox database selection, separate build and rebuild actions, explicit component editing, rename, delete, and preview;
 - immutable `database_id` folder identity and mutable user-facing `display_name`;
-- `Build Selected Database` opens a dedicated build dialog that auto-loads saved indicator, oscillator, and construct columns for visibility, highlights already-present database components, and materializes `dataframe.csv` from the selected database's saved manifest recipe without changing that recipe;
+- `Build Selected Database` opens a dedicated build dialog that auto-loads saved indicator, oscillator, and construct columns for visibility, highlights already-present database components for review, and materializes `dataframe.csv` from the selected database's saved manifest recipe without changing that recipe;
 - `Rebuild Selected Database` rewrites `dataframe.csv` for an already materialized database from the same saved manifest recipe, preserving the same `database_id`, folder, display name, feature sources, feature columns, and recipe hash;
-- `Edit Selected Database Components...` is the only workflow that intentionally changes an existing database recipe; it opens a dedicated component editor, auto-loads saved artifacts, highlights already-present components, supports explicit add/remove/replace actions, resets materialization to draft, and requires a later build;
+- `Edit Selected Database Components...` is the only workflow that intentionally changes an existing database recipe; it opens a dedicated component editor, auto-loads saved artifacts, highlights already-present Saved Artifact Columns with light green `#C8F7C5` background, black foreground, and bold font, supports explicit add/remove/replace actions, resets materialization to draft, and requires a later build;
 - duplicate visible-name validation applies to creating new database drafts and renaming databases, not to materializing/rebuilding an existing database by `database_id`;
 - save-only financial-tool artifact recipes and ordered recipe collections for reproducible full-dataset artifact calculation;
 - `Create Recipes from Study Environment...` for exporting selected saved Study Environment studies into recipe definitions through a preview/report workflow;
 - larger Saved Recipes and Saved Recipe Collections dialogs for readable long names;
 - recipe-collection recovery controls for checking artifact status, regenerating planner-actionable missing/stale/unknown artifacts, rebuilding a linked Analysis Database when the collection carries `source_database_id`, and planning controlled recipe-collection updates through `Plan Updates...`;
-- `Create/Extend Database...` in saved recipe collection controls for creating or extending draft Analysis Database manifests from current/resolved collection artifacts;
+- `Extend Database from Collection...` in the selected Analysis Database workflow for extending an existing database from current/resolved collection artifacts after C2 preview and `Confirm Database Extension`;
 - Data Manager opens maximized and uses the accepted compact M6F visual layout: Dataset and Calculate and Save Tool Outputs on the top row, DataFrame Preview and Saved Indicators / Oscillators / Constructs on the middle row, Data Checks / Metadata Tools plus Database seed creator on the lower-left area, and Database Builder on the lower-right area;
-- Data Manager main widgets use the shared right-side `make_button_rack(...)` action layout;
+- Data Manager main widgets use the shared right-side `make_button_rack(...)` action layout with a 260px minimum action rack width, and the artifact calculator popup opens with a 900x620 minimum size;
 - DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack;
 - saved artifact and Database Builder actions use the shared button rack so lists and details retain content width.
 
@@ -96,9 +98,11 @@ Study application remains chart-local and non-persistent. Saving a Study Environ
 
 Financial Tools Apply now opens a chart-panel-owned preflight/progress dialog before execution. The dialog shows the tool title, chart/dataset context, and `Input bars to process: N`. Cancel is available before execution starts; once the synchronous Apply begins, progress is indeterminate, Cancel is disabled, and OK becomes available after success or failure. Apply remains chart-local and non-persistent.
 
+The Study Style editor now exposes Apply / OK / Cancel. Style editor Apply commits the current style to the live chart while keeping the dialog open; OK applies and closes; Cancel closes without applying further unapplied edits and does not roll back changes already explicitly committed through Apply. White / `#FFFFFF` remains available in the style palettes. Style changes remain visual-only and do not recompute studies.
+
 Saved Study Environments can now be planned into Data Manager artifact recipe definitions. The internal `StudySetupRecipeExportPlanner` inspects serialized studies, supports important-only filtering, classifies candidates as exportable / conditional / blocked / skipped, and produces recipe payload and collection draft previews without writing or calculating artifacts. `StudySetupRecipeExportPersistenceService` persists only selected/all exportable candidates through `ArtifactRecipeStore` and can optionally save an ordered recipe collection through `ArtifactRecipeCollectionStore`. The Data Manager dialog displays the plan and persistence report; it does not calculate artifacts, execute recipes, create Analysis Databases, or export Workspace Snapshots.
 
-Recipe collections can now be mapped into draft Analysis Database manifests when their expected artifacts are already current. `RecipeCollectionDatabasePlanner` consumes recovery status and resolves only up-to-date artifacts into source/column previews; missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market cases are reported instead of included. `RecipeCollectionDatabaseService` can create a new draft manifest or extend an existing manifest from those resolved components, preserving existing components on extend and leaving materialization explicit. Missing or stale artifacts remain handled through `Plan Updates...`; the create/extend dialog does not run update execution, calculate artifacts, execute recipes, or materialize `dataframe.csv`.
+Recipe collections can now extend an existing selected Analysis Database when their expected artifacts are already current. `RecipeCollectionDatabasePlanner` consumes recovery status and resolves only up-to-date artifacts into source/column previews; missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market cases are reported instead of included. The GUI uses `RecipeCollectionDatabaseService.extend_database_from_plan(...)` only after the user confirms `Confirm Database Extension`; the retained backend create method is a data-layer compatibility contract, not a user-facing collection workflow. Missing or stale artifacts remain handled through `Plan Updates...`; no update execution, artifact calculation, recipe execution, or `dataframe.csv` materialization happens in this flow.
 
 `AnalysisDatasetGeographyPolicy` reports whether an Analysis Database manifest or planned component set contains the minimum dataset terrain: OHLC base, explicit Volume artifact, Braids, Peaks & Troughs, and UTC / Universal Trend Classifier. It also reports raw OHLCV volume presence, explicit Volume artifact presence, semantic raw-volume plus Volume-artifact duplication risk, and opportunistic `dataset_role` mismatches. This policy is diagnostic only; database creation is not blocked by geography by default, and `dataset_role` is a user-facing hint rather than proof of tool identity.
 
@@ -209,6 +213,7 @@ Accepted notebook behavior includes:
 - rich-text controls target only notebook description, note text, trade note text, POI title, and POI description; dates, timestamps, numeric fields, IDs, dataset identity, symbol/timeframe fields, and direction/outcome selectors remain plain;
 - notebook free-text fields keep plain-text values and may also store formatted HTML in parallel fields such as `description_html`, `note_html`, and `title_html`;
 - old plain-text notebooks continue to load, and formatted HTML fields participate in notebook `content_hash` when present;
+- notebook assignment/unassignment refreshes the visible notebook indicator immediately for the current workspace snapshot, without reloading the workspace;
 - a compact menu-bar `Notebook` quick action before the Study Environment actions opens the notebook assigned to the current workspace snapshot when a valid `notebook_ref` is available.
 
 Study Environments remain notebook-free. Notebook data belongs to the notebook store and Workspace Snapshot association belongs to `notebook_ref` only.
@@ -229,6 +234,9 @@ Accepted behavior includes:
 - the Workspace Snapshot load action can delete the selected snapshot through `HistoricalWorkspaceSnapshotStore.delete_snapshot(snapshot_id)`;
 - deleting a Workspace Snapshot does not delete referenced notebooks, datasets, saved studies, or saved artifacts;
 - Workspace Snapshot delete confirmation explicitly mentions a referenced notebook when `notebook_ref` is present;
+- Workspace Snapshot load shows a preflight dialog with snapshot name, description, chart count, chart recap, notebook assignment, and a replacement warning before restore;
+- confirmed load switches to an indeterminate loading state during the existing synchronous restore;
+- restore remains synchronous, non-cancellable after it starts, and non-transactional;
 - delete dialogs refresh their list and clear stale selection/details after successful deletion.
 
 Research Suite also exposes `Manage Study Environments...` and `Manage Workspace Snapshots...`. `StudyEnvironmentManagerDialog` lists saved environments, shows contained studies, edits top-level name/description, edits per-study serialized `user_metadata` (`important`, `dataset_role`, `description`), preserves study params/style/bindings, and deletes through `ChartStudySetupStore` APIs. The Save/Update Study Environment dialog is the pre-save metadata placement point; the manager is the post-save editor. `WorkspaceSnapshotManagerDialog` lists saved snapshots, shows saved charts and studies, displays `notebook_ref`, edits top-level name/description, and deletes through `HistoricalWorkspaceSnapshotStore` APIs. Embedded Workspace Snapshot study metadata is read-only in RS4.

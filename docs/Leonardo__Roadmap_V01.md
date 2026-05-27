@@ -337,10 +337,12 @@ Implemented baseline:
 - `Rebuild Selected Database` rewrites `dataframe.csv` for a materialized database from the same saved manifest recipe.
 - Build/rebuild preserves `database_id`, folder, display name, feature sources, feature columns, and recipe hash; it does not add, remove, or replace artifact components.
 - `Edit Selected Database Components...` is the explicit workflow for add/remove/replace component changes. It auto-loads saved artifacts, highlights already-present components, updates the saved recipe through the data-layer component editor, resets materialization to draft, and requires a later build.
+- Already-present Saved Artifact Columns in the component editor use light green `#C8F7C5` background, black foreground, and bold font; non-present rows keep normal styling.
 - Analysis Database rename preserves immutable `database_id`; delete removes the folder-backed artifact.
 - Duplicate visible-name validation applies to draft creation and rename, not to build/rebuild of an existing database by `database_id`.
 - Data Manager opens maximized and uses the accepted M6F compact visual layout: Dataset and Calculate and Save Tool Outputs on the top row, DataFrame Preview and Saved Indicators / Oscillators / Constructs on the middle row, Data Checks / Metadata Tools plus Database seed creator on the lower-left area, and Database Builder on the lower-right area.
 - Main Data Manager widgets use the shared right-side button rack for actions.
+- Data Manager button racks have a 260px minimum width, and the artifact calculator popup has a 900x620 minimum size.
 - DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack.
 - Saved artifact actions and Database Builder actions use the shared button rack so lists and details retain content width.
 - Data Manager-local text is enlarged and widget titles are bold while normal labels/buttons remain normal weight.
@@ -474,8 +476,9 @@ Implemented baseline:
   - `AnalysisDatasetGeographyPolicy` reports OHLC base, explicit Volume artifact, Braids, Peaks & Troughs, UTC / Universal Trend Classifier, raw OHLCV volume, semantic volume duplication risk, and `dataset_role` mismatch warnings without enforcing geography.
   - `RecipeCollectionDatabasePlanner` resolves only current/up-to-date recipe-collection artifacts into Analysis Database source/column previews and blocks missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market cases.
   - `AnalysisDatabaseStore.save_manifest(...)` now ensures the target manifest directory exists before atomic JSON writes and uses shorter `adb_` / `adf_` atomic temp prefixes.
-  - `RecipeCollectionDatabaseService` creates draft Analysis Database manifests or extends existing manifests from C2 plans through existing store/editor ownership, without materializing `dataframe.csv`.
-  - Data Manager exposes `Create/Extend Database...` in saved recipe collection controls for viewing C2 plans/geography reports and invoking C3 create/extend.
+  - `RecipeCollectionDatabaseService` retains data-layer draft-manifest construction for compatibility and extends existing manifests from C2 plans through existing store/editor ownership, without materializing `dataframe.csv`.
+  - Data Manager exposes `Extend Database from Collection...` in the selected Analysis Database workflow for viewing C2 plans/geography reports and invoking C3 extension after confirmation.
+  - Database seed creator remains the only user-facing Analysis Database creation workflow; saved recipe collection controls no longer expose a database create/extend action.
   - Missing/stale artifacts remain handled through the existing `Plan Updates...` workflow; C4 does not run update execution, calculate artifacts, execute recipes, or materialize databases.
 
 - M18 Study Environment / Workspace Snapshot / Notebook update workflow is accepted:
@@ -523,6 +526,16 @@ Implemented baseline:
   - Existing controller calculation, `apply_succeeded`, panel success handling, workspace series application, and `ChartStudyRegistry.add(...)` registration remain the path.
   - Financial Tools calculation semantics and chart-local/non-persistent behavior are unchanged.
   - Study Environment, Workspace Snapshot, Notebook, Data Manager, and Analysis Database workflows are unchanged.
+
+- Post-smoke DM3/DM2/RS8/RS9/RS10/DL1 corrections are accepted:
+  - DM3 moved collection-based Analysis Database extension into the selected Analysis Database workflow through `Extend Database from Collection...`, kept C2 preview/confirm/C3 extension boundaries, and left Database seed creator as the only user-facing creation path.
+  - DM2 improved Data Manager dialog/button readability and changed already-present Saved Artifact Columns to light green `#C8F7C5`, black foreground, and bold font without changing component semantics.
+  - RS8 added Style editor Apply so current style commits to the live chart without closing; OK applies and closes; Cancel does not apply further unapplied edits or roll back committed Apply changes.
+  - RS9 refreshes the notebook indicator immediately after notebook assignment/unassignment for the current workspace snapshot without reloading the workspace.
+  - RS10 added Workspace Snapshot load preflight/loading with snapshot summary, notebook assignment display, replacement warning, indeterminate synchronous loading state, and preserved dirty-notebook confirmation.
+  - Restore remains synchronous, non-cancellable after it starts, and non-transactional.
+  - DL1 throttles/coalesces Download Manager progress display in the GUI layer while preserving final progress flushes and downloader/provider/OHLCV persistence semantics.
+  - Final smoke remains pending for the broader post-smoke correction set.
 
 Next direction:
 
@@ -599,6 +612,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.30: Post-smoke correction sync. Documents DM3 selected-database-only collection extension, DM2 Data Manager readability/highlight polish, RS8 Style editor Apply semantics, RS9 notebook indicator refresh, RS10 Workspace Snapshot load preflight/loading, and DL1 Download Manager GUI-layer progress throttling. Final smoke remains pending.
+
 v0.29: Financial Tools Apply preflight sync. Documents the chart-panel preflight/progress dialog, `Input bars to process: N`, pre-execution cancel, indeterminate progress during synchronous Apply, dialog-visible success/failure completion, preserved controller/panel study-registration path, and unchanged chart-local/non-persistent boundaries.
 
 v0.28: Study Environment metadata placement RS7 sync. Documents removal of the chart-row/header metadata action placement, Save/Update Study Environment per-study metadata controls, serialized payload writeback, Study Environment Manager post-save editing, and unchanged live chart registry/Data Manager behavior.
@@ -609,7 +624,7 @@ v0.26: Research Suite RS1-RS4 sync. Documents Research Suite user-facing termino
 
 v0.25: Historical Study metadata action and preset update workflow. Documents the earlier chart-local metadata action baseline plus Save as new / Update existing modes for Study Environments and Workspace Snapshots. RS7 supersedes the chart-row/header metadata placement with Save/Update Study Environment metadata controls.
 
-v0.24: Historical Study recipe-to-database workflow. Documents StudyUserMetadata, chart-local Study Metadata editing/persistence, Study Environment to recipe export planning/persistence/UI, diagnostic AnalysisDatasetGeographyPolicy, recipe-collection artifact resolution planning, AnalysisDatabaseStore manifest directory guard and short temp prefixes, RecipeCollectionDatabaseService draft create/extend behavior, and the Data Manager `Create/Extend Database...` UI. Artifact calculation, recipe execution, Plan Updates execution, database materialization, hard geography enforcement, Workspace Snapshot export to recipes, notebook loading, dataset-wide scanning, arbitrary dependency inference, and background update progress remain out of scope.
+v0.24: Historical Study recipe-to-database workflow. Documents StudyUserMetadata, chart-local Study Metadata editing/persistence, Study Environment to recipe export planning/persistence/UI, diagnostic AnalysisDatasetGeographyPolicy, recipe-collection artifact resolution planning, AnalysisDatabaseStore manifest directory guard and short temp prefixes, and RecipeCollectionDatabaseService data-layer draft/extend behavior. DM3 later superseded the user-facing workflow with selected-database-only collection extension. Artifact calculation, recipe execution, Plan Updates execution, database materialization, hard geography enforcement, Workspace Snapshot export to recipes, notebook loading, dataset-wide scanning, arbitrary dependency inference, and background update progress remain out of scope.
 
 v0.23: Data Manager recipe-collection update workflow. Documents D1-D4 implementation: read-only update planning, controlled selected/all actionable execution, recipe-collection `Plan Updates...` UI, execution reports, linked Analysis Database rebuild planning/execution through existing services, post-execution refresh, and validation-only D4. Dataset-wide scanning, arbitrary dependency inference, background task/progress integration, and broader Update Manager entry points remain future work.
 

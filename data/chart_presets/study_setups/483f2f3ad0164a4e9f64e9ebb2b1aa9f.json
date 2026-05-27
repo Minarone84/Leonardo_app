@@ -1,26 +1,26 @@
 {
-  "content_hash": "7d83d6cde5f65bc65c0144c5d7761ac53f213c7de0b8d04a14e42c20a18c3235",
-  "created_at_ms": 1779316621289,
+  "content_hash": "1383b88b497b6ac7ceadef470fb5d3a65311ddd07c55c27ef0feaaea8185002b",
+  "created_at_ms": 1779832055684,
   "created_from": {
     "exchange": "bybit",
     "market_type": "linear",
-    "symbol": "BTCUSDT",
+    "symbol": "DOGEUSDT",
     "timeframe": "30m"
   },
-  "description": "Ciccialculo test A",
-  "display_name": "TEST_A",
+  "description": "Bsic Study Environment for test",
+  "display_name": "BASIC_STUDY_A",
   "object_type": "chart_study_setup",
   "schema_version": 1,
-  "setup_id": "8d9d9199d7ae47d08f8e40987308eab0",
+  "setup_id": "483f2f3ad0164a4e9f64e9ebb2b1aa9f",
   "studies": [
     {
-      "display_name": "EMA(14)",
+      "display_name": "EMA(34)",
       "family": "indicator",
       "input_binding_meta": {},
       "input_bindings": {},
       "pane_target": "price",
       "params": {
-        "period": 14
+        "period": 34
       },
       "required_inputs": [
         "close"
@@ -36,8 +36,8 @@
         "show_label": true,
         "show_value": true,
         "signal_styles": {
-          "ema_14": {
-            "color": "#22C55E",
+          "ema_34": {
+            "color": "#FFFFFF",
             "line_style": "solid",
             "line_width": 1,
             "marker_offset_px": 0,
@@ -57,7 +57,7 @@
       "tool_key": "ema",
       "user_metadata": {
         "dataset_role": "experimental",
-        "description": "Questo \u00e8 un test",
+        "description": "Test for a basic study",
         "important": true
       }
     },
@@ -171,100 +171,21 @@
         ],
         "visible": true
       },
-      "tool_key": "hck"
+      "tool_key": "hck",
+      "user_metadata": {
+        "dataset_role": "unspecified",
+        "description": "",
+        "important": false
+      }
     },
     {
-      "display_name": "BB(14,2.0)",
-      "family": "indicator",
-      "input_binding_meta": {},
-      "input_bindings": {},
-      "pane_target": "price",
-      "params": {
-        "period": 14,
-        "std": 2.0
-      },
-      "required_inputs": [
-        "close"
-      ],
-      "saved_artifact_ref": null,
-      "schema_version": 1,
-      "source_kind": "temporary",
-      "style": {
-        "color": "",
-        "fill_styles": {
-          "bb_band": {
-            "color": "#60A5FA",
-            "fill_id": "bb_band",
-            "opacity": 0.12,
-            "signal_a": "bb_upper_band",
-            "signal_b": "bb_lower_band",
-            "visible": true
-          }
-        },
-        "line_style": "solid",
-        "line_width": 1,
-        "show_label": true,
-        "show_value": true,
-        "signal_styles": {
-          "bb_lower_band": {
-            "color": "#60A5FA",
-            "line_style": "dashed",
-            "line_width": 1,
-            "marker_offset_px": 0,
-            "marker_shape": "",
-            "marker_size": 0,
-            "marker_text": "",
-            "marker_text_color": "",
-            "render_mode": "line",
-            "show_label": true,
-            "show_value": true,
-            "visible": true
-          },
-          "bb_middle": {
-            "color": "#F59E0B",
-            "line_style": "solid",
-            "line_width": 1,
-            "marker_offset_px": 0,
-            "marker_shape": "",
-            "marker_size": 0,
-            "marker_text": "",
-            "marker_text_color": "",
-            "render_mode": "line",
-            "show_label": true,
-            "show_value": true,
-            "visible": true
-          },
-          "bb_upper_band": {
-            "color": "#60A5FA",
-            "line_style": "dashed",
-            "line_width": 1,
-            "marker_offset_px": 0,
-            "marker_shape": "",
-            "marker_size": 0,
-            "marker_text": "",
-            "marker_text_color": "",
-            "render_mode": "line",
-            "show_label": true,
-            "show_value": true,
-            "visible": true
-          }
-        },
-        "style_modules": [],
-        "visible": true
-      },
-      "tool_key": "bb"
-    },
-    {
-      "display_name": "ARSI(14,RMA)",
+      "display_name": "RSI(14)",
       "family": "oscillator",
       "input_binding_meta": {},
       "input_bindings": {},
       "pane_target": "oscillator",
       "params": {
-        "method": "RMA",
-        "period": 14,
-        "signal_method": "EMA",
-        "signal_period": 14
+        "period": 14
       },
       "required_inputs": [
         "close"
@@ -280,22 +201,8 @@
         "show_label": true,
         "show_value": true,
         "signal_styles": {
-          "arsi_14_rma": {
-            "color": "#8B5CF6",
-            "line_style": "solid",
-            "line_width": 1,
-            "marker_offset_px": 0,
-            "marker_shape": "",
-            "marker_size": 0,
-            "marker_text": "",
-            "marker_text_color": "",
-            "render_mode": "line",
-            "show_label": true,
-            "show_value": true,
-            "visible": true
-          },
-          "arsi_signal_14_rma_14_ema": {
-            "color": "#FF5D00",
+          "rsi_14": {
+            "color": "#A855F7",
             "line_style": "solid",
             "line_width": 1,
             "marker_offset_px": 0,
@@ -312,22 +219,27 @@
         "style_modules": [],
         "visible": true
       },
-      "tool_key": "arsi"
+      "tool_key": "rsi",
+      "user_metadata": {
+        "dataset_role": "unspecified",
+        "description": "",
+        "important": false
+      }
     },
     {
-      "display_name": "Angles",
+      "display_name": "Derivatives",
       "family": "construct",
       "input_binding_meta": {
         "source": {
           "analysis_usable": true,
           "artifact_path": "",
-          "column_name": "ema_14",
-          "display_name": "Current Chart \u00b7 EMA [period=14]  ->  ema_14",
+          "column_name": "ema_34",
+          "display_name": "Current Chart \u00b7 EMA [period=34]  ->  ema_34",
           "family": "indicator",
-          "instance_key": "ema__default__period-14",
-          "projection_key": "ema__default__period-14",
+          "instance_key": "ema__default__period-34",
+          "projection_key": "ema__default__period-34",
           "renderable": true,
-          "series_key": "ema_14",
+          "series_key": "ema_34",
           "source_kind": "temporary",
           "temporary_source_role": "renderable",
           "tool_key": "ema",
@@ -335,15 +247,14 @@
         }
       },
       "input_bindings": {
-        "source": "ema_14"
+        "source": "ema_34"
       },
       "pane_target": "oscillator",
       "params": {
         "axis": "bar",
-        "eps": 1e-12,
+        "order": 1,
         "scheme": "central",
-        "source": "ema_14",
-        "unit": "deg"
+        "source": "ema_34"
       },
       "required_inputs": [],
       "saved_artifact_ref": null,
@@ -356,51 +267,9 @@
         "line_width": 1,
         "show_label": true,
         "show_value": true,
-        "signal_styles": {},
-        "style_modules": [],
-        "visible": true
-      },
-      "tool_key": "angle"
-    },
-    {
-      "display_name": "Volume(20)",
-      "family": "oscillator",
-      "input_binding_meta": {},
-      "input_bindings": {},
-      "pane_target": "oscillator",
-      "params": {
-        "period": 20
-      },
-      "required_inputs": [
-        "volume"
-      ],
-      "saved_artifact_ref": null,
-      "schema_version": 1,
-      "source_kind": "temporary",
-      "style": {
-        "color": "",
-        "fill_styles": {},
-        "line_style": "solid",
-        "line_width": 1,
-        "show_label": true,
-        "show_value": true,
         "signal_styles": {
-          "volume": {
-            "color": "#22C55E",
-            "line_style": "solid",
-            "line_width": 1,
-            "marker_offset_px": 0,
-            "marker_shape": "",
-            "marker_size": 0,
-            "marker_text": "",
-            "marker_text_color": "",
-            "render_mode": "histogram",
-            "show_label": true,
-            "show_value": true,
-            "visible": true
-          },
-          "volume_mean_20": {
-            "color": "#06B6D4",
+          "ema_34__d1": {
+            "color": "#FF9F1C",
             "line_style": "solid",
             "line_width": 1,
             "marker_offset_px": 0,
@@ -417,8 +286,13 @@
         "style_modules": [],
         "visible": true
       },
-      "tool_key": "volume"
+      "tool_key": "derivative",
+      "user_metadata": {
+        "dataset_role": "unspecified",
+        "description": "",
+        "important": false
+      }
     }
   ],
-  "updated_at_ms": 1779881644477
+  "updated_at_ms": 1779884689399
 }

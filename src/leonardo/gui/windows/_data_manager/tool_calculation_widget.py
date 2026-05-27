@@ -58,9 +58,6 @@ from leonardo.gui.windows._data_manager.artifact_recipe_dialog import (
     ArtifactRecipeDialog,
 )
 from leonardo.gui.windows._data_manager.button_rack import make_button_rack
-from leonardo.gui.windows._data_manager.recipe_collection_database_dialog import (
-    RecipeCollectionDatabaseDialog,
-)
 from leonardo.gui.windows._data_manager.study_setup_recipe_export_dialog import (
     StudySetupRecipeExportDialog,
 )
@@ -83,7 +80,6 @@ class ToolCalculationWidget(QGroupBox):
 
     artifact_saved = Signal(object)  # ArtifactCalculationResult
     database_rebuilt = Signal(object)  # ArtifactRecoveryDatabaseRebuildReport
-    database_manifest_changed = Signal(object)
     update_execution_finished = Signal(object)  # DataManagerUpdateExecutionReport
     preview_requested = Signal(object, str)  # Path, title
     status_message = Signal(str)
@@ -100,7 +96,6 @@ class ToolCalculationWidget(QGroupBox):
         self._tool_window: Optional[FinancialToolsManagerWindow] = None
         self._recipe_dialog: Optional[ArtifactRecipeDialog] = None
         self._collection_dialog: Optional[ArtifactRecipeCollectionDialog] = None
-        self._collection_database_dialog: Optional[RecipeCollectionDatabaseDialog] = None
         self._study_setup_export_dialog: Optional[StudySetupRecipeExportDialog] = None
         self._update_dialog: Optional[DataManagerUpdatePlanDialog] = None
         self._service = ArtifactCalculationService(
@@ -218,7 +213,6 @@ class ToolCalculationWidget(QGroupBox):
             "_tool_window",
             "_recipe_dialog",
             "_collection_dialog",
-            "_collection_database_dialog",
             "_study_setup_export_dialog",
             "_update_dialog",
         ):
@@ -331,9 +325,6 @@ class ToolCalculationWidget(QGroupBox):
         dialog.recovery_plan_requested.connect(self._recovery_plan_requested)
         dialog.recovery_regeneration_requested.connect(self._recovery_regeneration_requested)
         dialog.database_rebuild_requested.connect(self._database_rebuild_requested)
-        dialog.database_create_extend_requested.connect(
-            self._open_collection_database_dialog
-        )
         dialog.update_plan_requested.connect(self._update_plan_requested)
         dialog.collection_deleted.connect(
             lambda _collection_id: self.status_message.emit("Artifact recipe collection deleted")
@@ -346,39 +337,6 @@ class ToolCalculationWidget(QGroupBox):
 
     def _on_collection_dialog_destroyed(self, _obj: object = None) -> None:
         self._collection_dialog = None
-
-    def _open_collection_database_dialog(self, collection_obj: object) -> None:
-        if not isinstance(collection_obj, ArtifactRecipeCollection):
-            return
-
-        if self._collection_database_dialog is not None:
-            try:
-                self._collection_database_dialog.close()
-            except RuntimeError:
-                pass
-            self._collection_database_dialog = None
-
-        dialog = RecipeCollectionDatabaseDialog(
-            historical_root=self._historical_root,
-            collection=collection_obj,
-            parent=self.window(),
-        )
-        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
-        dialog.database_changed.connect(self._collection_database_changed)
-        dialog.status_message.connect(self.status_message.emit)
-        dialog.destroyed.connect(self._on_collection_database_dialog_destroyed)
-
-        self._collection_database_dialog = dialog
-        dialog.show()
-
-    def _on_collection_database_dialog_destroyed(self, _obj: object = None) -> None:
-        self._collection_database_dialog = None
-
-    def _collection_database_changed(self, report: object) -> None:
-        self.database_manifest_changed.emit(report)
-        status = str(getattr(report, "status", "updated") or "updated")
-        display_name = str(getattr(report, "display_name", "") or "analysis database")
-        self.status_message.emit(f"Analysis database {status}: {display_name}")
 
     def _open_study_setup_recipe_export_dialog(self) -> None:
         market = self._market

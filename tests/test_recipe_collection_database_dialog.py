@@ -45,6 +45,16 @@ def _collection():
         collection_id="arc__test",
         display_name="Collection Pack",
         market=_market(),
+        recipe_snapshots=(SimpleNamespace(),),
+    )
+
+
+def _database():
+    return SimpleNamespace(
+        database_id="adb__existing",
+        display_name="Existing Database",
+        status="draft",
+        market=_market(),
     )
 
 
@@ -190,22 +200,26 @@ class _FakeService:
         )
 
 
-class _FakeDatabaseStore:
+class _FakeCollectionStore:
     def __init__(self, summaries: list[SimpleNamespace] | None = None) -> None:
         self.summaries = summaries if summaries is not None else [
             SimpleNamespace(
-                database_id="adb__existing",
-                display_name="Existing Database",
-                status="draft",
-                feature_count=1,
-                row_count=None,
+                collection_id="arc__test",
+                display_name="Collection Pack",
+                recipe_count=1,
             )
         ]
         self.calls: list[object] = []
 
-    def list_databases(self, *, market: object):
+    def list_collections(self, *, market: object):
         self.calls.append(market)
         return list(self.summaries)
+
+    def load_collection(self, *, market: object, collection_id: str):
+        self.calls.append((market, collection_id))
+        if collection_id != "arc__test":
+            raise FileNotFoundError(collection_id)
+        return _collection()
 
 
 def _apply_report(
@@ -235,20 +249,20 @@ def _dialog(
     *,
     plan: RecipeCollectionDatabasePlan | None = None,
     service: _FakeService | None = None,
-    database_store: _FakeDatabaseStore | None = None,
-) -> tuple[RecipeCollectionDatabaseDialog, _FakePlanner, _FakeService, _FakeDatabaseStore]:
+    collection_store: _FakeCollectionStore | None = None,
+) -> tuple[RecipeCollectionDatabaseDialog, _FakePlanner, _FakeService, _FakeCollectionStore]:
     _qapp()
     planner = _FakePlanner(plan or _plan())
     service = service or _FakeService()
-    database_store = database_store or _FakeDatabaseStore()
+    collection_store = collection_store or _FakeCollectionStore()
     dialog = RecipeCollectionDatabaseDialog(
         historical_root=tmp_path,
-        collection=_collection(),  # type: ignore[arg-type]
+        target_database=_database(),  # type: ignore[arg-type]
         planner=planner,  # type: ignore[arg-type]
         service=service,  # type: ignore[arg-type]
-        database_store=database_store,  # type: ignore[arg-type]
+        collection_store=collection_store,  # type: ignore[arg-type]
     )
-    return dialog, planner, service, database_store
+    return dialog, planner, service, collection_store
 
 
 def test_dialog_resolves_collection_and_displays_plan(tmp_path: Path) -> None:
@@ -265,32 +279,17 @@ def test_dialog_resolves_collection_and_displays_plan(tmp_path: Path) -> None:
         dialog.close()
 
 
-def test_create_calls_service_with_raw_volume_choices_and_emits_refresh(
-    tmp_path: Path,
-) -> None:
+def test_dialog_is_extend_only_and_shows_selected_database(tmp_path: Path) -> None:
     dialog, _planner, service, _store = _dialog(tmp_path)
-    reports: list[object] = []
-    dialog.database_changed.connect(lambda report: reports.append(report))
     try:
-        dialog._name_edit.setText("BTCUSDT_30m_created_auto")
-        dialog._raw_volume_combo.setCurrentIndex(dialog._raw_volume_combo.findText("Auto"))
-        dialog._create_database()
-
-        dialog._name_edit.setText("BTCUSDT_30m_created_include")
-        dialog._raw_volume_combo.setCurrentIndex(dialog._raw_volume_combo.findText("Include"))
-        dialog._create_database()
-
-        dialog._name_edit.setText("BTCUSDT_30m_created_exclude")
-        dialog._raw_volume_combo.setCurrentIndex(dialog._raw_volume_combo.findText("Exclude"))
-        dialog._create_database()
-
-        assert [call["include_raw_volume"] for call in service.create_calls] == [
-            None,
-            True,
-            False,
-        ]
-        assert len(reports) == 3
-        assert "Status: created" in dialog._report_text.toPlainText()
+        assert dialog.windowTitle() == "Extend Analysis Database from Collection"
+        assert "Target database: Existing Database" in dialog._target_label.text()
+        assert dialog.selected_database_id() == "adb__existing"
+        assert dialog.selected_collection_id() == "arc__test"
+        assert not hasattr(dialog, "_create_button")
+        assert not hasattr(dialog, "_name_edit")
+        assert not hasattr(dialog, "_raw_volume_combo")
+        assert service.create_calls == []
     finally:
         dialog.close()
 
@@ -301,12 +300,26 @@ def test_extend_calls_service_with_selected_database_id(tmp_path: Path) -> None:
     dialog.database_changed.connect(lambda report: reports.append(report))
     try:
         assert dialog.selected_database_id() == "adb__existing"
+        dialog._confirm_extension = lambda _plan: True  # type: ignore[method-assign]
 
         dialog._extend_database()
 
         assert service.extend_calls[0]["database_id"] == "adb__existing"
         assert reports
         assert "Status: extended" in dialog._report_text.toPlainText()
+    finally:
+        dialog.close()
+
+
+def test_extend_confirmation_cancel_prevents_service_call(tmp_path: Path) -> None:
+    dialog, _planner, service, _store = _dialog(tmp_path)
+    try:
+        dialog._confirm_extension = lambda _plan: False  # type: ignore[method-assign]
+
+        dialog._extend_database()
+
+        assert service.extend_calls == []
+        assert "canceled" in dialog._report_text.toPlainText()
     finally:
         dialog.close()
 
@@ -319,10 +332,8 @@ def test_no_resolved_components_disables_apply_and_does_not_call_service(
         plan=_plan(resolved_components=(), blocked_items=(_blocker(),)),
     )
     try:
-        assert dialog._create_button.isEnabled() is False
         assert dialog._extend_button.isEnabled() is False
 
-        dialog._create_database()
         dialog._extend_database()
 
         assert service.create_calls == []
@@ -338,11 +349,10 @@ def test_duplicate_columns_disable_apply_and_are_displayed(tmp_path: Path) -> No
         plan=_plan(duplicate_columns=("duplicate_column",)),
     )
     try:
-        assert dialog._create_button.isEnabled() is False
         assert dialog._extend_button.isEnabled() is False
         assert "duplicate_column" in dialog._plan_text.toPlainText()
 
-        dialog._create_database()
+        dialog._extend_database()
 
         assert service.create_calls == []
         assert "duplicate planned database columns" in dialog._report_text.toPlainText()
@@ -357,20 +367,34 @@ def test_recipe_collection_database_entry_point_and_boundaries() -> None:
     widget_source = (DATA_MANAGER / "tool_calculation_widget.py").read_text(
         encoding="utf-8"
     )
+    database_list_source = (DATA_MANAGER / "analysis_database_list_widget.py").read_text(
+        encoding="utf-8"
+    )
+    window_source = (ROOT / "src" / "leonardo" / "gui" / "windows" / "data_manager_window.py").read_text(
+        encoding="utf-8"
+    )
     dialog_source = (DATA_MANAGER / "recipe_collection_database_dialog.py").read_text(
         encoding="utf-8"
     )
 
-    assert "database_create_extend_requested = Signal(object)" in collection_source
-    assert '"Create/Extend Database..."' in collection_source
-    assert "database_create_extend_requested.emit(collection)" in collection_source
+    assert "database_create_extend_requested" not in collection_source
+    assert '"Create/Extend Database..."' not in collection_source
+    assert "RecipeCollectionDatabaseDialog" not in widget_source
 
-    assert "RecipeCollectionDatabaseDialog" in widget_source
-    assert "database_manifest_changed = Signal(object)" in widget_source
-    assert "dialog.database_create_extend_requested.connect(" in widget_source
+    assert '"Extend Database from Collection..."' in database_list_source
+    assert "collection_extend_requested = Signal(object)" in database_list_source
+    assert "collection_extend_requested.emit(manifest)" in database_list_source
+    assert "self._database_list.collection_extend_requested.connect(" in window_source
+    assert "RecipeCollectionDatabaseDialog" in window_source
 
     assert "RecipeCollectionDatabasePlanner" in dialog_source
     assert "RecipeCollectionDatabaseService" in dialog_source
+    assert "target_database" in dialog_source
+    assert "Confirm Database Extension" in dialog_source
+    assert "extend_database_from_plan(" in dialog_source
+    assert "create_database_from_plan(" not in dialog_source
+    assert "Create Draft Database" not in dialog_source
+    assert "New database name" not in dialog_source
     assert "AnalysisDatasetGeographyPolicy" not in dialog_source
     assert "SavedArtifactColumn" not in dialog_source
     assert "materialize_database" not in dialog_source

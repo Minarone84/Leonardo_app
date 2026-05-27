@@ -38,7 +38,6 @@ class ArtifactRecipeCollectionDialog(QDialog):
     recovery_plan_requested = Signal(object, object)  # ArtifactRecipeCollection, tuple[str, ...] | None
     recovery_regeneration_requested = Signal(object, object)  # ArtifactRecipeCollection, tuple[str, ...] | None
     database_rebuild_requested = Signal(object)  # ArtifactRecipeCollection
-    database_create_extend_requested = Signal(object)  # ArtifactRecipeCollection
     update_plan_requested = Signal(object, object)  # ArtifactRecipeCollection, tuple[str, ...] | None
     collection_deleted = Signal(object)  # collection_id str
     status_message = Signal(str)
@@ -168,11 +167,6 @@ class ArtifactRecipeCollectionDialog(QDialog):
         self._update_plan_button.setToolTip("Builds a recipe-collection update plan through the Data Manager update service.")
         self._update_plan_button.clicked.connect(self._plan_updates)
         recovery_row.addWidget(self._update_plan_button)
-
-        self._create_database_button = QPushButton("Create/Extend Database...", detail_group)
-        self._create_database_button.setToolTip("Resolves current collection artifacts before creating or extending a draft Analysis Database manifest.")
-        self._create_database_button.clicked.connect(self._create_extend_database)
-        recovery_row.addWidget(self._create_database_button)
 
         body.addWidget(detail_group, 5)
 
@@ -412,21 +406,6 @@ class ArtifactRecipeCollectionDialog(QDialog):
                 f"Planning updates for full collection: {collection.display_name}"
             )
 
-    def _create_extend_database(self) -> None:
-        collection = self._current_collection
-        if collection is None:
-            QMessageBox.information(
-                self,
-                "Analysis Database",
-                "Select a recipe collection before creating or extending a database.",
-            )
-            return
-
-        self.database_create_extend_requested.emit(collection)
-        self.status_message.emit(
-            f"Opening Analysis Database draft workflow for: {collection.display_name}"
-        )
-
     def _delete_selected_collection(self) -> None:
         collection = self._current_collection
         if collection is None:
@@ -476,7 +455,6 @@ class ArtifactRecipeCollectionDialog(QDialog):
         self._recover_actionable_button.setEnabled(has_collection)
         self._rebuild_database_button.setEnabled(has_linked_database)
         self._update_plan_button.setEnabled(has_collection)
-        self._create_database_button.setEnabled(has_collection)
 
     def _collection_details(self, collection: ArtifactRecipeCollection) -> str:
         source_database = collection.source_database_id or "(none)"

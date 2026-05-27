@@ -1,0 +1,70 @@
+{
+  "annotation_settings": {
+    "poi_marker_offset": 28,
+    "pt_long_marker_offset": 56,
+    "pt_short_marker_offset": 56
+  },
+  "chart_entries": [
+    {
+      "chart_key": "bybit|linear|dogeusdt|30m",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "DOGEUSDT",
+        "timeframe": "30m"
+      },
+      "last_seen_position": 1,
+      "notes": [],
+      "points_of_interest": [],
+      "trades": []
+    },
+    {
+      "chart_key": "bybit|linear|dogeusdt|1h",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "DOGEUSDT",
+        "timeframe": "1h"
+      },
+      "last_seen_position": 2,
+      "notes": [],
+      "points_of_interest": [],
+      "trades": []
+    },
+    {
+      "chart_key": "bybit|linear|dogeusdt|2h",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "DOGEUSDT",
+        "timeframe": "2h"
+      },
+      "last_seen_position": 3,
+      "notes": [],
+      "points_of_interest": [],
+      "trades": []
+    },
+    {
+      "chart_key": "bybit|linear|dogeusdt|4h",
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "DOGEUSDT",
+        "timeframe": "4h"
+      },
+      "last_seen_position": 4,
+      "notes": [],
+      "points_of_interest": [],
+      "trades": []
+    }
+  ],
+  "content_hash": "257fd186174d7a1a527a176cf5023a15ce86b77bdb661bbc84d3cc02b4fd92b1",
+  "created_at_ms": 1779883927041,
+  "description": "This is the DOGE workspace notebook",
+  "description_html": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.0//EN\" \"http://www.w3.org/TR/REC-html40/strict.dtd\">\n<html><head><meta name=\"qrichtext\" content=\"1\" /><meta charset=\"utf-8\" /><style type=\"text/css\">\np, li { white-space: pre-wrap; }\nhr { height: 1px; border-width: 0; }\nli.unchecked::marker { content: \"\\2610\"; }\nli.checked::marker { content: \"\\2612\"; }\n</style></head><body style=\" font-family:'Segoe UI'; font-size:10pt; font-weight:400; font-style:normal;\">\n<p style=\" margin-top:0px; margin-bottom:0px; margin-left:0px; margin-right:0px; -qt-block-indent:0; text-indent:0px;\">This is the DOGE workspace notebook</p></body></html>",
+  "display_name": "Doge workspace Notebook",
+  "notebook_id": "11e023cfe679411289ddb202e0593353",
+  "object_type": "historical_workspace_notebook",
+  "schema_version": 1,
+  "updated_at_ms": 1779883927041
+}

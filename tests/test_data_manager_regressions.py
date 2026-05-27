@@ -521,6 +521,22 @@ def test_database_builder_component_edit_is_explicit_intent_only() -> None:
     assert "rebuild_database_with_features" not in source
 
 
+def test_database_builder_collection_extension_is_selected_database_intent() -> None:
+    path = DATA_MANAGER / "analysis_database_list_widget.py"
+    source = _source(path)
+    extend_source = _function_source(path, "_extend_from_collection_selected")
+
+    assert "Extend Database from Collection..." in source
+    assert "collection_extend_requested" in source
+    assert "_single_checked_manifest" in extend_source
+    assert "collection_extend_requested.emit(manifest)" in extend_source
+    assert "RecipeCollectionDatabaseDialog" not in source
+    assert "RecipeCollectionDatabaseService" not in source
+    assert "build_draft_manifest" not in extend_source
+    assert "save_manifest" not in extend_source
+    assert "materialize_database" not in extend_source
+
+
 def test_component_editor_dialog_is_explicit_recipe_edit_surface() -> None:
     """The component dialog owns GUI intent and delegates recipe changes to the data-layer editor."""
     path = DATA_MANAGER / "analysis_database_component_dialog.py"
@@ -551,6 +567,19 @@ def test_data_manager_opens_component_editor_from_database_builder_intent() -> N
     assert "selected_columns=self._selected_artifact_columns" not in source
     assert "self._artifact_selector.selection_changed.connect(self._on_saved_artifact_selection_changed)" not in source
     assert "self._artifact_selector.selection_changed.connect(self._database_list.set_selected_artifact_columns)" not in source
+
+
+def test_data_manager_opens_collection_extension_from_database_builder_intent() -> None:
+    path = WINDOWS / "data_manager_window.py"
+    source = _source(path)
+    handler_source = _function_source(path, "_on_database_extend_from_collection_requested")
+    changed_source = _function_source(path, "_on_analysis_database_collection_extended")
+
+    assert "RecipeCollectionDatabaseDialog" in source
+    assert "self._database_list.collection_extend_requested.connect(" in source
+    assert "target_database=manifest" in handler_source
+    assert "dialog.database_changed.connect(self._on_analysis_database_collection_extended)" in handler_source
+    assert "self._database_list.refresh()" in changed_source
 
 
 def test_saved_artifact_selector_uses_shared_column_loader() -> None:

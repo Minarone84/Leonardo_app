@@ -38,6 +38,7 @@ class AnalysisDatabaseListWidget(QGroupBox):
     database_materialized = Signal(object)  # AnalysisDatabaseManifest
     build_requested = Signal(object)  # AnalysisDatabaseManifest
     component_edit_requested = Signal(object)  # AnalysisDatabaseManifest
+    collection_extend_requested = Signal(object)  # AnalysisDatabaseManifest
     preview_requested = Signal(object, str)  # Path, title
     status_message = Signal(str)
 
@@ -96,6 +97,13 @@ class AnalysisDatabaseListWidget(QGroupBox):
         self._edit_components_button.setEnabled(False)
         self._edit_components_button.clicked.connect(self._edit_components_selected)
 
+        self._extend_from_collection_button = QPushButton("Extend Database from Collection...", self)
+        self._extend_from_collection_button.setToolTip(
+            "Enabled only when exactly one database is checked. Resolves a saved recipe collection before extending the selected database."
+        )
+        self._extend_from_collection_button.setEnabled(False)
+        self._extend_from_collection_button.clicked.connect(self._extend_from_collection_selected)
+
         self._rename_button = QPushButton("Rename Selected Database", self)
         self._rename_button.setToolTip("Enabled only when exactly one database is checked.")
         self._rename_button.setEnabled(False)
@@ -118,6 +126,7 @@ class AnalysisDatabaseListWidget(QGroupBox):
                 self._build_button,
                 self._rebuild_button,
                 self._edit_components_button,
+                self._extend_from_collection_button,
                 self._rename_button,
                 self._delete_button,
                 self._preview_button,
@@ -153,7 +162,7 @@ class AnalysisDatabaseListWidget(QGroupBox):
 
         self._hint_label.setText(
             f"Found {len(summaries)} analysis database manifest(s). "
-            "Check exactly one database to select it for build, rebuild, component editing, rename, delete, or preview. "
+            "Check exactly one database to select it for build, rebuild, component editing, collection extension, rename, delete, or preview. "
             "Build creates dataframe.csv for draft/unmaterialized databases. "
             "Rebuild rewrites dataframe.csv for materialized databases using the same manifest recipe. "
             "Neither action adds, removes, or replaces artifacts. Use Edit Selected Database Components for explicit recipe changes."
@@ -292,6 +301,16 @@ class AnalysisDatabaseListWidget(QGroupBox):
         self.component_edit_requested.emit(manifest)
         self.status_message.emit(f"Editing components for selected analysis database: {manifest.display_name}")
 
+    def _extend_from_collection_selected(self) -> None:
+        manifest = self._single_checked_manifest(action_label="extending from a recipe collection")
+        if manifest is None:
+            return
+
+        self.collection_extend_requested.emit(manifest)
+        self.status_message.emit(
+            f"Extending selected analysis database from recipe collection: {manifest.display_name}"
+        )
+
     def _rename_selected(self) -> None:
         manifest = self._single_checked_manifest(action_label="renaming")
         if manifest is None:
@@ -425,6 +444,7 @@ class AnalysisDatabaseListWidget(QGroupBox):
         self._build_button.setEnabled(has_single_checked and not is_materialized)
         self._rebuild_button.setEnabled(has_single_checked and is_materialized)
         self._edit_components_button.setEnabled(has_single_checked)
+        self._extend_from_collection_button.setEnabled(has_single_checked)
         self._rename_button.setEnabled(has_single_checked)
         self._delete_button.setEnabled(has_single_checked)
         self._preview_button.setEnabled(has_single_checked and is_materialized)

@@ -16,6 +16,7 @@ from leonardo.gui.windows._data_manager.analysis_database_list_widget import Ana
 from leonardo.gui.windows._data_manager.dataframe_preview_widget import DataFramePreviewWidget
 from leonardo.gui.windows._data_manager.dataset_selector_widget import DatasetSelectorWidget
 from leonardo.gui.windows._data_manager.metadata_tools_widget import MetadataToolsWidget
+from leonardo.gui.windows._data_manager.recipe_collection_database_dialog import RecipeCollectionDatabaseDialog
 from leonardo.gui.windows._data_manager.saved_artifact_selector_widget import SavedArtifactSelectorWidget
 from leonardo.gui.windows._data_manager.tool_calculation_widget import ToolCalculationWidget
 
@@ -132,15 +133,15 @@ class DataManagerWindow(QMainWindow):
         self._metadata_tools.status_message.connect(self.statusBar().showMessage)
         self._tool_calculation.artifact_saved.connect(self._on_tool_artifact_saved)
         self._tool_calculation.database_rebuilt.connect(self._on_recovery_database_rebuilt)
-        self._tool_calculation.database_manifest_changed.connect(
-            self._on_recipe_collection_database_changed
-        )
         self._tool_calculation.update_execution_finished.connect(self._on_update_execution_finished)
         self._tool_calculation.preview_requested.connect(self._preview.load_csv_path)
         self._tool_calculation.status_message.connect(self.statusBar().showMessage)
         self._database_list.database_materialized.connect(self._on_analysis_database_materialized)
         self._database_list.build_requested.connect(self._on_database_build_requested)
         self._database_list.component_edit_requested.connect(self._on_database_component_edit_requested)
+        self._database_list.collection_extend_requested.connect(
+            self._on_database_extend_from_collection_requested
+        )
         self._database_list.preview_requested.connect(self._preview.load_csv_path)
         self._database_list.status_message.connect(self.statusBar().showMessage)
 
@@ -246,6 +247,25 @@ class DataManagerWindow(QMainWindow):
         dialog.status_message.connect(self.statusBar().showMessage)
         dialog.exec()
 
+    def _on_database_extend_from_collection_requested(self, manifest: object) -> None:
+        if not hasattr(manifest, "database_id"):
+            self.statusBar().showMessage("Select an analysis database before extending from a collection")
+            return
+
+        dialog = RecipeCollectionDatabaseDialog(
+            historical_root=self._historical_root,
+            target_database=manifest,
+            parent=self,
+        )
+        dialog.database_changed.connect(self._on_analysis_database_collection_extended)
+        dialog.status_message.connect(self.statusBar().showMessage)
+        dialog.exec()
+
+    def _on_analysis_database_collection_extended(self, report: object) -> None:
+        self._database_list.refresh()
+        display_name = getattr(report, "display_name", "analysis database")
+        self.statusBar().showMessage(f"Analysis database extended: {display_name}")
+
     def _on_analysis_database_components_changed(self, report: object) -> None:
         self._database_list.refresh()
         manifest = getattr(report, "manifest", None)
@@ -333,12 +353,6 @@ class DataManagerWindow(QMainWindow):
         manifest = getattr(report, "manifest", None)
         display_name = getattr(manifest, "display_name", "linked analysis database")
         self.statusBar().showMessage(f"Linked analysis database rebuilt: {display_name}")
-
-    def _on_recipe_collection_database_changed(self, report: object) -> None:
-        self._database_list.refresh()
-        display_name = getattr(report, "display_name", "analysis database")
-        status = getattr(report, "status", "updated")
-        self.statusBar().showMessage(f"Analysis database {status}: {display_name}")
 
     def _on_update_execution_finished(self, report: object) -> None:
         self._artifact_selector.refresh()

@@ -1,4 +1,4 @@
-"""Dialog for creating or extending draft Analysis Databases from collections."""
+"""Dialog for extending existing Analysis Databases from recipe collections."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QMessageBox,
     QPushButton,
     QPlainTextEdit,
@@ -26,9 +25,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from leonardo.data.historical.analysis_database_contracts import market_from_dict
-from leonardo.data.historical.analysis_database_store import AnalysisDatabaseStore
+from leonardo.data.historical.analysis_database_contracts import AnalysisDatabaseManifest
 from leonardo.data.historical.artifact_recipe_collection_store import ArtifactRecipeCollection
+from leonardo.data.historical.artifact_recipe_collection_store import (
+    ArtifactRecipeCollectionStore,
+)
 from leonardo.data.historical.recipe_collection_database_planner import (
     RecipeCollectionDatabasePlan,
     RecipeCollectionDatabasePlanner,
@@ -40,12 +41,12 @@ from leonardo.data.historical.recipe_collection_database_service import (
 
 
 class RecipeCollectionDatabaseDialog(QDialog):
-    """Apply resolved recipe collection artifacts to draft database manifests.
+    """Extend an existing Analysis Database from resolved collection artifacts.
 
     The dialog owns user intent and display state. Artifact resolution is
-    delegated to ``RecipeCollectionDatabasePlanner`` and manifest creation or
-    extension is delegated to ``RecipeCollectionDatabaseService``. The dialog
-    does not calculate artifacts, execute recipes, materialize dataframes, or
+    delegated to ``RecipeCollectionDatabasePlanner`` and manifest extension is
+    delegated to ``RecipeCollectionDatabaseService``. The dialog does not create
+    databases, calculate artifacts, execute recipes, materialize dataframes, or
     construct Analysis Database component objects directly.
     """
 
@@ -56,27 +57,29 @@ class RecipeCollectionDatabaseDialog(QDialog):
         self,
         *,
         historical_root: Path,
-        collection: ArtifactRecipeCollection,
+        target_database: AnalysisDatabaseManifest,
+        collection: ArtifactRecipeCollection | None = None,
         planner: RecipeCollectionDatabasePlanner | None = None,
         service: RecipeCollectionDatabaseService | None = None,
-        database_store: AnalysisDatabaseStore | None = None,
+        collection_store: ArtifactRecipeCollectionStore | None = None,
         parent: Optional[QWidget] = None,
     ) -> None:
         super().__init__(parent)
         self._historical_root = Path(historical_root)
-        self._collection = collection
+        self._target_database = target_database
+        self._current_collection: ArtifactRecipeCollection | None = None
         self._planner = planner or RecipeCollectionDatabasePlanner(
             historical_root=self._historical_root,
         )
         self._service = service or RecipeCollectionDatabaseService(
             historical_root=self._historical_root,
         )
-        self._database_store = database_store or AnalysisDatabaseStore(
+        self._collection_store = collection_store or ArtifactRecipeCollectionStore(
             historical_root=self._historical_root,
         )
         self._current_plan: RecipeCollectionDatabasePlan | None = None
 
-        self.setWindowTitle("Create or Extend Analysis Database")
+        self.setWindowTitle("Extend Analysis Database from Collection")
         self.resize(1240, 760)
         self.setMinimumSize(1080, 660)
 
@@ -86,9 +89,10 @@ class RecipeCollectionDatabaseDialog(QDialog):
 
         context = QLabel(
             (
-                "Resolve current saved artifacts from the selected recipe "
-                "collection, then create or extend a draft Analysis Database "
-                "manifest. This does not calculate artifacts or build dataframe.csv."
+                "Select a saved recipe collection, resolve its current saved "
+                "artifacts, then extend the selected Analysis Database. This "
+                "does not create a database, calculate artifacts, execute "
+                "recipes, or build dataframe.csv."
             ),
             self,
         )
@@ -104,7 +108,19 @@ class RecipeCollectionDatabaseDialog(QDialog):
         plan_layout.setContentsMargins(8, 12, 8, 8)
         plan_layout.setSpacing(8)
 
-        self._collection_label = QLabel(self._collection_summary_text(), plan_group)
+        self._target_label = QLabel(self._target_database_text(), plan_group)
+        self._target_label.setWordWrap(True)
+        plan_layout.addWidget(self._target_label)
+
+        selection_form = QFormLayout()
+        selection_form.setSpacing(8)
+        plan_layout.addLayout(selection_form)
+
+        self._collection_combo = QComboBox(plan_group)
+        self._collection_combo.currentIndexChanged.connect(lambda *_: self.refresh_plan())
+        selection_form.addRow("Recipe collection", self._collection_combo)
+
+        self._collection_label = QLabel("Select a recipe collection to resolve.", plan_group)
         self._collection_label.setWordWrap(True)
         plan_layout.addWidget(self._collection_label)
 
@@ -149,43 +165,10 @@ class RecipeCollectionDatabaseDialog(QDialog):
 
         body.addWidget(plan_group, 7)
 
-        action_group = QGroupBox("Draft Database Action", self)
+        action_group = QGroupBox("Database Extension", self)
         action_layout = QVBoxLayout(action_group)
         action_layout.setContentsMargins(8, 12, 8, 8)
         action_layout.setSpacing(8)
-
-        create_form = QFormLayout()
-        create_form.setSpacing(8)
-        action_layout.addLayout(create_form)
-
-        self._name_edit = QLineEdit(action_group)
-        self._name_edit.setPlaceholderText("Database display name")
-        self._name_edit.setText(_default_database_name(collection))
-        self._name_edit.textChanged.connect(lambda *_: self._refresh_action_buttons())
-        create_form.addRow("New database name", self._name_edit)
-
-        self._description_edit = QPlainTextEdit(action_group)
-        self._description_edit.setPlaceholderText("Optional database description.")
-        self._description_edit.setFixedHeight(72)
-        create_form.addRow("Description", self._description_edit)
-
-        self._raw_volume_combo = QComboBox(action_group)
-        self._raw_volume_combo.addItem("Auto", "auto")
-        self._raw_volume_combo.addItem("Include", "include")
-        self._raw_volume_combo.addItem("Exclude", "exclude")
-        create_form.addRow("Raw OHLCV volume", self._raw_volume_combo)
-
-        self._create_button = QPushButton("Create Draft Database", action_group)
-        self._create_button.clicked.connect(self._create_database)
-        action_layout.addWidget(self._create_button)
-
-        action_layout.addSpacing(8)
-
-        self._database_combo = QComboBox(action_group)
-        self._database_combo.currentIndexChanged.connect(
-            lambda *_: self._refresh_action_buttons()
-        )
-        create_form.addRow("Existing database", self._database_combo)
 
         self._extend_button = QPushButton("Extend Database", action_group)
         self._extend_button.clicked.connect(self._extend_database)
@@ -193,7 +176,7 @@ class RecipeCollectionDatabaseDialog(QDialog):
 
         self._report_text = QPlainTextEdit(action_group)
         self._report_text.setReadOnly(True)
-        self._report_text.setPlaceholderText("Create/extend report appears here.")
+        self._report_text.setPlaceholderText("Extension report appears here.")
         action_layout.addWidget(self._report_text, 1)
 
         body.addWidget(action_group, 4)
@@ -202,14 +185,36 @@ class RecipeCollectionDatabaseDialog(QDialog):
         buttons.rejected.connect(self.close)
         root.addWidget(buttons)
 
+        self._load_collection_choices(
+            preselect_collection_id="" if collection is None else collection.collection_id
+        )
+        if collection is not None and not self.selected_collection_id():
+            self._collection_combo.addItem(
+                _collection_summary_label(collection),
+                collection.collection_id,
+            )
+            self._collection_combo.setCurrentIndex(self._collection_combo.count() - 1)
         self.refresh_plan()
 
     def refresh_plan(self) -> None:
         """Resolve the selected collection through the C2 planner."""
 
+        collection = self._selected_collection()
+        self._current_collection = collection
+        if collection is None:
+            self._current_plan = None
+            self._collection_label.setText("Select a recipe collection to resolve.")
+            self._fill_components(())
+            self._fill_blocked_items(())
+            self._plan_text.clear()
+            self._report_text.clear()
+            self._refresh_action_buttons()
+            return
+
+        self._collection_label.setText(self._collection_summary_text(collection))
         try:
             plan = self._planner.plan_collection_components(
-                self._collection,
+                collection,
                 include_geography_report=True,
             )
         except Exception as exc:
@@ -217,7 +222,6 @@ class RecipeCollectionDatabaseDialog(QDialog):
             self._fill_components(())
             self._fill_blocked_items(())
             self._plan_text.setPlainText(f"Failed to resolve recipe collection: {exc!r}")
-            self._database_combo.clear()
             self._refresh_action_buttons()
             return
 
@@ -225,7 +229,6 @@ class RecipeCollectionDatabaseDialog(QDialog):
         self._fill_components(plan.resolved_components)
         self._fill_blocked_items(plan.blocked_items)
         self._plan_text.setPlainText(_plan_text_for(plan))
-        self._load_database_choices(plan)
         self._report_text.clear()
         self._refresh_action_buttons()
         self.status_message.emit(
@@ -235,39 +238,13 @@ class RecipeCollectionDatabaseDialog(QDialog):
     def selected_database_id(self) -> str:
         """Return the selected Analysis Database id for extension."""
 
-        value = self._database_combo.currentData()
+        return str(getattr(self._target_database, "database_id", "") or "").strip()
+
+    def selected_collection_id(self) -> str:
+        """Return the currently selected recipe collection id."""
+
+        value = self._collection_combo.currentData()
         return str(value or "").strip()
-
-    def _create_database(self) -> None:
-        plan = self._current_plan
-        if plan is None:
-            self._set_report_text("Resolve the recipe collection before creating a database.")
-            return
-        if not self._plan_can_apply(plan):
-            self._set_report_text(_blocked_apply_text(plan))
-            return
-
-        display_name = self._name_edit.text().strip()
-        if not display_name:
-            self._set_report_text("Enter a database display name before creating a draft.")
-            self._refresh_action_buttons()
-            return
-
-        try:
-            report = self._service.create_database_from_plan(
-                plan,
-                display_name=display_name,
-                description=self._description_edit.toPlainText().strip(),
-                include_raw_volume=self._include_raw_volume_value(),
-            )
-        except Exception as exc:
-            message = f"Failed to create draft database: {exc!r}"
-            self._set_report_text(message)
-            self.status_message.emit(message)
-            QMessageBox.critical(self, "Analysis Database Create Failed", message)
-            return
-
-        self._handle_apply_report(report)
 
     def _extend_database(self) -> None:
         plan = self._current_plan
@@ -284,6 +261,10 @@ class RecipeCollectionDatabaseDialog(QDialog):
             self._refresh_action_buttons()
             return
 
+        if not self._confirm_extension(plan):
+            self._set_report_text("Database extension canceled.")
+            return
+
         try:
             report = self._service.extend_database_from_plan(
                 plan,
@@ -298,14 +279,47 @@ class RecipeCollectionDatabaseDialog(QDialog):
 
         self._handle_apply_report(report)
 
+    def _confirm_extension(self, plan: RecipeCollectionDatabasePlan) -> bool:
+        collection = self._current_collection
+        collection_name = (
+            "(unknown collection)"
+            if collection is None
+            else str(getattr(collection, "display_name", "") or collection.collection_id)
+        )
+        warnings = len(tuple(plan.warnings or ()))
+        if plan.geography_report:
+            warnings += len(tuple(plan.geography_report.get("warnings", ()) or ()))
+
+        message = "\n".join(
+            [
+                f"Extend Analysis Database '{self._target_database.display_name}'?",
+                "",
+                f"Database ID: {self._target_database.database_id}",
+                f"Recipe collection: {collection_name}",
+                f"Components to add: {len(plan.resolved_components)}",
+                f"Warnings: {warnings}",
+                "",
+                "This updates the database draft/components only.",
+                "It does not materialize dataframe.csv.",
+            ]
+        )
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("Confirm Database Extension")
+        box.setText(message)
+        extend_button = box.addButton("Extend", QMessageBox.ButtonRole.AcceptRole)
+        cancel_button = box.addButton(QMessageBox.StandardButton.Cancel)
+        box.setDefaultButton(cancel_button)
+        box.exec()
+        return box.clickedButton() is extend_button
+
     def _handle_apply_report(self, report: RecipeCollectionDatabaseApplyReport) -> None:
         self._set_report_text(_apply_report_text(report))
         status = str(getattr(report, "status", ""))
         display_name = str(getattr(report, "display_name", "") or "analysis database")
         self.status_message.emit(f"Recipe collection database {status}: {display_name}")
-        if status in {"created", "extended"}:
+        if status == "extended":
             self.database_changed.emit(report)
-            self._load_database_choices(self._current_plan)
 
     def _fill_components(self, components: Iterable[object]) -> None:
         self._component_table.setRowCount(0)
@@ -346,59 +360,60 @@ class RecipeCollectionDatabaseDialog(QDialog):
                 self._blocked_table.setItem(row, column, _readonly_item(value))
         self._blocked_table.resizeRowsToContents()
 
-    def _load_database_choices(self, plan: RecipeCollectionDatabasePlan | None) -> None:
-        selected_id = self.selected_database_id()
-        self._database_combo.blockSignals(True)
-        self._database_combo.clear()
-
-        market = _market_from_plan(plan)
-        if market is None:
-            self._database_combo.addItem("Plan market unavailable", "")
-            self._database_combo.blockSignals(False)
-            return
-
+    def _load_collection_choices(self, *, preselect_collection_id: str = "") -> None:
+        selected_id = str(preselect_collection_id or self.selected_collection_id()).strip()
+        self._collection_combo.blockSignals(True)
+        self._collection_combo.clear()
         try:
-            summaries = self._database_store.list_databases(market=market)
+            summaries = self._collection_store.list_collections(
+                market=self._target_database.market,
+            )
         except Exception as exc:
-            self._database_combo.addItem(f"Failed to load databases: {exc!r}", "")
-            self._database_combo.blockSignals(False)
+            self._collection_combo.addItem(f"Failed to load collections: {exc!r}", "")
+            self._collection_combo.blockSignals(False)
             return
 
         if not summaries:
-            self._database_combo.addItem("No existing Analysis Databases found", "")
-            self._database_combo.blockSignals(False)
+            self._collection_combo.addItem("No saved recipe collections found", "")
+            self._collection_combo.blockSignals(False)
             return
 
         selected_row = 0
         for row, summary in enumerate(summaries):
-            database_id = str(getattr(summary, "database_id", "") or "")
-            self._database_combo.addItem(_database_summary_label(summary), database_id)
-            if database_id == selected_id:
+            collection_id = str(getattr(summary, "collection_id", "") or "")
+            self._collection_combo.addItem(_collection_summary_label(summary), collection_id)
+            if collection_id == selected_id:
                 selected_row = row
-        self._database_combo.setCurrentIndex(selected_row)
-        self._database_combo.blockSignals(False)
+        self._collection_combo.setCurrentIndex(selected_row)
+        self._collection_combo.blockSignals(False)
+
+    def _selected_collection(self) -> ArtifactRecipeCollection | None:
+        collection_id = self.selected_collection_id()
+        if not collection_id:
+            return None
+        try:
+            return self._collection_store.load_collection(
+                market=self._target_database.market,
+                collection_id=collection_id,
+            )
+        except Exception as exc:
+            self._set_report_text(f"Failed to load recipe collection: {exc!r}")
+            return None
 
     def _refresh_action_buttons(self) -> None:
         plan = self._current_plan
         can_apply = bool(plan is not None and self._plan_can_apply(plan))
-        has_name = bool(self._name_edit.text().strip())
-        has_database = bool(self.selected_database_id())
-        self._create_button.setEnabled(can_apply and has_name)
-        self._extend_button.setEnabled(can_apply and has_database)
+        self._extend_button.setEnabled(can_apply and bool(self.selected_database_id()))
 
     def _plan_can_apply(self, plan: RecipeCollectionDatabasePlan) -> bool:
-        return bool(plan.resolved_components) and not bool(plan.duplicate_columns)
+        return (
+            bool(plan.resolved_components)
+            and not bool(plan.duplicate_columns)
+            and not bool(plan.blocked_items)
+        )
 
-    def _include_raw_volume_value(self) -> bool | None:
-        value = str(self._raw_volume_combo.currentData() or "auto")
-        if value == "include":
-            return True
-        if value == "exclude":
-            return False
-        return None
-
-    def _collection_summary_text(self) -> str:
-        market = getattr(self._collection, "market", None)
+    def _target_database_text(self) -> str:
+        market = getattr(self._target_database, "market", None)
         market_text = (
             "Unknown dataset"
             if market is None
@@ -409,8 +424,27 @@ class RecipeCollectionDatabaseDialog(QDialog):
         )
         return "\n".join(
             [
-                f"Collection: {getattr(self._collection, 'display_name', '(unnamed)')}",
-                f"Collection ID: {getattr(self._collection, 'collection_id', '(unknown)')}",
+                f"Target database: {self._target_database.display_name}",
+                f"Database ID: {self._target_database.database_id}",
+                f"Status: {self._target_database.status}",
+                f"Dataset: {market_text}",
+            ]
+        )
+
+    def _collection_summary_text(self, collection: ArtifactRecipeCollection) -> str:
+        market = getattr(collection, "market", None)
+        market_text = (
+            "Unknown dataset"
+            if market is None
+            else (
+                f"{market.exchange} / {market.market_type} / "
+                f"{market.symbol} / {market.timeframe}"
+            )
+        )
+        return "\n".join(
+            [
+                f"Collection: {getattr(collection, 'display_name', '(unnamed)')}",
+                f"Collection ID: {getattr(collection, 'collection_id', '(unknown)')}",
                 f"Dataset: {market_text}",
             ]
         )
@@ -431,38 +465,15 @@ def _dict_value(data: object, key: str) -> str:
     return str(getattr(data, key, "") or "")
 
 
-def _market_from_plan(plan: RecipeCollectionDatabasePlan | None) -> object | None:
-    if plan is None or plan.market is None:
-        return None
-    try:
-        return market_from_dict(dict(plan.market))
-    except Exception:
-        return None
-
-
-def _database_summary_label(summary: object) -> str:
-    row_count = getattr(summary, "row_count", None)
-    rows = "draft" if row_count is None else f"{row_count} rows"
+def _collection_summary_label(summary: object) -> str:
+    recipe_count = getattr(summary, "recipe_count", None)
+    if recipe_count is None and hasattr(summary, "recipe_snapshots"):
+        recipe_count = len(tuple(getattr(summary, "recipe_snapshots", ()) or ()))
+    recipes = "unknown recipe count" if recipe_count is None else f"{recipe_count} recipe(s)"
     return (
         f"{getattr(summary, 'display_name', '(unnamed)')} - "
-        f"{getattr(summary, 'status', 'unknown')} - "
-        f"{getattr(summary, 'feature_count', 0)} feature(s) - {rows}"
+        f"{getattr(summary, 'collection_id', '(unknown)')} - {recipes}"
     )
-
-
-def _default_database_name(collection: object) -> str:
-    market = getattr(collection, "market", None)
-    prefix = ""
-    if market is not None:
-        prefix = f"{market.symbol}_{market.timeframe}_"
-    return f"{prefix}{_safe_token(getattr(collection, 'display_name', 'collection_database'))}_database"
-
-
-def _safe_token(value: object) -> str:
-    text = str(value or "").strip().lower()
-    chars = [char if char.isalnum() else "_" for char in text]
-    token = "_".join(part for part in "".join(chars).split("_") if part)
-    return token or "collection"
 
 
 def _plan_text_for(plan: RecipeCollectionDatabasePlan) -> str:
@@ -493,14 +504,14 @@ def _plan_text_for(plan: RecipeCollectionDatabasePlan) -> str:
         lines.extend(
             [
                 "",
-                "Blocked items are excluded. Use Plan Updates from the recipe collection controls to update missing or stale artifacts.",
+                "Blocked items must be resolved before extending the selected database. Use Plan Updates from the recipe collection controls to update missing or stale artifacts.",
             ]
         )
     if not plan.resolved_components:
         lines.extend(
             [
                 "",
-                "No current artifacts can be used. Run Plan Updates or recovery before creating database components.",
+                "No current artifacts can be used. Run Plan Updates or recovery before extending database components.",
             ]
         )
     return "\n".join(lines)
@@ -508,9 +519,11 @@ def _plan_text_for(plan: RecipeCollectionDatabasePlan) -> str:
 
 def _blocked_apply_text(plan: RecipeCollectionDatabasePlan) -> str:
     if plan.duplicate_columns:
-        return "Resolve duplicate planned database columns before creating or extending a database."
+        return "Resolve duplicate planned database columns before extending a database."
     if not plan.resolved_components:
         return "No current artifacts can be used. Run Plan Updates or recovery first."
+    if plan.blocked_items:
+        return "Resolve blocked recipe collection plan items before extending a database."
     return "The current plan cannot be applied."
 
 

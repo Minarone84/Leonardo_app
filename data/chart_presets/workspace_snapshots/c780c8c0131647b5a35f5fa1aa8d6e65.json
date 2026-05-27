@@ -1,0 +1,810 @@
+{
+  "charts": [
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "DOGEUSDT",
+        "timeframe": "30m"
+      },
+      "position": 1,
+      "price_view_state": {},
+      "studies": [
+        {
+          "display_name": "EMA(34)",
+          "family": "indicator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "price",
+          "params": {
+            "period": 34
+          },
+          "required_inputs": [
+            "close"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "ema_34": {
+                "color": "#FFFFFF",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "ema",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        },
+        {
+          "display_name": "HCK(13,48)",
+          "family": "indicator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "price",
+          "params": {
+            "fast_vwap_l": 13,
+            "slow_vwap_l": 48
+          },
+          "required_inputs": [
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {
+              "hck_band": {
+                "color": "#94A3B8",
+                "fill_id": "hck_band",
+                "opacity": 0.12,
+                "signal_a": "fast_vwap",
+                "signal_b": "slow_vwap",
+                "visible": true
+              }
+            },
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "fast_vwap": {
+                "color": "#22C55E",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              },
+              "slow_vwap": {
+                "color": "#EF4444",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [
+              {
+                "config": {
+                  "condition": {
+                    "lhs_signal": "fast_vwap",
+                    "operator": "gt",
+                    "rhs_signal": "slow_vwap",
+                    "scope": "historical"
+                  },
+                  "targets": [
+                    {
+                      "false_color": "#EF4444",
+                      "signal": "fast_vwap",
+                      "true_color": "#22C55E"
+                    },
+                    {
+                      "false_color": "#EF4444",
+                      "signal": "slow_vwap",
+                      "true_color": "#22C55E"
+                    }
+                  ]
+                },
+                "enabled": true,
+                "module_key": "conditional_line_color"
+              },
+              {
+                "config": {
+                  "condition": {
+                    "lhs_signal": "fast_vwap",
+                    "operator": "gt",
+                    "rhs_signal": "slow_vwap",
+                    "scope": "historical"
+                  },
+                  "false_color": "#EF4444",
+                  "false_opacity": 0.08,
+                  "target_fill_id": "hck_band",
+                  "true_color": "#22C55E",
+                  "true_opacity": 0.08
+                },
+                "enabled": true,
+                "module_key": "conditional_fill_color"
+              }
+            ],
+            "visible": true
+          },
+          "tool_key": "hck",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        },
+        {
+          "display_name": "RSI(14)",
+          "family": "oscillator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "oscillator",
+          "params": {
+            "period": 14
+          },
+          "required_inputs": [
+            "close"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "rsi_14": {
+                "color": "#A855F7",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "rsi",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        },
+        {
+          "display_name": "Derivatives",
+          "family": "construct",
+          "input_binding_meta": {
+            "source": {
+              "analysis_usable": true,
+              "artifact_path": "",
+              "column_name": "ema_34",
+              "display_name": "Current Chart \u00b7 EMA [period=34]  ->  ema_34",
+              "family": "indicator",
+              "instance_key": "ema__default__period-34",
+              "projection_key": "ema__default__period-34",
+              "renderable": true,
+              "series_key": "ema_34",
+              "source_kind": "temporary",
+              "temporary_source_role": "renderable",
+              "tool_key": "ema",
+              "tool_title": "EMA"
+            }
+          },
+          "input_bindings": {
+            "source": "ema_34"
+          },
+          "pane_target": "oscillator",
+          "params": {
+            "axis": "bar",
+            "order": 1,
+            "scheme": "central",
+            "source": "ema_34"
+          },
+          "required_inputs": [],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "ema_34__d1": {
+                "color": "#FF9F1C",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "derivative",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        }
+      ],
+      "viewport": {
+        "center_ts_ms": 1774179000000,
+        "fallback_global_index": 84194,
+        "visible_bars": 500
+      }
+    },
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "DOGEUSDT",
+        "timeframe": "1h"
+      },
+      "position": 2,
+      "price_view_state": {},
+      "studies": [
+        {
+          "display_name": "OBV",
+          "family": "oscillator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "oscillator",
+          "params": {},
+          "required_inputs": [
+            "close",
+            "volume"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "obv": {
+                "color": "#E5E7EB",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "obv",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        },
+        {
+          "display_name": "HCK(13,48)",
+          "family": "indicator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "price",
+          "params": {
+            "fast_vwap_l": 13,
+            "slow_vwap_l": 48
+          },
+          "required_inputs": [
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {
+              "hck_band": {
+                "color": "#94A3B8",
+                "fill_id": "hck_band",
+                "opacity": 0.12,
+                "signal_a": "fast_vwap",
+                "signal_b": "slow_vwap",
+                "visible": true
+              }
+            },
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "fast_vwap": {
+                "color": "#22C55E",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              },
+              "slow_vwap": {
+                "color": "#EF4444",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [
+              {
+                "config": {
+                  "condition": {
+                    "lhs_signal": "fast_vwap",
+                    "operator": "gt",
+                    "rhs_signal": "slow_vwap",
+                    "scope": "historical"
+                  },
+                  "targets": [
+                    {
+                      "false_color": "#EF4444",
+                      "signal": "fast_vwap",
+                      "true_color": "#22C55E"
+                    },
+                    {
+                      "false_color": "#EF4444",
+                      "signal": "slow_vwap",
+                      "true_color": "#22C55E"
+                    }
+                  ]
+                },
+                "enabled": true,
+                "module_key": "conditional_line_color"
+              },
+              {
+                "config": {
+                  "condition": {
+                    "lhs_signal": "fast_vwap",
+                    "operator": "gt",
+                    "rhs_signal": "slow_vwap",
+                    "scope": "historical"
+                  },
+                  "false_color": "#EF4444",
+                  "false_opacity": 0.08,
+                  "target_fill_id": "hck_band",
+                  "true_color": "#22C55E",
+                  "true_opacity": 0.08
+                },
+                "enabled": true,
+                "module_key": "conditional_fill_color"
+              }
+            ],
+            "visible": true
+          },
+          "tool_key": "hck",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        }
+      ],
+      "viewport": {
+        "center_ts_ms": 1774184400000,
+        "fallback_global_index": 42099,
+        "visible_bars": 500
+      }
+    },
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "DOGEUSDT",
+        "timeframe": "2h"
+      },
+      "position": 3,
+      "price_view_state": {},
+      "studies": [],
+      "viewport": {
+        "center_ts_ms": 1773367200000,
+        "fallback_global_index": 20936,
+        "visible_bars": 500
+      }
+    },
+    {
+      "dataset": {
+        "exchange": "bybit",
+        "market_type": "linear",
+        "symbol": "DOGEUSDT",
+        "timeframe": "4h"
+      },
+      "position": 4,
+      "price_view_state": {},
+      "studies": [
+        {
+          "display_name": "EMA(34)",
+          "family": "indicator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "price",
+          "params": {
+            "period": 34
+          },
+          "required_inputs": [
+            "close"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "ema_34": {
+                "color": "#FFFFFF",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "ema",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": true
+          }
+        },
+        {
+          "display_name": "HCK(13,48)",
+          "family": "indicator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "price",
+          "params": {
+            "fast_vwap_l": 13,
+            "slow_vwap_l": 48
+          },
+          "required_inputs": [
+            "high",
+            "low",
+            "close",
+            "volume"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {
+              "hck_band": {
+                "color": "#94A3B8",
+                "fill_id": "hck_band",
+                "opacity": 0.12,
+                "signal_a": "fast_vwap",
+                "signal_b": "slow_vwap",
+                "visible": true
+              }
+            },
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "fast_vwap": {
+                "color": "#22C55E",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              },
+              "slow_vwap": {
+                "color": "#EF4444",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [
+              {
+                "config": {
+                  "condition": {
+                    "lhs_signal": "fast_vwap",
+                    "operator": "gt",
+                    "rhs_signal": "slow_vwap",
+                    "scope": "historical"
+                  },
+                  "targets": [
+                    {
+                      "false_color": "#EF4444",
+                      "signal": "fast_vwap",
+                      "true_color": "#22C55E"
+                    },
+                    {
+                      "false_color": "#EF4444",
+                      "signal": "slow_vwap",
+                      "true_color": "#22C55E"
+                    }
+                  ]
+                },
+                "enabled": true,
+                "module_key": "conditional_line_color"
+              },
+              {
+                "config": {
+                  "condition": {
+                    "lhs_signal": "fast_vwap",
+                    "operator": "gt",
+                    "rhs_signal": "slow_vwap",
+                    "scope": "historical"
+                  },
+                  "false_color": "#EF4444",
+                  "false_opacity": 0.08,
+                  "target_fill_id": "hck_band",
+                  "true_color": "#22C55E",
+                  "true_opacity": 0.08
+                },
+                "enabled": true,
+                "module_key": "conditional_fill_color"
+              }
+            ],
+            "visible": true
+          },
+          "tool_key": "hck",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        },
+        {
+          "display_name": "RSI(14)",
+          "family": "oscillator",
+          "input_binding_meta": {},
+          "input_bindings": {},
+          "pane_target": "oscillator",
+          "params": {
+            "period": 14
+          },
+          "required_inputs": [
+            "close"
+          ],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "rsi_14": {
+                "color": "#A855F7",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "rsi",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        },
+        {
+          "display_name": "Derivatives",
+          "family": "construct",
+          "input_binding_meta": {
+            "source": {
+              "analysis_usable": true,
+              "artifact_path": "",
+              "column_name": "ema_34",
+              "display_name": "Current Chart \u00b7 EMA [period=34]  ->  ema_34",
+              "family": "indicator",
+              "instance_key": "ema__default__period-34",
+              "projection_key": "ema__default__period-34",
+              "renderable": true,
+              "series_key": "ema_34",
+              "source_kind": "temporary",
+              "temporary_source_role": "renderable",
+              "tool_key": "ema",
+              "tool_title": "EMA"
+            }
+          },
+          "input_bindings": {
+            "source": "ema_34"
+          },
+          "pane_target": "oscillator",
+          "params": {
+            "axis": "bar",
+            "order": 1,
+            "scheme": "central",
+            "source": "ema_34"
+          },
+          "required_inputs": [],
+          "saved_artifact_ref": null,
+          "schema_version": 1,
+          "source_kind": "temporary",
+          "style": {
+            "color": "",
+            "fill_styles": {},
+            "line_style": "solid",
+            "line_width": 1,
+            "show_label": true,
+            "show_value": true,
+            "signal_styles": {
+              "ema_34__d1": {
+                "color": "#FF9F1C",
+                "line_style": "solid",
+                "line_width": 1,
+                "marker_offset_px": 0,
+                "marker_shape": "",
+                "marker_size": 0,
+                "marker_text": "",
+                "marker_text_color": "",
+                "render_mode": "line",
+                "show_label": true,
+                "show_value": true,
+                "visible": true
+              }
+            },
+            "style_modules": [],
+            "visible": true
+          },
+          "tool_key": "derivative",
+          "user_metadata": {
+            "dataset_role": "unspecified",
+            "description": "",
+            "important": false
+          }
+        }
+      ],
+      "viewport": {
+        "center_ts_ms": 1774180800000,
+        "fallback_global_index": 10525,
+        "visible_bars": 500
+      }
+    }
+  ],
+  "content_hash": "81c424ae9e9a84d952b1c476186cd57b5b6681de4d95b64d5726d9d68b05028f",
+  "created_at_ms": 1779829778988,
+  "description": "Timeframes are: 30m, 1h, 2h, 4h. This workspace is used to test artifact and studies creation",
+  "display_name": "DOGEUSDT_STUDY",
+  "notebook_ref": {
+    "display_name": "Doge workspace Notebook",
+    "notebook_id": "11e023cfe679411289ddb202e0593353"
+  },
+  "object_type": "historical_workspace_snapshot",
+  "schema_version": 1,
+  "snapshot_id": "c780c8c0131647b5a35f5fa1aa8d6e65",
+  "updated_at_ms": 1779883954934,
+  "workspace": {
+    "visualization_mode": "scroll_4"
+  }
+}

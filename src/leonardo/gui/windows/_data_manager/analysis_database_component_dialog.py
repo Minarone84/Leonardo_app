@@ -4,7 +4,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QBrush, QColor
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -48,7 +48,8 @@ class AnalysisDatabaseComponentDialog(QDialog):
     components_changed = Signal(object)  # AnalysisDatabaseComponentEditReport
     status_message = Signal(str)
 
-    _EXISTING_COMPONENT_BRUSH = QBrush(QColor(255, 252, 214))
+    _EXISTING_COMPONENT_BRUSH = QBrush(QColor("#C8F7C5"))
+    _EXISTING_COMPONENT_FOREGROUND = QBrush(QColor("#000000"))
 
     def __init__(
         self,
@@ -73,7 +74,8 @@ class AnalysisDatabaseComponentDialog(QDialog):
         self._editor = AnalysisDatabaseComponentEditor(historical_root=self._historical_root)
 
         self.setWindowTitle("Edit Analysis Database Components")
-        self.resize(1040, 660)
+        self.resize(1120, 700)
+        self.setMinimumSize(1080, 660)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)
@@ -81,7 +83,7 @@ class AnalysisDatabaseComponentDialog(QDialog):
 
         intro = QLabel(
             "This editor intentionally changes the selected Analysis Database recipe. "
-            "Saved artifacts are loaded automatically for this dataset. Pale yellow rows are already present in the database. "
+            "Saved artifacts are loaded automatically for this dataset. Light green rows are already present in the database. "
             "After saving component changes, the database is reset to draft state and must be rebuilt.",
             self,
         )
@@ -190,7 +192,7 @@ class AnalysisDatabaseComponentDialog(QDialog):
 
         self._candidate_hint.setText(
             f"Found {len(self._candidate_columns)} saved artifact column(s). "
-            "Check rows inside this dialog to add or replace components. Pale yellow rows are already present."
+            "Check rows inside this dialog to add or replace components. Light green rows are already present."
         )
         existing_db_columns = self._existing_db_column_names()
         for column in self._candidate_columns:
@@ -207,6 +209,10 @@ class AnalysisDatabaseComponentDialog(QDialog):
             )
             if self._candidate_db_column_name(column) in existing_db_columns:
                 item.setBackground(self._EXISTING_COMPONENT_BRUSH)
+                item.setForeground(self._EXISTING_COMPONENT_FOREGROUND)
+                font = QFont(item.font())
+                font.setBold(True)
+                item.setFont(font)
                 item.setToolTip(f"Already present in this database recipe\n{column.path}")
         self._candidate_list.blockSignals(False)
 

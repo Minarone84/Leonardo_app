@@ -7,9 +7,11 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication, QComboBox, QFormLayout, QGridLayout, QPushButton, QSizePolicy
 
 from leonardo.gui.windows._data_manager.analysis_database_builder_widget import AnalysisDatabaseBuilderWidget
+from leonardo.gui.windows._data_manager.tool_calculation_widget import ToolCalculationWidget
 from leonardo.gui.windows._data_manager.dataframe_preview_widget import DataFramePreviewWidget
 from leonardo.gui.windows._data_manager.dataset_selector_widget import (
     DatasetSelectorWidget,
@@ -543,10 +545,17 @@ def test_component_editor_dialog_is_explicit_recipe_edit_surface() -> None:
     source = _source(path)
 
     assert "class AnalysisDatabaseComponentDialog" in source
+    assert "self.resize(1120, 700)" in source
+    assert "self.setMinimumSize(1080, 660)" in source
     assert "AnalysisDatabaseComponentEditor" in source
     assert "load_saved_artifact_columns" in source
     assert "_EXISTING_COMPONENT_BRUSH" in source
+    assert "_EXISTING_COMPONENT_FOREGROUND" in source
+    assert 'QColor("#C8F7C5")' in source
+    assert 'QColor("#000000")' in source
+    assert "font.setBold(True)" in source
     assert "QColor" in source
+    assert "QFont" in source
     assert "build_manifest_features_from_saved_columns" in source
     assert "SavedArtifactColumn" in source
     assert "replace_components" in source
@@ -555,6 +564,80 @@ def test_component_editor_dialog_is_explicit_recipe_edit_surface() -> None:
     assert "components_changed" in source
     assert "materialize_database" not in source
     assert "rebuild_database_with_features" not in source
+
+
+def test_component_editor_existing_artifact_highlight_is_readable(monkeypatch, tmp_path: Path) -> None:
+    _qapp()
+    from leonardo.gui.windows._data_manager import analysis_database_component_dialog as component_dialog_module
+    from leonardo.gui.windows._data_manager.analysis_database_component_dialog import AnalysisDatabaseComponentDialog
+    from leonardo.gui.windows._data_manager.saved_artifact_columns import SavedArtifactColumn
+
+    existing_column = SavedArtifactColumn(
+        family="indicators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="rsi_14",
+        column_name="rsi",
+        path=tmp_path / "rsi.csv",
+    )
+    new_column = SavedArtifactColumn(
+        family="indicators",
+        tool_key="sma",
+        tool_title="SMA",
+        instance_key="sma_20",
+        column_name="sma",
+        path=tmp_path / "sma.csv",
+    )
+
+    monkeypatch.setattr(
+        component_dialog_module,
+        "load_saved_artifact_columns",
+        lambda **_kwargs: [existing_column, new_column],
+    )
+
+    def fake_feature_builder(*, selected_columns, **_kwargs):
+        column = selected_columns[0]
+        db_column_name = "existing_rsi" if column.column_name == "rsi" else "new_sma"
+        return (), (SimpleNamespace(db_column_name=db_column_name),)
+
+    monkeypatch.setattr(
+        component_dialog_module,
+        "build_manifest_features_from_saved_columns",
+        fake_feature_builder,
+    )
+
+    manifest = SimpleNamespace(
+        display_name="Readable Highlight Database",
+        database_id="adb__readable",
+        status="draft",
+        market=SimpleNamespace(exchange="bybit", market_type="linear", symbol="BTCUSDT", timeframe="1m"),
+        feature_columns=(
+            SimpleNamespace(
+                db_column_name="existing_rsi",
+                source_family="indicators",
+                source_column_name="rsi",
+            ),
+        ),
+    )
+    dialog = AnalysisDatabaseComponentDialog(
+        historical_root=tmp_path,
+        manifest=manifest,  # type: ignore[arg-type]
+    )
+    try:
+        existing_item = dialog._candidate_list.item(0)
+        new_item = dialog._candidate_list.item(1)
+
+        assert existing_item.background().color().name().lower() == "#c8f7c5"
+        assert existing_item.foreground().color().name().lower() == "#000000"
+        assert existing_item.font().bold() is True
+        assert existing_item.data(Qt.ItemDataRole.UserRole) == existing_column
+
+        assert new_item.background().style() == Qt.BrushStyle.NoBrush
+        assert new_item.foreground().style() == Qt.BrushStyle.NoBrush
+        assert new_item.font().bold() is False
+        assert new_item.data(Qt.ItemDataRole.UserRole) == new_column
+    finally:
+        dialog.close()
 
 
 def test_data_manager_opens_component_editor_from_database_builder_intent() -> None:
@@ -711,8 +794,29 @@ def test_main_data_manager_widgets_use_right_side_button_racks() -> None:
 
     helper_source = _source(DATA_MANAGER / "button_rack.py")
     assert "def make_button_rack" in helper_source
+    assert "BUTTON_RACK_MINIMUM_WIDTH = 260" in helper_source
+    assert "button.setMinimumWidth(max(button.minimumWidth(), BUTTON_RACK_MINIMUM_WIDTH))" in helper_source
     assert "rack.addStretch(1)" in helper_source
     assert "rack.addWidget(button)" in helper_source
+
+
+def test_tool_calculation_button_rack_uses_readable_button_widths(tmp_path: Path) -> None:
+    _qapp()
+    widget = ToolCalculationWidget(historical_root=tmp_path)
+
+    assert widget._button.minimumWidth() >= 260
+    assert widget._recipes_button.minimumWidth() >= 260
+    assert widget._collections_button.minimumWidth() >= 260
+    assert widget._study_setup_export_button.minimumWidth() >= 260
+
+
+def test_data_manager_artifact_calculator_window_has_data_manager_minimum_size() -> None:
+    source = _source(DATA_MANAGER / "tool_calculation_widget.py")
+    open_source = _function_source(DATA_MANAGER / "tool_calculation_widget.py", "_open_tool_window")
+
+    assert "FinancialToolsManagerWindow" in open_source
+    assert "window.setMinimumSize(900, 620)" in open_source
+    assert "calculate_and_save" in source
 
 
 def test_data_manager_has_study_setup_recipe_export_entry_point() -> None:

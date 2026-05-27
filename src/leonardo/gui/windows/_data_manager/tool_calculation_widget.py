@@ -258,6 +258,7 @@ class ToolCalculationWidget(QGroupBox):
             save_only=True,
             parent=self.window(),
         )
+        window.setMinimumSize(900, 620)
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         window.save_requested.connect(self._save_requested)
         window.recipe_requested.connect(self._recipe_requested)

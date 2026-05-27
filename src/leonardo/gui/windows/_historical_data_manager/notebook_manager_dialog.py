@@ -42,6 +42,7 @@ class HistoricalNotebookManagerDialog(QDialog):
 
     _NOTEBOOK_ID_ROLE = Qt.UserRole
     notebook_deleted = Signal(str)
+    notebook_assignment_changed = Signal(str, object)
 
     def __init__(
         self,
@@ -317,6 +318,7 @@ class HistoricalNotebookManagerDialog(QDialog):
             return
 
         self._reload(selected_notebook_id=summary.notebook_id)
+        self.notebook_assignment_changed.emit(target_summary.snapshot_id, dict(notebook_ref))
         self._set_status(
             f"Assigned notebook '{summary.display_name}' to "
             f"'{target_summary.display_name}'."
@@ -384,6 +386,7 @@ class HistoricalNotebookManagerDialog(QDialog):
             return
 
         self._reload(selected_notebook_id=summary.notebook_id)
+        self.notebook_assignment_changed.emit(target_summary.snapshot_id, None)
         self._set_status(
             f"Unassigned notebook '{summary.display_name}' from "
             f"'{target_summary.display_name}'."

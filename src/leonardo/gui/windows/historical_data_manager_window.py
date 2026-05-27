@@ -648,6 +648,7 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         self._workspace_widget: Optional[HistoricalWorkspaceWidget] = None
         self._notebook_window: Optional[HistoricalNotebookWindow] = None
+        self._current_workspace_snapshot_id: Optional[str] = None
         self._current_workspace_notebook_ref: Optional[dict[str, Any]] = None
         self._applying_notebook_poi_markers: bool = False
         self._syncing_pan_anchor: bool = False
@@ -1445,6 +1446,8 @@ class HistoricalDataManagerWindow(QMainWindow):
             return
 
         action_text = "Updated" if dialog.save_mode() == "update" else "Saved"
+        self._current_workspace_snapshot_id = saved.snapshot_id
+        self._set_current_workspace_notebook_ref(saved.notebook_ref)
         self._set_status(f"{action_text} workspace snapshot: {saved.display_name}")
         QMessageBox.information(
             self,
@@ -1546,6 +1549,7 @@ class HistoricalDataManagerWindow(QMainWindow):
             return
 
         self._sync_view_mode_controls()
+        self._current_workspace_snapshot_id = snapshot.snapshot_id
         self._set_current_workspace_notebook_ref(snapshot.notebook_ref)
         notebook_notice = self._open_notebook_ref_from_snapshot(
             snapshot.notebook_ref,
@@ -1745,6 +1749,9 @@ class HistoricalDataManagerWindow(QMainWindow):
             parent=self,
         )
         dialog.notebook_deleted.connect(self._on_notebook_deleted)
+        dialog.notebook_assignment_changed.connect(
+            self._on_notebook_assignment_changed
+        )
         if dialog.exec() != QDialog.Accepted:
             self._set_status("Notebook manager closed")
             return
@@ -1752,6 +1759,21 @@ class HistoricalDataManagerWindow(QMainWindow):
         notebook_id = dialog.selected_open_notebook_id()
         if notebook_id:
             self._open_notebook_by_id(notebook_id, title="Notebook Manager")
+
+    def _on_notebook_assignment_changed(
+        self,
+        snapshot_id: str,
+        notebook_ref: object,
+    ) -> None:
+        current_snapshot_id = str(self._current_workspace_snapshot_id or "").strip()
+        changed_snapshot_id = str(snapshot_id or "").strip()
+        if not current_snapshot_id or current_snapshot_id != changed_snapshot_id:
+            return
+
+        if isinstance(notebook_ref, Mapping):
+            self._set_current_workspace_notebook_ref(notebook_ref)
+        else:
+            self._set_current_workspace_notebook_ref(None)
 
     def _on_notebook_deleted(self, notebook_id: str) -> None:
         deleted_id = str(notebook_id or "").strip()

@@ -194,6 +194,10 @@ def test_manager_assignment_updates_only_workspace_snapshot_notebook_ref(
 
     dialog = _dialog(notebook_store, snapshot_store)
     try:
+        changes: list[tuple[str, object]] = []
+        dialog.notebook_assignment_changed.connect(
+            lambda snapshot_id, notebook_ref: changes.append((snapshot_id, notebook_ref))
+        )
         _select_notebook(dialog, "nb_1")
         dialog._on_assign_clicked()
     finally:
@@ -204,6 +208,15 @@ def test_manager_assignment_updates_only_workspace_snapshot_notebook_ref(
         "notebook_id": "nb_1",
         "display_name": "Notebook 1",
     }
+    assert changes == [
+        (
+            "snap_1",
+            {
+                "notebook_id": "nb_1",
+                "display_name": "Notebook 1",
+            },
+        )
+    ]
     assert json.loads(notebook_path.read_text(encoding="utf-8")) == notebook_before
     assert "assigned_workspaces" not in notebook_before
     assert "workspace_snapshots" not in notebook_before
@@ -232,12 +245,17 @@ def test_manager_unassignment_clears_only_workspace_snapshot_notebook_ref(
 
     dialog = _dialog(notebook_store, snapshot_store)
     try:
+        changes: list[tuple[str, object]] = []
+        dialog.notebook_assignment_changed.connect(
+            lambda snapshot_id, notebook_ref: changes.append((snapshot_id, notebook_ref))
+        )
         _select_notebook(dialog, "nb_1")
         dialog._on_unassign_clicked()
     finally:
         dialog.close()
 
     assert snapshot_store.load_snapshot("snap_1").notebook_ref is None
+    assert changes == [("snap_1", None)]
     assert json.loads(notebook_path.read_text(encoding="utf-8")) == notebook_before
 
 

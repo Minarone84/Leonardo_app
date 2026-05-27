@@ -1098,11 +1098,19 @@ class HistoricalChartPanelStyleMixin:
             defaults_study_key=self._defaults_study_key_for_tool_key(study.computation.tool_key),
             parent=self,
         )
+        dialog.apply_requested.connect(
+            lambda: self._apply_style_dialog_patch(
+                instance_id=study.instance_id,
+                dialog=dialog,
+            )
+        )
         if dialog.exec() != int(QDialog.Accepted):
             return
 
-        patch = dialog.style_patch()
-        self._apply_study_style_patch(study.instance_id, patch)
+        self._apply_style_dialog_patch(
+            instance_id=study.instance_id,
+            dialog=dialog,
+        )
 
     def _on_oscillator_pane_study_style_requested(self, instance_id: str) -> None:
         normalized_id = str(instance_id).strip()
@@ -1123,11 +1131,31 @@ class HistoricalChartPanelStyleMixin:
             defaults_study_key=self._defaults_study_key_for_tool_key(study.computation.tool_key),
             parent=self,
         )
+        dialog.apply_requested.connect(
+            lambda: self._apply_style_dialog_patch(
+                instance_id=study.instance_id,
+                dialog=dialog,
+            )
+        )
         if dialog.exec() != int(QDialog.Accepted):
             return
 
-        patch = dialog.style_patch()
-        self._apply_study_style_patch(study.instance_id, patch)
+        self._apply_style_dialog_patch(
+            instance_id=study.instance_id,
+            dialog=dialog,
+        )
+
+    def _apply_style_dialog_patch(
+        self,
+        *,
+        instance_id: str,
+        dialog: StudyStyleDialog,
+    ) -> None:
+        try:
+            patch = dialog.style_patch()
+            self._apply_study_style_patch(instance_id, patch)
+        except Exception as exc:
+            self._on_error(f"Cannot apply style: {exc!r}")
 
     def _apply_study_style_patch(self, instance_id: str, patch: Dict[str, Any]) -> None:
         study = self._study_registry.get(instance_id)

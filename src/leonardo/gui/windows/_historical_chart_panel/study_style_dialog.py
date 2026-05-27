@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -40,6 +40,8 @@ class StudyStyleDialog(QDialog):
     - static fill style overrides for managed overlay fills
     - HCK conditional module styling overrides
     """
+
+    apply_requested = Signal()
 
     def __init__(
         self,
@@ -223,10 +225,13 @@ class StudyStyleDialog(QDialog):
         scroll_layout.setRowStretch((len(sections) + 1) // 2, 1)
 
         buttons = QDialogButtonBox(
-            QDialogButtonBox.Ok | QDialogButtonBox.Cancel,
+            QDialogButtonBox.Ok | QDialogButtonBox.Cancel | QDialogButtonBox.Apply,
             Qt.Horizontal,
             self,
         )
+        apply_button = buttons.button(QDialogButtonBox.Apply)
+        if apply_button is not None:
+            apply_button.clicked.connect(lambda *_args: self.apply_requested.emit())
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)

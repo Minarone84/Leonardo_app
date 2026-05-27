@@ -6,6 +6,7 @@ from typing import Any, Mapping, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QActionGroup, QCloseEvent, QShowEvent
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFormLayout,
@@ -51,6 +52,7 @@ from leonardo.gui.windows._historical_data_manager.study_setup_dialogs import (
 from leonardo.gui.windows._historical_data_manager.workspace_snapshot_dialogs import (
     LoadWorkspaceSnapshotDialog,
     SaveWorkspaceSnapshotDialog,
+    WorkspaceSnapshotLoadPreflightDialog,
 )
 from leonardo.gui.windows._historical_data_manager.notebook_window import (
     HistoricalNotebookWindow,
@@ -648,6 +650,7 @@ class HistoricalDataManagerWindow(QMainWindow):
 
         self._workspace_widget: Optional[HistoricalWorkspaceWidget] = None
         self._notebook_window: Optional[HistoricalNotebookWindow] = None
+        self._workspace_snapshot_load_in_progress: bool = False
         self._current_workspace_snapshot_id: Optional[str] = None
         self._current_workspace_notebook_ref: Optional[dict[str, Any]] = None
         self._applying_notebook_poi_markers: bool = False
@@ -1456,6 +1459,10 @@ class HistoricalDataManagerWindow(QMainWindow):
         )
 
     def _on_load_workspace_snapshot(self) -> None:
+        if self._workspace_snapshot_load_in_progress:
+            self._set_status("Workspace snapshot load already in progress")
+            return
+
         workspace = self._workspace_widget
         if workspace is None:
             self._set_status("Historical workspace not ready")
@@ -1523,53 +1530,79 @@ class HistoricalDataManagerWindow(QMainWindow):
                 + format_compatibility_report(compatibility_report),
             )
 
-        if snapshot.notebook_ref and not self._confirm_dirty_notebook_action(
-            action_label="loading the assigned notebook"
-        ):
-            self._set_status("Workspace snapshot load cancelled")
-            return
+        preflight_dialog = WorkspaceSnapshotLoadPreflightDialog(
+            snapshot=snapshot,
+            load_mode=load_mode,
+            parent=self,
+        )
+        load_started = False
 
-        try:
-            workspace.load_workspace_snapshot_charts(charts, mode=load_mode)
-            workspace.set_visualization_mode(
-                str(
-                    snapshot.workspace.get(
-                        "visualization_mode",
-                        HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4,
-                    )
-                    or HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4
+        def _start_snapshot_load() -> None:
+            nonlocal load_started
+            if load_started:
+                return
+
+            if snapshot.notebook_ref and not self._confirm_dirty_notebook_action(
+                action_label="loading the assigned notebook"
+            ):
+                self._set_status("Workspace snapshot load cancelled")
+                preflight_dialog.mark_cancelled(
+                    "Workspace Snapshot load cancelled before restore."
                 )
-            )
-        except Exception as exc:
-            QMessageBox.warning(
-                self,
-                "Load Workspace Snapshot",
-                f"Could not start workspace snapshot load: {exc!r}",
-            )
-            return
+                return
 
-        self._sync_view_mode_controls()
-        self._current_workspace_snapshot_id = snapshot.snapshot_id
-        self._set_current_workspace_notebook_ref(snapshot.notebook_ref)
-        notebook_notice = self._open_notebook_ref_from_snapshot(
-            snapshot.notebook_ref,
-            confirm_dirty=False,
-        )
-        self._set_status(
-            f"Loading workspace snapshot '{snapshot.display_name}' "
-            f"({len(charts)} chart(s))"
-        )
-        message = (
-            f"Workspace snapshot '{snapshot.display_name}' is loading. "
-            "Studies and viewport state restore after each chart opens."
-        )
-        if notebook_notice:
-            message += f"\n\n{notebook_notice}"
-        QMessageBox.information(
-            self,
-            "Load Workspace Snapshot",
-            message,
-        )
+            load_started = True
+            preflight_dialog.start_loading()
+            self._set_workspace_snapshot_load_busy(True)
+            QApplication.processEvents()
+
+            try:
+                workspace.load_workspace_snapshot_charts(charts, mode=load_mode)
+                workspace.set_visualization_mode(
+                    str(
+                        snapshot.workspace.get(
+                            "visualization_mode",
+                            HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4,
+                        )
+                        or HistoricalWorkspaceWidget.VIEW_MODE_SCROLL_4
+                    )
+                )
+            except Exception as exc:
+                self._set_status("Workspace snapshot load failed")
+                preflight_dialog.mark_failure(
+                    f"Could not start Workspace Snapshot load: {exc!r}"
+                )
+                return
+            finally:
+                self._set_workspace_snapshot_load_busy(False)
+
+            self._sync_view_mode_controls()
+            self._current_workspace_snapshot_id = snapshot.snapshot_id
+            self._set_current_workspace_notebook_ref(snapshot.notebook_ref)
+            notebook_notice = self._open_notebook_ref_from_snapshot(
+                snapshot.notebook_ref,
+                confirm_dirty=False,
+            )
+            self._set_status(
+                f"Loaded workspace snapshot '{snapshot.display_name}' "
+                f"({len(charts)} chart(s))"
+            )
+            message = (
+                f"Workspace Snapshot '{snapshot.display_name}' loaded. "
+                "Studies and viewport state restore after each chart opens."
+            )
+            if notebook_notice:
+                message += f"\n\n{notebook_notice}"
+            preflight_dialog.mark_success(message)
+
+        preflight_dialog.load_requested.connect(_start_snapshot_load)
+        if preflight_dialog.exec() != QDialog.Accepted and not load_started:
+            self._set_status("Workspace snapshot load cancelled")
+
+    def _set_workspace_snapshot_load_busy(self, busy: bool) -> None:
+        self._workspace_snapshot_load_in_progress = bool(busy)
+        if self._action_load_workspace_snapshot is not None:
+            self._action_load_workspace_snapshot.setEnabled(not busy)
 
     def _on_load_study_setup(self) -> None:
         chart_options = self._chart_options()

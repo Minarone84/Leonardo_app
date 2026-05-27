@@ -109,6 +109,7 @@ def test_workspace_snapshot_dialogs_have_required_concepts() -> None:
 
     assert "class SaveWorkspaceSnapshotDialog" in source
     assert "class LoadWorkspaceSnapshotDialog" in source
+    assert "class WorkspaceSnapshotLoadPreflightDialog" in source
     assert "_name_edit" in source
     assert "_description_edit" in source
     assert "Save as new Workspace Snapshot" in source
@@ -125,6 +126,9 @@ def test_workspace_snapshot_dialogs_have_required_concepts() -> None:
     assert "delete_snapshot" in source
     assert "_confirm_delete_snapshot" in source
     assert "The notebook will not be deleted." in source
+    assert "Loading this Workspace Snapshot will replace the current workspace layout." in source
+    assert "No notebook assigned" in source
+    assert "QProgressBar" in source
 
 
 def test_save_path_uses_snapshot_store_and_embedded_chart_export() -> None:
@@ -150,6 +154,11 @@ def test_load_path_preflights_and_uses_workspace_restore_helper() -> None:
     assert "evaluate_workspace_snapshot_compatibility" in load_body
     assert "compatibility_report.can_load" in load_body
     assert "format_compatibility_report" in load_body
+    assert "WorkspaceSnapshotLoadPreflightDialog" in load_body
+    assert "preflight_dialog.load_requested.connect" in load_body
+    assert "_confirm_dirty_notebook_action" in load_body
+    assert "_set_workspace_snapshot_load_busy(True)" in load_body
+    assert "QApplication.processEvents()" in load_body
     assert "workspace.load_workspace_snapshot_charts(charts, mode=load_mode)" in load_body
     assert "workspace.set_visualization_mode" in load_body
     assert "render_keys" not in load_body

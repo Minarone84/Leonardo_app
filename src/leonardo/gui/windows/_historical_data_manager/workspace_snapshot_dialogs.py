@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Mapping, Sequence
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
@@ -17,6 +17,8 @@ from PySide6.QtWidgets import (
     QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
+    QPushButton,
     QRadioButton,
     QTextEdit,
     QVBoxLayout,
@@ -101,6 +103,20 @@ def _chart_recap_lines(charts: Sequence[Mapping[str, Any]]) -> list[str]:
         )
         lines.extend(_study_recap_lines(study_items) or ["    No studies."])
     return lines
+
+
+def _notebook_assignment_text(notebook_ref: Mapping[str, Any] | None) -> str:
+    if not isinstance(notebook_ref, Mapping):
+        return "No notebook assigned"
+    notebook_name = str(notebook_ref.get("display_name", "") or "").strip()
+    notebook_id = str(notebook_ref.get("notebook_id", "") or "").strip()
+    if notebook_name and notebook_id:
+        return f"{notebook_name} ({notebook_id})"
+    if notebook_name:
+        return notebook_name
+    if notebook_id:
+        return notebook_id
+    return "Notebook reference present without display metadata"
 
 
 class SaveWorkspaceSnapshotDialog(QDialog):
@@ -567,3 +583,139 @@ class LoadWorkspaceSnapshotDialog(QDialog):
         if self._compatibility_provider is None:
             return ready_report()
         return self._compatibility_provider(snapshot, self.load_mode())
+
+
+class WorkspaceSnapshotLoadPreflightDialog(QDialog):
+    """Confirm Workspace Snapshot restore intent and display synchronous load state."""
+
+    load_requested = Signal()
+
+    def __init__(
+        self,
+        *,
+        snapshot: HistoricalWorkspaceSnapshot,
+        load_mode: str,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self._snapshot = snapshot
+        self._load_mode = str(load_mode or "").strip() or "replace"
+
+        self.setWindowTitle("Load Workspace Snapshot")
+        self.setModal(True)
+        self.setMinimumWidth(640)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 16, 16, 16)
+        root.setSpacing(10)
+
+        self._name_label = QLabel(f"Snapshot: {snapshot.display_name}", self)
+        self._name_label.setWordWrap(True)
+        root.addWidget(self._name_label)
+
+        description = str(snapshot.description or "").strip() or "No description."
+        self._description_label = QLabel(f"Description: {description}", self)
+        self._description_label.setWordWrap(True)
+        root.addWidget(self._description_label)
+
+        self._chart_count_label = QLabel(
+            f"Chart count: {len(snapshot.charts)}",
+            self,
+        )
+        self._chart_count_label.setWordWrap(True)
+        root.addWidget(self._chart_count_label)
+
+        self._notebook_label = QLabel(
+            f"Notebook assignment: {_notebook_assignment_text(snapshot.notebook_ref)}",
+            self,
+        )
+        self._notebook_label.setWordWrap(True)
+        root.addWidget(self._notebook_label)
+
+        warning_text = (
+            "Loading this Workspace Snapshot will replace the current workspace layout."
+            if self._load_mode == "replace"
+            else "Loading this Workspace Snapshot will add charts to the current workspace layout."
+        )
+        self._warning_label = QLabel(warning_text, self)
+        self._warning_label.setWordWrap(True)
+        root.addWidget(self._warning_label)
+
+        self._chart_summary = QPlainTextEdit(self)
+        self._chart_summary.setReadOnly(True)
+        self._chart_summary.setMaximumHeight(150)
+        self._chart_summary.setPlainText(
+            "\n".join(_chart_recap_lines(snapshot.charts) or ["No charts."])
+        )
+        root.addWidget(self._chart_summary)
+
+        self._progress = QProgressBar(self)
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self._progress.setFormat("Ready")
+        root.addWidget(self._progress)
+
+        self._status_label = QLabel("Review the Workspace Snapshot before loading.", self)
+        self._status_label.setWordWrap(True)
+        root.addWidget(self._status_label)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+
+        self._load_button = QPushButton("Load", self)
+        self._load_button.clicked.connect(self.load_requested.emit)
+        button_row.addWidget(self._load_button)
+
+        self._cancel_button = QPushButton("Cancel", self)
+        self._cancel_button.clicked.connect(self.reject)
+        button_row.addWidget(self._cancel_button)
+
+        self._ok_button = QPushButton("OK", self)
+        self._ok_button.setEnabled(False)
+        self._ok_button.clicked.connect(self.accept)
+        button_row.addWidget(self._ok_button)
+
+        root.addLayout(button_row)
+
+    def start_loading(self) -> None:
+        """Switch the dialog into non-cancellable synchronous loading state."""
+        self._load_button.setEnabled(False)
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.setText("Loading...")
+        self._ok_button.setEnabled(False)
+        self._progress.setRange(0, 0)
+        self._progress.setFormat("Loading Workspace Snapshot")
+        self._status_label.setText("Loading Workspace Snapshot...")
+
+    def mark_success(self, message: str) -> None:
+        """Show completed load state and enable dialog dismissal."""
+        self._load_button.setEnabled(False)
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.setText("Loaded")
+        self._ok_button.setEnabled(True)
+        self._progress.setRange(0, 1)
+        self._progress.setValue(1)
+        self._progress.setFormat("Complete")
+        self._status_label.setText(str(message or "Workspace Snapshot loaded."))
+
+    def mark_failure(self, message: str) -> None:
+        """Show failed load state and enable dialog dismissal."""
+        self._load_button.setEnabled(False)
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.setText("Load failed")
+        self._ok_button.setEnabled(True)
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self._progress.setFormat("Failed")
+        self._status_label.setText(str(message or "Workspace Snapshot load failed."))
+
+    def mark_cancelled(self, message: str) -> None:
+        """Show aborted pre-restore state and enable dialog dismissal."""
+        self._load_button.setEnabled(False)
+        self._cancel_button.setEnabled(False)
+        self._cancel_button.setText("Cancelled")
+        self._ok_button.setEnabled(True)
+        self._progress.setRange(0, 1)
+        self._progress.setValue(0)
+        self._progress.setFormat("Cancelled")
+        self._status_label.setText(str(message or "Workspace Snapshot load cancelled."))

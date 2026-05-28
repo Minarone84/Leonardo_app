@@ -347,6 +347,7 @@ Implemented baseline:
 - Saved artifact actions and Database Builder actions use the shared button rack so lists and details retain content width.
 - Data Manager-local text is enlarged and widget titles are bold while normal labels/buttons remain normal weight.
 - Saved Artifact Recipes and Saved Recipe Collections dialogs now use larger/readable list areas for long names.
+- Saved Artifact Recipes, Saved Artifact Recipe Collections, Edit Analysis Database Components, and Extend Analysis Database from Collection dialogs now open at 60% of usable screen width while preserving minimum-size policy.
 - CSV-backed historical artifacts use adjacent `.meta.json` sidecars for identity, metadata, lineage, fingerprint, and quality metadata.
 - OHLCV writes produce `candles.csv` plus `candles.meta.json`.
 - Derived indicator, oscillator, and construct saves produce `<instance_key>.csv` plus `<instance_key>.meta.json`.
@@ -465,6 +466,19 @@ Implemented baseline:
   - GUI displays service-produced plan/report data and does not parse `source_ohlcv.snapshot` or classify source drift.
   - Dataset-wide scanning, arbitrary dependency graph inference, background task/progress integration, and broader Update Manager entry points remain future work.
 
+- DMU selected artifact/database update workflow is accepted:
+  - DMU2 added `DataManagerSelectedUpdateService` with `plan_artifact_updates(...)`, `execute_artifact_update_plan(...)`, `plan_database_updates(...)`, and `execute_database_update_plan(...)`.
+  - The service plans saved indicator, oscillator, construct, and Analysis Database update status without GUI-owned classification.
+  - `OLD` means known stale/source-drifted and actionable; unknown or legacy lineage is not treated as OLD by default.
+  - Draft Analysis Databases classify as DRAFT, not OLD.
+  - Selected artifact execution delegates through existing recovery/regeneration/calculation ownership.
+  - Selected database execution rebuilds existing materialized databases through Analysis Database store/materialization ownership while preserving identity, display name, manifest recipe, feature sources, feature columns, and component list.
+  - DMU3 added Saved Indicators / Oscillators / Constructs controls for `Select All`, `Deselect All`, `Check Update`, and `Update Selected Artifacts`.
+  - DMU3 added Database Builder controls for `Select All`, `Deselect All`, `Check Update`, and `Update Selected Databases`.
+  - Check Update is read-only; Update Selected acts only on checked OLD/actionable items from the latest plan.
+  - Selected update dialogs provide preflight, synchronous running state, and terminal report without fake mid-operation cancellation.
+  - Raw OHLCV update/repair/acceptance remains Download Manager / OHLCV Maintenance.
+
 - M17 Study Environment recipe-to-database workflow is accepted:
   - Historical saved studies now carry `StudyUserMetadata` with `important`, `description`, and `dataset_role`.
   - RS7 supersedes the earlier visible chart-row/header metadata action placement. Per-study metadata is now selected while saving or updating a Study Environment.
@@ -542,9 +556,9 @@ Next direction:
 - Treat the current Historical Download Manager M7/M13 behavior as the accepted OHLCV ingestion and preliminary-validation baseline.
 - Treat OHLCV Maintenance as the explicit acceptance workflow for OHLCV validation, repair, source-invalid handling, source correction, and modified status.
 - Treat the current Research Suite chart/study M8 behavior plus M12 chart artifact hardening and M19 artifact-save recipe invariant as the accepted chart-session and artifact-calculation baseline.
-- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates, M14 source OHLCV provenance snapshots, M15 source-drift classification, M16 recipe-collection update workflow, and M17 Study Environment recipe export / recipe-collection draft database workflow as the accepted analysis-database baseline.
+- Treat the current Data Manager M4/M5/M6 behavior plus M13 loadability gates, M14 source OHLCV provenance snapshots, M15 source-drift classification, M16 recipe-collection update workflow, M17 Study Environment recipe export / selected-database recipe-collection extension, and DMU selected artifact/database update workflow as the accepted analysis-database baseline.
 - Integrate GUI release checks into CI/build packaging so shipped archives exclude `.git`, `.pytest_cache`, `__pycache__`, and `.pyc` files and preserve Data Manager ownership boundaries.
-- Design broader Data Manager update expansion for dataset-wide, artifact-specific, and database-specific entry points using the existing provenance, recovery, update-plan, regenerator, rebuilder, and store services without moving classification into GUI.
+- Design broader Data Manager update expansion for dataset-wide scanning using the existing provenance, recovery, update-plan, regenerator, rebuilder, and store services without moving classification into GUI.
 - Consider background task/progress integration for long update executions, while preserving explicit user confirmation and data-layer ownership.
 - Consider arbitrary dependency graph inference only as a future expansion beyond recipe collection order.
 - Consider deeper recipe freshness enforcement as future work; artifact sidecars already record non-identity recipe metadata from RS1.
@@ -612,6 +626,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.31: Data Manager selected update sync. Documents DMU1 60% usable-screen-width Data Manager dialogs, DMU2 `DataManagerSelectedUpdateService`, DMU3 selected artifact/database `Check Update` and `Update Selected...` controls, OLD/DRAFT semantics, synchronous selected-update reports, and unchanged raw-OHLCV/recipe-collection ownership boundaries. Final smoke remains pending.
+
 v0.30: Post-smoke correction sync. Documents DM3 selected-database-only collection extension, DM2 Data Manager readability/highlight polish, RS8 Style editor Apply semantics, RS9 notebook indicator refresh, RS10 Workspace Snapshot load preflight/loading, and DL1 Download Manager GUI-layer progress throttling. Final smoke remains pending.
 
 v0.29: Financial Tools Apply preflight sync. Documents the chart-panel preflight/progress dialog, `Input bars to process: N`, pre-execution cancel, indeterminate progress during synchronous Apply, dialog-visible success/failure completion, preserved controller/panel study-registration path, and unchanged chart-local/non-persistent boundaries.

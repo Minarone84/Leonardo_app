@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication, QComboBox, QFormLayout, QGridLayout, QPushButton, QSizePolicy
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtWidgets import QApplication, QComboBox, QDialog, QFormLayout, QGridLayout, QPushButton, QSizePolicy
 
 from leonardo.gui.windows._data_manager.analysis_database_builder_widget import AnalysisDatabaseBuilderWidget
 from leonardo.gui.windows._data_manager.tool_calculation_widget import ToolCalculationWidget
@@ -18,6 +18,7 @@ from leonardo.gui.windows._data_manager.dataset_selector_widget import (
     _dataset_label,
     _options_from_loadability_reports,
 )
+from leonardo.gui.windows._data_manager import dialog_geometry as dm_dialog_geometry
 from leonardo.gui.windows._data_manager.metadata_tools_widget import MetadataToolsWidget
 from leonardo.gui.windows.data_manager_window import DataManagerWindow
 
@@ -55,6 +56,11 @@ def _qapp() -> QApplication:
         return app
     _QAPP = QApplication([])
     return _QAPP
+
+
+class _FakeScreen:
+    def availableGeometry(self) -> QRect:
+        return QRect(10, 20, 2000, 1000)
 
 
 def _loadability_report(
@@ -539,14 +545,44 @@ def test_database_builder_collection_extension_is_selected_database_intent() -> 
     assert "materialize_database" not in extend_source
 
 
+def test_data_manager_dialog_initial_width_helper_uses_available_geometry(monkeypatch) -> None:
+    _qapp()
+    dialog = QDialog()
+    dialog.setMinimumSize(960, 560)
+    monkeypatch.setattr(
+        dm_dialog_geometry,
+        "_screen_for_dialog",
+        lambda _dialog: _FakeScreen(),
+    )
+
+    dm_dialog_geometry.apply_data_manager_dialog_initial_width(
+        dialog,
+        default_width=1080,
+        default_height=640,
+    )
+
+    assert dialog.width() == 1200
+    assert dialog.height() == 640
+    assert dialog.x() == 10 + (2000 - 1200) // 2
+    assert dialog.y() == 20 + (1000 - 640) // 2
+
+
 def test_component_editor_dialog_is_explicit_recipe_edit_surface() -> None:
     """The component dialog owns GUI intent and delegates recipe changes to the data-layer editor."""
     path = DATA_MANAGER / "analysis_database_component_dialog.py"
     source = _source(path)
+    geometry_source = _source(DATA_MANAGER / "dialog_geometry.py")
 
     assert "class AnalysisDatabaseComponentDialog" in source
-    assert "self.resize(1120, 700)" in source
     assert "self.setMinimumSize(1080, 660)" in source
+    assert "apply_data_manager_dialog_initial_width" in source
+    assert "default_width=1120" in source
+    assert "default_height=700" in source
+    assert "self.resize(1120, 700)" not in source
+    assert "DATA_MANAGER_DIALOG_INITIAL_WIDTH_RATIO = 0.60" in geometry_source
+    assert "availableGeometry()" in geometry_source
+    assert "parent.screen()" in geometry_source
+    assert "app.primaryScreen()" in geometry_source
     assert "AnalysisDatabaseComponentEditor" in source
     assert "load_saved_artifact_columns" in source
     assert "_EXISTING_COMPONENT_BRUSH" in source
@@ -843,18 +879,27 @@ def test_data_manager_has_study_setup_recipe_export_entry_point() -> None:
 def test_saved_recipe_dialogs_use_expanded_readable_list_areas() -> None:
     recipe_source = _source(DATA_MANAGER / "artifact_recipe_dialog.py")
     collection_source = _source(DATA_MANAGER / "artifact_recipe_collection_dialog.py")
+    geometry_source = _source(DATA_MANAGER / "dialog_geometry.py")
 
-    assert "self.resize(1080, 640)" in recipe_source
     assert "self.setMinimumSize(960, 560)" in recipe_source
+    assert "apply_data_manager_dialog_initial_width" in recipe_source
+    assert "default_width=1080" in recipe_source
+    assert "default_height=640" in recipe_source
+    assert "self.resize(1080, 640)" not in recipe_source
     assert "self._recipe_list.setMinimumWidth(480)" in recipe_source
     assert "self._recipe_list.setTextElideMode(Qt.TextElideMode.ElideNone)" in recipe_source
     assert "body.addWidget(list_group, 5)" in recipe_source
 
-    assert "self.resize(1180, 700)" in collection_source
     assert "self.setMinimumSize(1040, 620)" in collection_source
+    assert "apply_data_manager_dialog_initial_width" in collection_source
+    assert "default_width=1180" in collection_source
+    assert "default_height=700" in collection_source
+    assert "self.resize(1180, 700)" not in collection_source
     assert "self._collection_list.setMinimumWidth(460)" in collection_source
     assert "self._collection_list.setTextElideMode(Qt.TextElideMode.ElideNone)" in collection_source
     assert "self._recipe_list.setMinimumHeight(260)" in collection_source
     assert "self._recipe_list.setTextElideMode(Qt.TextElideMode.ElideNone)" in collection_source
     assert "body.addWidget(collection_group, 4)" in collection_source
     assert "body.addWidget(detail_group, 5)" in collection_source
+    assert "DATA_MANAGER_DIALOG_INITIAL_WIDTH_RATIO = 0.60" in geometry_source
+    assert "availableGeometry()" in geometry_source

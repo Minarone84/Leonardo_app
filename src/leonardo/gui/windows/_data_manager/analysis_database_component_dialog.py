@@ -28,6 +28,9 @@ from leonardo.data.historical.analysis_database_contracts import AnalysisDatabas
 from leonardo.gui.windows._data_manager.analysis_database_feature_builder import (
     build_manifest_features_from_saved_columns,
 )
+from leonardo.gui.windows._data_manager.dialog_geometry import (
+    apply_data_manager_dialog_initial_width,
+)
 from leonardo.gui.windows._data_manager.saved_artifact_columns import (
     SavedArtifactColumn,
     load_saved_artifact_columns,
@@ -74,8 +77,12 @@ class AnalysisDatabaseComponentDialog(QDialog):
         self._editor = AnalysisDatabaseComponentEditor(historical_root=self._historical_root)
 
         self.setWindowTitle("Edit Analysis Database Components")
-        self.resize(1120, 700)
         self.setMinimumSize(1080, 660)
+        apply_data_manager_dialog_initial_width(
+            self,
+            default_width=1120,
+            default_height=700,
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)

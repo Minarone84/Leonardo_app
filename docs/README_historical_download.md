@@ -1,7 +1,7 @@
 🧠 Leonardo — Historical Download Subsystem (Updated)
 
 Date: 02/26/2026
-Updated: 2026-05-25
+Updated: 2026-05-28
 Scope: Connection + Historical Data Layer
 Status: Functional, stable, integrated with Core runtime, preliminary validation reporting, and explicit OHLCV acceptance workflow
 
@@ -180,6 +180,8 @@ Generated derived artifacts and Analysis Database materializations record accept
 
 Artifact recipe lifecycle is separate from saved artifact value storage. `ArtifactRecipeStore` owns reusable single-recipe JSON files, while `ArtifactRecipeCollectionStore` owns ordered collection JSON files with embedded recipe snapshots and optional dependency/source-database metadata. Recovery services may inspect these files to plan or request regeneration, but CSV artifact writing remains owned by the calculation/persistence path and Analysis Database materialization remains store-owned.
 The Data Manager recipe-collection update workflow can plan and execute selected/all actionable artifact regeneration and linked Analysis Database rebuild actions after OHLCV is accepted. It uses the existing recovery and rebuild services; ingestion/download workflows do not execute those updates.
+
+Data Manager selected-update workflows use `DataManagerSelectedUpdateService` for checked saved artifacts and checked Analysis Databases. `Check Update` is read-only and reports service-produced statuses; `Update Selected Artifacts` and `Update Selected Databases` execute only checked OLD/actionable actions from the latest plan. These workflows do not change downloader/provider behavior, raw OHLCV acceptance, OHLCV metadata validation status, or OHLCV Maintenance ownership.
 
 Data Manager can also extend an existing selected Analysis Database from recipe collections when the expected artifacts are already current and resolved. That workflow uses recovery status and Analysis Database services; Database seed creator remains the only user-facing Analysis Database creation path. No missing-artifact calculation, recipe update execution, `dataframe.csv` materialization, or OHLCV ingestion/acceptance rule change is part of that flow.
 
@@ -367,6 +369,7 @@ artifact_recipe_collections/{collection_id}.json
 
 Recipe recovery follows strict ownership: the planner inspects, including source-drift checks from recorded `source_ohlcv.snapshot`; the regenerator delegates recipe execution; and the database rebuilder delegates materialization to `AnalysisDatabaseStore`. Status checks remain read-only and do not regenerate artifacts or rebuild databases.
 The recipe-collection update workflow wraps those same services into `DataManagerUpdateService` plans and confirmed executions. Its scope remains saved recipe collections, not dataset-wide update scanning or background update tasks.
+Selected saved artifact and selected Analysis Database updates wrap the same ownership model through `DataManagerSelectedUpdateService`. OLD means known stale and actionable, DRAFT databases are not OLD, and unknown/legacy lineage is reported for review rather than updated optimistically.
 
 ------------------------------------------------------------
 7. GUI — Historical Download Window

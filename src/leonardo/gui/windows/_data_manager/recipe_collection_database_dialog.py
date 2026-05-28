@@ -38,6 +38,9 @@ from leonardo.data.historical.recipe_collection_database_service import (
     RecipeCollectionDatabaseApplyReport,
     RecipeCollectionDatabaseService,
 )
+from leonardo.gui.windows._data_manager.dialog_geometry import (
+    apply_data_manager_dialog_initial_width,
+)
 
 
 class RecipeCollectionDatabaseDialog(QDialog):
@@ -80,8 +83,12 @@ class RecipeCollectionDatabaseDialog(QDialog):
         self._current_plan: RecipeCollectionDatabasePlan | None = None
 
         self.setWindowTitle("Extend Analysis Database from Collection")
-        self.resize(1240, 760)
         self.setMinimumSize(1080, 660)
+        apply_data_manager_dialog_initial_width(
+            self,
+            default_width=1240,
+            default_height=760,
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)

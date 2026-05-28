@@ -24,6 +24,9 @@ from leonardo.data.historical.artifact_recipe_collection_store import (
     ArtifactRecipeCollectionStore,
 )
 from leonardo.data.naming import MarketId
+from leonardo.gui.windows._data_manager.dialog_geometry import (
+    apply_data_manager_dialog_initial_width,
+)
 
 
 class ArtifactRecipeCollectionDialog(QDialog):
@@ -56,8 +59,12 @@ class ArtifactRecipeCollectionDialog(QDialog):
         self._current_collection: ArtifactRecipeCollection | None = None
 
         self.setWindowTitle("Saved Artifact Recipe Collections")
-        self.resize(1180, 700)
         self.setMinimumSize(1040, 620)
+        apply_data_manager_dialog_initial_width(
+            self,
+            default_width=1180,
+            default_height=700,
+        )
 
         root = QVBoxLayout(self)
         root.setContentsMargins(12, 12, 12, 12)

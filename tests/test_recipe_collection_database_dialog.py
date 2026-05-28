@@ -391,6 +391,10 @@ def test_recipe_collection_database_entry_point_and_boundaries() -> None:
     assert "RecipeCollectionDatabaseService" in dialog_source
     assert "target_database" in dialog_source
     assert "Confirm Database Extension" in dialog_source
+    assert "apply_data_manager_dialog_initial_width" in dialog_source
+    assert "default_width=1240" in dialog_source
+    assert "default_height=760" in dialog_source
+    assert "self.resize(1240, 760)" not in dialog_source
     assert "extend_database_from_plan(" in dialog_source
     assert "create_database_from_plan(" not in dialog_source
     assert "Create Draft Database" not in dialog_source

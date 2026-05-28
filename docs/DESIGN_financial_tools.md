@@ -1,8 +1,8 @@
 # DESIGN — Financial Tools System
 
 Leonardo
-Version: v1.20
-Date: 2026-05-26
+Version: v1.21
+Date: 2026-05-28
 Scope: Indicators, Oscillators, Constructs, Tool Specs, Naming Policy, Controller Integration, Panel Integration, Workspace Integration, Chart Application
 
 ---
@@ -461,7 +461,7 @@ Save-only artifact calculation through Data Manager requires accepted OHLCV befo
 
 Data Manager lineage hardening is implemented for save-only artifact calculation. Saved derived artifact sidecars record the accepted source OHLCV provenance under `source_ohlcv.snapshot`, including source validation status, quality status, validation fingerprint, current CSV fingerprint, capture timestamp, and source-correction provenance when applicable. The source snapshot is not part of tool identity, naming, params, bindings, or recipe identity. Recovery planning can compare the recorded snapshot against current accepted OHLCV truth and classify source-drifted artifacts as stale. Regeneration remains an explicit recovery action through the existing planner/regenerator/executor path; source-drift classification does not change financial-tool identity, recipe identity, or apply/save semantics.
 
-Data Manager recipe-collection update planning now consumes that recovery classification for saved recipe collections. `DataManagerUpdateService` may plan and execute selected/all actionable regeneration actions, but regeneration still flows through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`, preserving the runtime/persistence boundary and the normal save-only calculation path for artifacts. Broader dataset-wide update orchestration remains future work.
+Data Manager recipe-collection update planning consumes that recovery classification for saved recipe collections. `DataManagerUpdateService` may plan and execute selected/all actionable recipe-collection regeneration actions, but regeneration still flows through `ArtifactRecoveryRegenerator` / `ArtifactRecipeExecutor` / `ArtifactCalculationService`, preserving the runtime/persistence boundary and the normal save-only calculation path for artifacts. `DataManagerSelectedUpdateService` adds selected saved artifact and selected Analysis Database update planning/execution: `Check Update` is read-only, `Update Selected Artifacts` executes only checked OLD/actionable artifact actions, and selected database rebuilds remain Analysis Database store/materialization-owned. Broader dataset-wide update orchestration remains future work.
 
 Research Suite artifact save persists or reuses the corresponding recipe in the Data Manager-visible `ArtifactRecipeStore(historical_root=...)` before saving the artifact values. Equivalent recipe payloads reuse deterministic recipe identity, and artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as non-identity recipe metadata. Applying a tool/study remains chart-local and does not persist recipes or artifacts.
 

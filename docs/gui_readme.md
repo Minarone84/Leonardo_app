@@ -1,7 +1,7 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.26
-Date: 2026-05-26
+Version: v3.29
+Date: 2026-05-28
 
 ## Overview
 
@@ -23,7 +23,7 @@ It is built around a modular chart engine that supports:
 - per-study metadata controls in Save Study Environment / Update existing Study Environment
 - Save as new / Update existing flows for saved Study Environments, Workspace Snapshots, and Notebooks
 - Research Suite managers for saved Study Environments and Workspace Snapshots
-- Data Manager Study Environment to recipe export and recipe collection to draft database workflows
+- Data Manager Study Environment to recipe export, selected Analysis Database extension from recipe collections, and selected artifact/database update workflows
 - OHLCV Maintenance for explicit validation, repair, source-invalid reporting, and source correction
 - accepted OHLCV gating for Research Suite and Data Manager workflows
 - centralized runtime diagnostics
@@ -276,6 +276,8 @@ Responsibilities include:
 - creating recipes from saved Study Environments through `Create Recipes from Study Environment...`;
 - checking recipe-collection recovery status, regenerating planner-actionable artifacts, and rebuilding linked Analysis Databases through data-layer recovery services;
 - planning and executing recipe-collection-scoped updates through `Plan Updates...` and `DataManagerUpdateService`;
+- planning selected saved artifact updates through `Check Update` and executing checked OLD/actionable artifact actions through `Update Selected Artifacts`;
+- planning selected Analysis Database updates through `Check Update` and executing checked OLD/actionable database rebuild actions through `Update Selected Databases`;
 - extending a selected existing Analysis Database from current recipe-collection artifacts through `Extend Database from Collection...`;
 - previewing tabular artifacts in a read-only dataframe view;
 - exposing explicit data-check / metadata-restore workflows.
@@ -304,10 +306,15 @@ Current Analysis Database UI behavior:
 - recipe collection database extension appends resolved components only through `RecipeCollectionDatabaseService.extend_database_from_plan(...)` after `Confirm Database Extension`;
 - the GUI no longer offers collection-driven database creation; the retained backend create method remains a data-layer compatibility contract;
 - missing, stale, source-drifted, freshness-unknown, blocked, duplicate-column, and cross-market collection artifacts remain visible as blocked plan items and are not silently included;
+- Saved Indicators / Oscillators / Constructs exposes `Select All`, `Deselect All`, `Check Update`, and `Update Selected Artifacts` for checked saved artifact rows;
+- Database Builder exposes `Select All`, `Deselect All`, `Check Update`, and `Update Selected Databases` for checked Analysis Database rows;
+- selected update `Check Update` displays service-produced OLD/CURRENT/UNKNOWN/BLOCKED/ERROR statuses for artifacts and OLD/CURRENT/DRAFT/UNKNOWN/BLOCKED/ERROR statuses for databases without mutating files;
+- selected update execution acts only on checked OLD/actionable items from the latest plan; DRAFT databases are not OLD;
 - rename and delete are exposed as user actions, but durable mutation is store-owned;
 - Data Manager opens maximized and uses a compact layout where the top row contains Dataset and Calculate and Save Tool Outputs, the middle row contains DataFrame Preview and Saved Indicators / Oscillators / Constructs, and the lower area keeps Data Checks / Metadata Tools plus Database seed creator on the left with Database Builder on the right;
 - main Data Manager widgets use the shared right-side `make_button_rack(...)` action layout with a 260px minimum action rack width;
 - the artifact calculator popup opens with a 900x620 minimum size so Calculate and Save Tool Outputs controls remain readable;
+- Saved Artifact Recipes, Saved Artifact Recipe Collections, Edit Analysis Database Components, and Extend Analysis Database from Collection dialogs open at 60% of usable screen width and are centered/fitted against available geometry while preserving their minimum sizes;
 - DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack;
 - saved artifact actions use the shared button rack so the list retains content width;
 - Database Builder gives the database list and manifest/details area equal display space;
@@ -330,6 +337,21 @@ Current artifact recipe / recovery UI behavior:
 - Data Manager refreshes recipe, recipe collection, saved artifact, and database lists after successful persistence, recovery, rebuild, or selected-database collection updates where relevant.
 - Dataframe materialization remains outside GUI ownership.
 
+Current selected artifact/database update UI behavior:
+
+- `DataManagerSelectedUpdateService` owns selected artifact and Analysis Database planning/execution truth;
+- selected saved artifact planning covers checked indicators, oscillators, and constructs from the Saved Indicators / Oscillators / Constructs widget;
+- selected Analysis Database planning covers checked Database Builder rows;
+- `Check Update` is read-only and marks GUI rows from service-produced status/actionability only;
+- `Update Selected Artifacts` regenerates only checked OLD/actionable saved artifacts from the latest plan through the selected-update service;
+- `Update Selected Databases` rebuilds only checked OLD/actionable materialized Analysis Databases from the latest plan through the selected-update service;
+- database update preserves `database_id`, folder identity, display name, manifest recipe, feature sources, feature columns, and component list;
+- selected database update does not add, remove, replace, create, or rename Analysis Databases;
+- stale source artifacts block database rebuild rather than being silently regenerated by the database update action;
+- selected update dialogs provide preflight, synchronous running state, and terminal reports; OK is available only after terminal state;
+- no fake mid-operation cancellation is offered for synchronous calculation or materialization;
+- status markings are display state from the latest check and are not written into artifact or database metadata; refreshing lists may clear or refresh those markings.
+
 Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the same Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store. Artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as recipe metadata.
 
 Study application remains chart-local and non-persistent. Saving a Study Environment or Workspace Snapshot does not directly persist recipes.
@@ -351,20 +373,23 @@ It must not:
 - manually rewrite Analysis Database manifests or move/delete database folders;
 - silently mutate valid artifact metadata;
 - classify artifact recovery state locally;
+- classify selected update state locally;
 - classify dataset geography locally;
 - map recipe collection snapshots to Analysis Database components locally;
 - classify OHLCV loadability locally;
+- parse or compare `source_ohlcv.snapshot` locally;
 - regenerate artifacts without the data-layer recovery/executor boundary;
 - rebuild linked Analysis Databases outside `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`;
+- rebuild selected Analysis Databases outside `DataManagerSelectedUpdateService`;
 - consume checked artifact columns inside Database Builder;
 - replace Analysis Database components during build/rebuild;
 - execute Plan Updates from the recipe collection database create/extend dialog.
 
 Data Manager maintenance actions such as metadata backfill are restore-only operations. They may recreate missing or unreadable `.meta.json` sidecars from existing CSV files, but they must not rewrite CSV data and must not be treated as the normal save path. Analysis Database create, rename, delete, build, rebuild, and explicit component-edit operations must go through the appropriate data-layer service, because `manifest.json` is the metadata-sidecar equivalent for the folder-backed `dataframe.csv` artifact. GUI release checks enforce that Database Builder does not consume artifact selections, does not call feature-replacement rebuild APIs, keeps build/rebuild separate and manifest-driven, and keeps main Data Manager actions in the shared right-side button rack layout.
 
-Data Manager lineage hardening, source-drift classification, and update planning are data-layer owned. Generated derived artifact sidecars and Analysis Database materialization metadata receive `source_ohlcv.snapshot` through the save/materialization services, including source validation, fingerprint, and source-correction provenance when applicable. `ArtifactRecoveryPlanner`, `AnalysisDatabaseStore`, and `DataManagerUpdateService` may report source-drift and update-plan status to GUI recovery/update views, but the GUI does not parse, create, display, compare, or classify this snapshot.
+Data Manager lineage hardening, source-drift classification, and update planning are data-layer owned. Generated derived artifact sidecars and Analysis Database materialization metadata receive `source_ohlcv.snapshot` through the save/materialization services, including source validation, fingerprint, and source-correction provenance when applicable. `ArtifactRecoveryPlanner`, `AnalysisDatabaseStore`, `DataManagerUpdateService`, and `DataManagerSelectedUpdateService` may report source-drift and update-plan status to GUI recovery/update views, but the GUI does not parse, create, display, compare, or classify this snapshot.
 
-The implemented update UI is recipe-collection scoped and follows the existing `ToolCalculationWidget` local data-layer service pattern rather than adding CoreBridge update-plan APIs. It is not a dataset-wide Update Manager dashboard, arbitrary dependency graph workflow, or background task/progress monitor.
+The implemented update UI covers recipe-collection scoped plans plus explicit selected saved artifact and selected Analysis Database plans. These workflows follow local Data Manager data-layer service patterns rather than adding CoreBridge update-plan APIs. They are not a dataset-wide Update Manager dashboard, arbitrary dependency graph workflow, or background task/progress monitor.
 
 Study Environment recipe export and selected-database collection extension are also local Data Manager workflows that display data-layer plans and reports.
 
@@ -1484,7 +1509,7 @@ The GUI currently provides:
 - centralized Runtime Inspector diagnostics
 - OHLCV Maintenance for explicit validation, repair, source-invalid reporting, provenance-recorded source correction, and modified status display
 - Research Suite chart creation limited to accepted `ok` / `modified` OHLCV datasets through CoreBridge/HistoricalDatasetService loadability gates
-- managed Data Manager window for accepted-OHLCV dataset/artifact preparation, metadata-aware Analysis Database seed creation, selected Analysis Database extension from recipe collections, separate build/rebuild, explicit component editing, recipe/collection recovery, compact maximized M6F layout, readable dialog/button rack polish, rename/delete, and read-only preview workflows
+- managed Data Manager window for accepted-OHLCV dataset/artifact preparation, metadata-aware Analysis Database seed creation, selected Analysis Database extension from recipe collections, selected artifact/database update workflows, separate build/rebuild, explicit component editing, recipe/collection recovery, compact maximized M6F layout, 60% usable-width dialog polish, rename/delete, and read-only preview workflows
 - Workspace Snapshot load preflight with indeterminate synchronous loading state
 - Download Manager progress throttling/coalescing in the GUI layer
 - polling-based runtime visibility
@@ -1620,6 +1645,7 @@ Recommended tooling (in the GUI package):
 
 ## Change log
 
+- **v3.29 (2026-05-28)** - Data Manager selected update sync: documented 60% usable-screen-width Data Manager dialogs, `DataManagerSelectedUpdateService`, selected artifact/database `Check Update` and `Update Selected...` controls, OLD/DRAFT status semantics, synchronous preflight/report dialogs, and unchanged GUI/data ownership boundaries.
 - **v3.28 (2026-05-28)** - Post-smoke correction sync: documented DM3 extend-only recipe collection database workflow, DM2 Data Manager dialog/highlight polish, RS8 Style editor Apply behavior, RS9 notebook indicator refresh, RS10 Workspace Snapshot load preflight/loading, and DL1 Download Manager GUI-layer progress throttling.
 - **v3.27 (2026-05-26)** - Research Suite notebook UX RS5 sync: documented notebook dirty-state protection, Save / Don't Save / Cancel close/replace flow, rich-text formatting palettes for notebook free-text fields, plain-text compatibility, and optional parallel HTML fields.
 - **v3.26 (2026-05-26)** - Research Suite RS1-RS4 sync: documented Research Suite terminology, artifact-save recipe persistence and sidecar recipe metadata, notebook Save as new / Update existing, and Study Environment / Workspace Snapshot managers with read-only embedded snapshot study metadata.

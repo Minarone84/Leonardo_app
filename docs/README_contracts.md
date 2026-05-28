@@ -1,7 +1,7 @@
 # Financial Tools Contract System
 
-Version: v1.5
-Date: 2026-05-26
+Version: v1.6
+Date: 2026-05-28
 
 ## Purpose
 
@@ -140,6 +140,8 @@ Normal CSV-backed artifacts use:
 This applies to OHLCV, indicator, oscillator, and construct CSV artifacts. Analysis Databases use `manifest.json` as the metadata sidecar for `dataframe.csv`.
 
 Analysis Database creation is a user-facing `Database seed creator` workflow. Recipe collections may extend a selected Analysis Database through C2 planning and `RecipeCollectionDatabaseService.extend_database_from_plan(...)`, but the GUI does not expose collection-driven database creation. Extension does not materialize databases, calculate artifacts, or execute recipes.
+
+Selected artifact and Analysis Database updates are planned through `DataManagerSelectedUpdateService`, not by GUI-side sidecar or manifest policy. `Check Update` is read-only and reports service-owned statuses. `Update Selected Artifacts` may execute only checked OLD/actionable artifact actions through the existing recovery/regeneration/calculation path. `Update Selected Databases` may rebuild only checked OLD/actionable materialized databases through Analysis Database materialization ownership; DRAFT is not OLD, components are not added/removed/replaced, and unknown lineage is not treated as actionable by default.
 
 The sidecar may include:
 

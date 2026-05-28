@@ -21,8 +21,25 @@ from PySide6.QtWidgets import (
 from leonardo.data.historical.analysis_database_contracts import AnalysisDatabaseManifest, AnalysisDatabaseSummary
 from leonardo.data.historical.analysis_database_store import AnalysisDatabaseStore
 from leonardo.data.historical.artifact_metadata_naming import format_ts_ms_rome, format_ts_ms_utc
+from leonardo.data.historical.data_manager_selected_update_service import (
+    DataManagerSelectedUpdateService,
+    SelectedAnalysisDatabaseUpdateRef,
+    SelectedDatabaseUpdatePlan,
+)
 from leonardo.data.naming import MarketId
 from leonardo.gui.windows._data_manager.button_rack import make_button_rack
+from leonardo.gui.windows._data_manager.selected_update_dialog import (
+    SelectedUpdateDialog,
+    selected_execution_report_text,
+    selected_plan_report_text,
+    selected_update_preflight_text,
+)
+
+
+_BASE_LABEL_ROLE = Qt.UserRole + 1
+_UPDATE_STATUS_ROLE = Qt.UserRole + 2
+_UPDATE_ACTIONABLE_ROLE = Qt.UserRole + 3
+_UPDATE_ITEM_ID_ROLE = Qt.UserRole + 4
 
 
 class AnalysisDatabaseListWidget(QGroupBox):
@@ -46,8 +63,12 @@ class AnalysisDatabaseListWidget(QGroupBox):
         super().__init__("Database Builder", parent)
         self._historical_root = Path(historical_root)
         self._store = AnalysisDatabaseStore(historical_root=self._historical_root)
+        self._selected_update_service = DataManagerSelectedUpdateService(
+            historical_root=self._historical_root,
+        )
         self._market: Optional[MarketId] = None
         self._selected_manifest: Optional[AnalysisDatabaseManifest] = None
+        self._latest_update_plan: SelectedDatabaseUpdatePlan | None = None
 
         root = QHBoxLayout(self)
         root.setContentsMargins(10, 14, 10, 10)
@@ -73,6 +94,26 @@ class AnalysisDatabaseListWidget(QGroupBox):
             "Check one database to select it for actions."
         )
         content.addWidget(self._details, 1)
+
+        self._select_all_button = QPushButton("Select All", self)
+        self._select_all_button.setEnabled(False)
+        self._select_all_button.clicked.connect(self.select_all_databases)
+
+        self._deselect_all_button = QPushButton("Deselect All", self)
+        self._deselect_all_button.setEnabled(False)
+        self._deselect_all_button.clicked.connect(self.deselect_all_databases)
+
+        self._check_update_button = QPushButton("Check Update", self)
+        self._check_update_button.setToolTip("Check update status for checked Analysis Database rows.")
+        self._check_update_button.setEnabled(False)
+        self._check_update_button.clicked.connect(self._check_selected_database_updates)
+
+        self._update_selected_button = QPushButton("Update Selected Databases", self)
+        self._update_selected_button.setToolTip(
+            "Enabled only when the latest update check marks at least one checked database as OLD/actionable."
+        )
+        self._update_selected_button.setEnabled(False)
+        self._update_selected_button.clicked.connect(self._update_selected_databases)
 
         self._build_button = QPushButton("Build Selected Database", self)
         self._build_button.setToolTip(
@@ -123,6 +164,10 @@ class AnalysisDatabaseListWidget(QGroupBox):
         self._refresh_button.clicked.connect(self.refresh)
         root.addLayout(
             make_button_rack(
+                self._select_all_button,
+                self._deselect_all_button,
+                self._check_update_button,
+                self._update_selected_button,
                 self._build_button,
                 self._rebuild_button,
                 self._edit_components_button,
@@ -139,12 +184,27 @@ class AnalysisDatabaseListWidget(QGroupBox):
         self._market = market
         self.refresh()
 
+    def select_all_databases(self) -> None:
+        self._list.blockSignals(True)
+        for row in range(self._list.count()):
+            self._list.item(row).setCheckState(Qt.Checked)
+        self._list.blockSignals(False)
+        self._refresh_action_buttons()
+
+    def deselect_all_databases(self) -> None:
+        self._list.blockSignals(True)
+        for row in range(self._list.count()):
+            self._list.item(row).setCheckState(Qt.Unchecked)
+        self._list.blockSignals(False)
+        self._refresh_action_buttons()
+
     def refresh(self) -> None:
         self._list.blockSignals(True)
         self._list.clear()
         self._list.blockSignals(False)
         self._details.clear()
         self._selected_manifest = None
+        self._latest_update_plan = None
         self.database_selected.emit(None)
         self._refresh_action_buttons()
 
@@ -169,8 +229,13 @@ class AnalysisDatabaseListWidget(QGroupBox):
         )
         self._list.blockSignals(True)
         for summary in summaries:
-            item = QListWidgetItem(self._summary_label(summary), self._list)
+            label = self._summary_label(summary)
+            item = QListWidgetItem(label, self._list)
             item.setData(Qt.UserRole, summary)
+            item.setData(_BASE_LABEL_ROLE, label)
+            item.setData(_UPDATE_STATUS_ROLE, None)
+            item.setData(_UPDATE_ACTIONABLE_ROLE, False)
+            item.setData(_UPDATE_ITEM_ID_ROLE, None)
             item.setToolTip(str(summary.manifest_path))
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
             item.setCheckState(Qt.Unchecked)
@@ -448,6 +513,215 @@ class AnalysisDatabaseListWidget(QGroupBox):
         self._rename_button.setEnabled(has_single_checked)
         self._delete_button.setEnabled(has_single_checked)
         self._preview_button.setEnabled(has_single_checked and is_materialized)
+        self._select_all_button.setEnabled(self._list.count() > 0)
+        self._deselect_all_button.setEnabled(checked_count > 0)
+        self._check_update_button.setEnabled(checked_count > 0)
+        self._update_selected_button.setEnabled(bool(self._checked_actionable_database_action_ids()))
+
+    def _check_selected_database_updates(self) -> None:
+        summaries = self._checked_summaries()
+        if not summaries:
+            QMessageBox.information(
+                self,
+                "Check Update",
+                "Check one or more Analysis Database rows before checking update status.",
+            )
+            self._refresh_action_buttons()
+            return
+
+        refs = [self._database_update_ref(summary) for summary in summaries]
+        dialog = SelectedUpdateDialog(
+            title="Check Selected Database Updates",
+            summary=selected_update_preflight_text(
+                selected_count=len(refs),
+                operation="Check update status for selected Analysis Databases.",
+            ),
+            item_names=[summary.display_name for summary in summaries],
+            confirm_label="Check Update",
+            parent=self.window(),
+        )
+        dialog.confirmed.connect(
+            lambda dialog=dialog, refs=tuple(refs): self._run_database_update_check(
+                dialog=dialog,
+                refs=refs,
+            )
+        )
+        dialog.exec()
+
+    def _run_database_update_check(
+        self,
+        *,
+        dialog: SelectedUpdateDialog,
+        refs: tuple[SelectedAnalysisDatabaseUpdateRef, ...],
+    ) -> None:
+        dialog.set_running("Checking selected Analysis Database update status...")
+        try:
+            plan = self._selected_update_service.plan_database_updates(refs)
+        except Exception as exc:
+            message = f"Failed to check selected database updates: {exc!r}"
+            self.status_message.emit(message)
+            dialog.set_terminal_report(message)
+            QMessageBox.critical(self, "Selected Database Update Check Failed", message)
+            return
+
+        self._latest_update_plan = plan
+        self._apply_database_update_plan(plan)
+        self._refresh_action_buttons()
+        dialog.set_terminal_report(selected_plan_report_text(plan))
+        self.status_message.emit("Selected Analysis Database update check complete")
+
+    def _update_selected_databases(self) -> None:
+        if self._latest_update_plan is None:
+            QMessageBox.information(
+                self,
+                "Update Selected Databases",
+                "Run Check Update before updating selected Analysis Databases.",
+            )
+            self._refresh_action_buttons()
+            return
+
+        action_ids = self._checked_actionable_database_action_ids()
+        if not action_ids:
+            QMessageBox.information(
+                self,
+                "Update Selected Databases",
+                "No checked database is marked OLD/actionable by the latest update check.",
+            )
+            self._refresh_action_buttons()
+            return
+
+        checked_count = len(self._checked_summaries())
+        dialog = SelectedUpdateDialog(
+            title="Update Selected Databases",
+            summary=selected_update_preflight_text(
+                selected_count=checked_count,
+                actionable_count=len(action_ids),
+                operation="Rebuild checked OLD/actionable Analysis Databases through the selected update service.",
+            ),
+            item_names=self._database_action_labels(action_ids),
+            confirm_label="Update Selected Databases",
+            parent=self.window(),
+        )
+        dialog.confirmed.connect(
+            lambda dialog=dialog, action_ids=tuple(action_ids): self._run_database_update_execution(
+                dialog=dialog,
+                selected_action_ids=action_ids,
+            )
+        )
+        dialog.exec()
+
+    def _run_database_update_execution(
+        self,
+        *,
+        dialog: SelectedUpdateDialog,
+        selected_action_ids: tuple[str, ...],
+    ) -> None:
+        if self._latest_update_plan is None:
+            dialog.set_terminal_report("No selected database update plan is available.")
+            return
+
+        dialog.set_running("Updating selected OLD/actionable Analysis Databases...")
+        try:
+            report = self._selected_update_service.execute_database_update_plan(
+                self._latest_update_plan,
+                selected_action_ids=selected_action_ids,
+            )
+        except Exception as exc:
+            message = f"Failed to update selected databases: {exc!r}"
+            self.status_message.emit(message)
+            dialog.set_terminal_report(message)
+            QMessageBox.critical(self, "Selected Database Update Failed", message)
+            return
+
+        dialog.set_terminal_report(selected_execution_report_text(report))
+        self.status_message.emit("Selected Analysis Database update execution complete")
+        self.refresh()
+
+    def _database_update_ref(self, summary: AnalysisDatabaseSummary) -> SelectedAnalysisDatabaseUpdateRef:
+        return SelectedAnalysisDatabaseUpdateRef(
+            exchange=summary.market.exchange,
+            market_type=summary.market.market_type,
+            symbol=summary.market.symbol,
+            timeframe=summary.market.timeframe,
+            database_id=summary.database_id,
+            display_name=summary.display_name,
+        )
+
+    def _apply_database_update_plan(self, plan: SelectedDatabaseUpdatePlan) -> None:
+        items_by_database_id = {item.database_id: item for item in plan.items}
+        self._list.blockSignals(True)
+        for row in range(self._list.count()):
+            item = self._list.item(row)
+            summary = item.data(Qt.UserRole)
+            if not isinstance(summary, AnalysisDatabaseSummary):
+                continue
+            plan_item = items_by_database_id.get(summary.database_id)
+            if plan_item is None:
+                self._set_database_item_update_state(item, None, False, None)
+            else:
+                self._set_database_item_update_state(
+                    item,
+                    plan_item.status,
+                    plan_item.actionable,
+                    plan_item.item_id,
+                )
+        self._list.blockSignals(False)
+
+    def _set_database_item_update_state(
+        self,
+        item: QListWidgetItem,
+        status: str | None,
+        actionable: bool,
+        item_id: str | None,
+    ) -> None:
+        base_label = str(item.data(_BASE_LABEL_ROLE) or item.text())
+        item.setData(_UPDATE_STATUS_ROLE, status)
+        item.setData(_UPDATE_ACTIONABLE_ROLE, bool(actionable))
+        item.setData(_UPDATE_ITEM_ID_ROLE, item_id)
+        if status:
+            item.setText(f"[{status.upper()}] {base_label}")
+        else:
+            item.setText(base_label)
+
+    def _checked_actionable_database_action_ids(self) -> tuple[str, ...]:
+        if self._latest_update_plan is None:
+            return ()
+        checked_item_ids = self._checked_actionable_database_item_ids()
+        if not checked_item_ids:
+            return ()
+        return tuple(
+            action.action_id
+            for action in self._latest_update_plan.actions
+            if action.item_id in checked_item_ids
+        )
+
+    def _checked_actionable_database_item_ids(self) -> set[str]:
+        item_ids: set[str] = set()
+        for row in range(self._list.count()):
+            item = self._list.item(row)
+            if item.checkState() != Qt.Checked:
+                continue
+            if item.data(_UPDATE_STATUS_ROLE) != "old":
+                continue
+            if not bool(item.data(_UPDATE_ACTIONABLE_ROLE)):
+                continue
+            item_id = str(item.data(_UPDATE_ITEM_ID_ROLE) or "")
+            if item_id:
+                item_ids.add(item_id)
+        return item_ids
+
+    def _database_action_labels(self, action_ids: tuple[str, ...]) -> list[str]:
+        if self._latest_update_plan is None:
+            return []
+        action_by_id = {action.action_id: action for action in self._latest_update_plan.actions}
+        labels: list[str] = []
+        for action_id in action_ids:
+            action = action_by_id.get(action_id)
+            if action is None:
+                labels.append(action_id)
+            else:
+                labels.append(action.label)
+        return labels
 
     def _select_database_by_id(self, database_id: str) -> None:
         for row in range(self._list.count()):

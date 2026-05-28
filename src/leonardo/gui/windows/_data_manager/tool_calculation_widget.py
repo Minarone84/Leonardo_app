@@ -79,6 +79,7 @@ class _DataManagerFinancialToolsWindow(FinancialToolsManagerWindow):
     """Data Manager save-only financial-tools dialog with local shell actions."""
 
     construct_batch_persistence_finished = Signal(object)
+    construct_batch_execution_finished = Signal(object)
 
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
@@ -150,6 +151,9 @@ class _DataManagerFinancialToolsWindow(FinancialToolsManagerWindow):
         dialog.persistence_finished.connect(
             self.construct_batch_persistence_finished.emit
         )
+        dialog.execution_finished.connect(
+            self.construct_batch_execution_finished.emit
+        )
         dialog.destroyed.connect(self._on_construct_batch_dialog_destroyed)
         self._construct_batch_dialog = dialog
         dialog.show()
@@ -170,6 +174,7 @@ class ToolCalculationWidget(QGroupBox):
     artifact_saved = Signal(object)  # ArtifactCalculationResult
     database_rebuilt = Signal(object)  # ArtifactRecoveryDatabaseRebuildReport
     update_execution_finished = Signal(object)  # DataManagerUpdateExecutionReport
+    construct_batch_execution_finished = Signal(object)
     preview_requested = Signal(object, str)  # Path, title
     status_message = Signal(str)
 
@@ -358,6 +363,9 @@ class ToolCalculationWidget(QGroupBox):
         window.recipe_requested.connect(self._recipe_requested)
         window.construct_batch_persistence_finished.connect(
             self._construct_batch_persistence_finished
+        )
+        window.construct_batch_execution_finished.connect(
+            self._construct_batch_execution_finished
         )
         window.destroyed.connect(self._on_tool_window_destroyed)
 
@@ -583,6 +591,21 @@ class ToolCalculationWidget(QGroupBox):
         self.status_message.emit(
             f"Construct batch persisted {saved_count} saved recipe(s), "
             f"{reused_count} reused recipe(s){collection_text}"
+        )
+
+    def _construct_batch_execution_finished(self, report: object) -> None:
+        if self._recipe_dialog is not None:
+            self._recipe_dialog.refresh()
+        if self._collection_dialog is not None:
+            self._collection_dialog.refresh()
+
+        self.construct_batch_execution_finished.emit(report)
+        completed_count = int(getattr(report, "completed_count", 0) or 0)
+        failed_count = int(getattr(report, "failed_count", 0) or 0)
+        blocked_count = int(getattr(report, "blocked_count", 0) or 0)
+        self.status_message.emit(
+            f"Construct batch calculated {completed_count} artifact(s), "
+            f"{failed_count} failed, {blocked_count} blocked"
         )
 
     def _load_recipe_requested(self, recipe_obj: object) -> None:

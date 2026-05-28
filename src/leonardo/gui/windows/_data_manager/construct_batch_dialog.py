@@ -23,6 +23,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from leonardo.data.historical.data_manager_construct_batch_execution_service import (
+    ConstructBatchExecutionReport,
+    DataManagerConstructBatchExecutionService,
+)
 from leonardo.data.historical.data_manager_construct_batch_persistence import (
     ConstructBatchPersistenceReport,
     DataManagerConstructBatchPersistenceService,
@@ -57,22 +61,24 @@ _SOURCE_GROUPS = (
     ("constructs", "All saved constructs"),
 )
 _ARTIFACT_CALC_DISABLED_TOOLTIP = (
-    "Artifact calculation from Construct Batch collections will be implemented later. "
-    "Use existing recipe and collection workflows where available."
+    "Persist or reuse selected construct recipes, then calculate and save their "
+    "artifacts. This does not modify Analysis Databases."
 )
 
 
 class ConstructBatchBuilderDialog(QDialog):
     """
-    Data Manager dialog for construct batch planning and recipe persistence.
+    Data Manager dialog for construct batch planning, persistence, and artifact calculation.
 
     The dialog gathers GUI intent, delegates construct batch planning to the
     DMCB2 planner, and delegates recipe/collection persistence to the DMCB3
-    service. It does not execute recipes, calculate artifacts, or mutate
-    Analysis Databases.
+    service. Artifact calculation is delegated to the DMCB5 execution service;
+    the dialog does not calculate artifacts directly or mutate Analysis
+    Databases.
     """
 
     persistence_finished = Signal(object)  # ConstructBatchPersistenceReport
+    execution_finished = Signal(object)  # ConstructBatchExecutionReport
 
     def __init__(
         self,
@@ -83,6 +89,7 @@ class ConstructBatchBuilderDialog(QDialog):
         source_loader: Callable[..., list[SavedArtifactColumn]] | None = None,
         planner: DataManagerConstructBatchPlanner | None = None,
         persistence_service: DataManagerConstructBatchPersistenceService | None = None,
+        execution_service: DataManagerConstructBatchExecutionService | None = None,
     ) -> None:
         super().__init__(parent)
         self._historical_root = Path(historical_root) if historical_root is not None else None
@@ -90,8 +97,10 @@ class ConstructBatchBuilderDialog(QDialog):
         self._source_loader = source_loader or load_saved_artifact_columns
         self._planner = planner
         self._persistence_service = persistence_service
+        self._execution_service = execution_service
         self._saved_columns: list[SavedArtifactColumn] = []
         self._latest_plan: ConstructBatchPlan | None = None
+        self._running = False
 
         if self._historical_root is not None and self._planner is None:
             self._planner = DataManagerConstructBatchPlanner(
@@ -99,6 +108,10 @@ class ConstructBatchBuilderDialog(QDialog):
             )
         if self._historical_root is not None and self._persistence_service is None:
             self._persistence_service = DataManagerConstructBatchPersistenceService(
+                historical_root=self._historical_root,
+            )
+        if self._historical_root is not None and self._execution_service is None:
+            self._execution_service = DataManagerConstructBatchExecutionService(
                 historical_root=self._historical_root,
             )
 
@@ -116,8 +129,9 @@ class ConstructBatchBuilderDialog(QDialog):
 
         intro = QLabel(
             "Build a construct batch preview plan, then save selected recipes or "
-            "save them as an ordered recipe collection. This dialog does not "
-            "calculate artifacts or modify Analysis Databases.",
+            "save them as an ordered recipe collection. Calculate Artifacts saves "
+            "or reuses selected recipes before calculating artifacts. This dialog "
+            "does not modify Analysis Databases.",
             self,
         )
         intro.setWordWrap(True)
@@ -155,6 +169,7 @@ class ConstructBatchBuilderDialog(QDialog):
         self._calculate_artifacts_button = QPushButton("Calculate Artifacts", self)
         self._calculate_artifacts_button.setEnabled(False)
         self._calculate_artifacts_button.setToolTip(_ARTIFACT_CALC_DISABLED_TOOLTIP)
+        self._calculate_artifacts_button.clicked.connect(self._calculate_artifacts)
         self._close_button = QPushButton("Close", self)
         self._close_button.clicked.connect(self.accept)
 
@@ -393,6 +408,15 @@ class ConstructBatchBuilderDialog(QDialog):
         self._refresh_buttons()
 
     def _refresh_buttons(self) -> None:
+        if self._running:
+            self._preview_plan_button.setEnabled(False)
+            self._save_recipes_button.setEnabled(False)
+            self._save_collection_button.setEnabled(False)
+            self._calculate_artifacts_button.setEnabled(False)
+            self._close_button.setEnabled(False)
+            return
+
+        self._close_button.setEnabled(True)
         has_context = (
             self._historical_root is not None
             and self._market is not None
@@ -407,6 +431,11 @@ class ConstructBatchBuilderDialog(QDialog):
             self._latest_plan is not None
             and has_selected_persistable
             and bool(self._collection_name_edit.text().strip())
+        )
+        self._calculate_artifacts_button.setEnabled(
+            self._latest_plan is not None
+            and has_selected_persistable
+            and self._execution_service is not None
         )
         if self._latest_plan is not None:
             self._set_plan_summary(self._latest_plan)
@@ -477,6 +506,45 @@ class ConstructBatchBuilderDialog(QDialog):
         )
         self._handle_persistence_report(report)
 
+    def _calculate_artifacts(self) -> None:
+        plan = self._latest_plan
+        if plan is None or self._execution_service is None:
+            return
+        selected_ids = self._selected_persistable_item_ids()
+        if not selected_ids:
+            self._refresh_buttons()
+            return
+        if not self._confirm_execution(selected_ids):
+            return
+
+        self._running = True
+        self._report_text.setPlainText(
+            "Calculating selected construct batch artifacts...\n"
+            "Selected recipes will be saved or reused first. No Analysis Database "
+            "will be modified."
+        )
+        self._refresh_buttons()
+
+        try:
+            report = self._execution_service.execute_selected_artifacts(
+                plan=plan,
+                selected_item_ids=selected_ids,
+            )
+        except Exception as exc:
+            self._running = False
+            message = f"Construct batch artifact calculation failed: {exc!r}"
+            self._report_text.setPlainText(message)
+            self._refresh_buttons()
+            QMessageBox.critical(
+                self,
+                "Construct Batch Artifact Calculation Failed",
+                message,
+            )
+            return
+
+        self._running = False
+        self._handle_execution_report(report)
+
     def _confirm_persistence(self, title: str, selected_ids: tuple[str, ...]) -> bool:
         plan = self._latest_plan
         if plan is None:
@@ -503,6 +571,34 @@ class ConstructBatchBuilderDialog(QDialog):
         )
         return answer == QMessageBox.StandardButton.Yes
 
+    def _confirm_execution(self, selected_ids: tuple[str, ...]) -> bool:
+        plan = self._latest_plan
+        if plan is None:
+            return False
+        selected_set = set(selected_ids)
+        selected_items = [item for item in plan.items if item.item_id in selected_set]
+        planned = sum(1 for item in selected_items if item.status == "planned")
+        existing = sum(1 for item in selected_items if item.status == "existing_recipe")
+        blocked = sum(1 for item in plan.items if item.status in {"blocked", "error"})
+        message = (
+            f"Selected persistable items: {len(selected_items)}\n"
+            f"New recipes to save before calculation: {planned}\n"
+            f"Existing recipes to reuse before calculation: {existing}\n"
+            f"Blocked/error items not selected: {blocked}\n\n"
+            "Artifacts will be calculated and saved through the existing recipe "
+            "execution path.\n"
+            "No Analysis Database will be created, extended, built, or rebuilt.\n\n"
+            "Proceed?"
+        )
+        answer = QMessageBox.question(
+            self,
+            "Calculate Construct Batch Artifacts",
+            message,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return answer == QMessageBox.StandardButton.Yes
+
     def _handle_persistence_report(
         self,
         report: ConstructBatchPersistenceReport,
@@ -514,6 +610,26 @@ class ConstructBatchBuilderDialog(QDialog):
             QMessageBox.warning(self, "Construct Batch Persistence Finished", self._report_text.toPlainText())
         else:
             QMessageBox.information(self, "Construct Batch Persistence Complete", self._report_text.toPlainText())
+
+    def _handle_execution_report(
+        self,
+        report: ConstructBatchExecutionReport,
+    ) -> None:
+        self._report_text.setPlainText(_execution_report_text(report))
+        self.execution_finished.emit(report)
+        self._refresh_buttons()
+        if report.failed_count or report.blocked_count or report.blockers:
+            QMessageBox.warning(
+                self,
+                "Construct Batch Artifact Calculation Finished",
+                self._report_text.toPlainText(),
+            )
+        else:
+            QMessageBox.information(
+                self,
+                "Construct Batch Artifact Calculation Complete",
+                self._report_text.toPlainText(),
+            )
 
     def _populate_plan_table(self, plan: ConstructBatchPlan) -> None:
         self._plan_table.blockSignals(True)
@@ -750,6 +866,34 @@ def _persistence_report_text(report: ConstructBatchPersistenceReport) -> str:
             f"[{result.status}] {result.display_name} :: "
             f"{result.recipe_id or 'no recipe id'}"
         )
+        if result.blockers:
+            lines.append(f"  Blockers: {'; '.join(result.blockers)}")
+    return "\n".join(lines)
+
+
+def _execution_report_text(report: ConstructBatchExecutionReport) -> str:
+    lines = [
+        "Construct batch artifact calculation report",
+        f"Selected: {report.selected_count}",
+        f"Saved recipes: {report.saved_recipe_count}",
+        f"Reused recipes: {report.reused_recipe_count}",
+        f"Execution attempted: {report.execution_attempted_count}",
+        f"Completed: {report.completed_count}",
+        f"Skipped: {report.skipped_count}",
+        f"Blocked: {report.blocked_count}",
+        f"Failed: {report.failed_count}",
+        "Analysis Databases modified: 0",
+        "",
+    ]
+    for result in report.results:
+        lines.append(
+            f"[{result.status}] {result.display_name} :: "
+            f"{result.recipe_id or 'no recipe id'}"
+        )
+        if result.artifact_path:
+            lines.append(f"  Artifact: {result.artifact_path}")
+        if result.reason:
+            lines.append(f"  Reason: {result.reason}")
         if result.blockers:
             lines.append(f"  Blockers: {'; '.join(result.blockers)}")
     return "\n".join(lines)

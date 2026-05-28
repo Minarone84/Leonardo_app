@@ -134,6 +134,9 @@ class DataManagerWindow(QMainWindow):
         self._tool_calculation.artifact_saved.connect(self._on_tool_artifact_saved)
         self._tool_calculation.database_rebuilt.connect(self._on_recovery_database_rebuilt)
         self._tool_calculation.update_execution_finished.connect(self._on_update_execution_finished)
+        self._tool_calculation.construct_batch_execution_finished.connect(
+            self._on_construct_batch_execution_finished
+        )
         self._tool_calculation.preview_requested.connect(self._preview.load_csv_path)
         self._tool_calculation.status_message.connect(self.statusBar().showMessage)
         self._database_list.database_materialized.connect(self._on_analysis_database_materialized)
@@ -360,4 +363,13 @@ class DataManagerWindow(QMainWindow):
         completed = getattr(report, "completed_action_ids", ())
         self.statusBar().showMessage(
             f"Data Manager update completed {len(tuple(completed))} action(s)"
+        )
+
+    def _on_construct_batch_execution_finished(self, report: object) -> None:
+        self._artifact_selector.refresh()
+        completed_count = int(getattr(report, "completed_count", 0) or 0)
+        failed_count = int(getattr(report, "failed_count", 0) or 0)
+        self.statusBar().showMessage(
+            f"Construct batch calculated {completed_count} artifact(s), "
+            f"{failed_count} failed"
         )

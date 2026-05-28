@@ -19,6 +19,13 @@ from leonardo.data.historical.artifact_recipe_collection_store import (
     ArtifactRecipeCollectionStore,
 )
 from leonardo.data.historical.artifact_recipe_store import ArtifactRecipeStore
+from leonardo.data.historical.data_manager_construct_batch_execution_service import (
+    ConstructBatchExecutionItemResult,
+    ConstructBatchExecutionReport,
+)
+from leonardo.data.historical.data_manager_construct_batch_persistence import (
+    ConstructBatchPersistenceReport,
+)
 from leonardo.gui.windows._data_manager import dialog_geometry as dm_dialog_geometry
 from leonardo.gui.windows._data_manager.saved_artifact_columns import SavedArtifactColumn
 from leonardo.gui.windows._data_manager.construct_batch_dialog import (
@@ -102,13 +109,75 @@ def _saved_column(
     )
 
 
-def _dialog(tmp_path: Path, *, columns: list[SavedArtifactColumn] | None = None) -> ConstructBatchBuilderDialog:
+class _FakeExecutionService:
+    def __init__(self) -> None:
+        self.calls: list[tuple[object, tuple[str, ...]]] = []
+
+    def execute_selected_artifacts(self, *, plan, selected_item_ids):
+        selected_ids = tuple(selected_item_ids)
+        self.calls.append((plan, selected_ids))
+        persistence_report = ConstructBatchPersistenceReport(
+            batch_kind=plan.batch_kind,
+            construct_key=plan.construct_key,
+            selected_count=len(selected_ids),
+            saved_recipe_count=len(selected_ids),
+            reused_recipe_count=0,
+            skipped_count=0,
+            blocked_count=0,
+            failed_count=0,
+            collection_saved=False,
+            collection_id=None,
+            collection_name=None,
+            results=(),
+        )
+        results = tuple(
+            ConstructBatchExecutionItemResult(
+                item_id=item_id,
+                status="completed",
+                display_name=f"Result {index}",
+                recipe_id=f"recipe_{index}",
+                recipe_hash=f"hash_{index}",
+                reason="Artifact recipe executed.",
+                artifact_path=f"artifact_{index}.csv",
+                execution_attempted=True,
+            )
+            for index, item_id in enumerate(selected_ids)
+        )
+        return ConstructBatchExecutionReport(
+            report_id="test_report",
+            plan_id=plan.plan_id,
+            batch_kind=plan.batch_kind,
+            construct_key=plan.construct_key,
+            started_at_utc="2026-05-28T00:00:00Z",
+            finished_at_utc="2026-05-28T00:00:01Z",
+            selected_count=len(selected_ids),
+            saved_recipe_count=len(selected_ids),
+            reused_recipe_count=0,
+            persisted_recipe_count=len(selected_ids),
+            execution_attempted_count=len(selected_ids),
+            completed_count=len(selected_ids),
+            skipped_count=0,
+            blocked_count=0,
+            failed_count=0,
+            cancelled=False,
+            results=results,
+            persistence_report=persistence_report,
+        )
+
+
+def _dialog(
+    tmp_path: Path,
+    *,
+    columns: list[SavedArtifactColumn] | None = None,
+    execution_service: object | None = None,
+) -> ConstructBatchBuilderDialog:
     from leonardo.data.naming import canonicalize
 
     return ConstructBatchBuilderDialog(
         historical_root=tmp_path,
         market=canonicalize("bybit", "linear", "BTCUSDT", "1m"),
         source_loader=lambda **_kwargs: list(columns or [_saved_column(tmp_path)]),
+        execution_service=execution_service,
     )
 
 
@@ -229,7 +298,7 @@ def test_construct_batch_builder_modes_and_disabled_calculation(tmp_path: Path) 
         assert not buttons["Save Recipes"].isEnabled()
         assert not buttons["Save as Collection"].isEnabled()
         assert not buttons["Calculate Artifacts"].isEnabled()
-        assert "Artifact calculation" in buttons["Calculate Artifacts"].toolTip()
+        assert "does not modify Analysis Databases" in buttons["Calculate Artifacts"].toolTip()
         assert buttons["Close"].isEnabled()
         for unsupported in ("braids", "braid_instability", "trap_area", "dynamic_binning"):
             assert unsupported not in {
@@ -258,6 +327,7 @@ def test_preview_plan_builds_unary_plan_without_persistence(tmp_path: Path) -> N
         assert dialog._plan_table.item(0, 1).text() == "planned"
         assert dialog._plan_table.item(0, 0).checkState() == Qt.CheckState.Checked
         assert dialog._save_recipes_button.isEnabled()
+        assert dialog._calculate_artifacts_button.isEnabled()
         assert ArtifactRecipeStore(historical_root=tmp_path).list_recipes(
             market=_market_from_dialog(dialog)
         ) == []
@@ -310,6 +380,50 @@ def test_blocked_plan_items_are_not_selectable_for_persistence(tmp_path: Path) -
         select_item = dialog._plan_table.item(0, 0)
         assert not bool(select_item.flags() & Qt.ItemFlag.ItemIsUserCheckable)
         assert not dialog._save_recipes_button.isEnabled()
+        assert not dialog._calculate_artifacts_button.isEnabled()
+    finally:
+        dialog.close()
+
+
+def test_calculate_artifacts_uses_execution_service_and_terminal_report(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    _qapp()
+    column = _saved_column(tmp_path, family="indicators", column_name="rsi_14")
+    execution_service = _FakeExecutionService()
+    dialog = _dialog(
+        tmp_path,
+        columns=[column],
+        execution_service=execution_service,
+    )
+    messages: list[object] = []
+    dialog.execution_finished.connect(messages.append)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_args, **_kwargs: None)
+    try:
+        assert not dialog._calculate_artifacts_button.isEnabled()
+
+        dialog._preview_plan_button.click()
+        assert dialog._calculate_artifacts_button.isEnabled()
+
+        dialog._calculate_artifacts_button.click()
+
+        assert len(execution_service.calls) == 1
+        plan, selected_ids = execution_service.calls[0]
+        assert plan is dialog._latest_plan
+        assert selected_ids == (dialog._latest_plan.items[0].item_id,)
+        assert messages
+        report_text = dialog._report_text.toPlainText()
+        assert "Construct batch artifact calculation report" in report_text
+        assert "Completed: 1" in report_text
+        assert "Failed: 0" in report_text
+        assert "Analysis Databases modified: 0" in report_text
     finally:
         dialog.close()
 
@@ -365,6 +479,7 @@ def test_construct_batch_gui_shell_keeps_backend_boundaries() -> None:
     allowed_dialog_tokens = (
         "DataManagerConstructBatchPlanner",
         "DataManagerConstructBatchPersistenceService",
+        "DataManagerConstructBatchExecutionService",
         "load_saved_artifact_columns",
     )
     for token in allowed_dialog_tokens:

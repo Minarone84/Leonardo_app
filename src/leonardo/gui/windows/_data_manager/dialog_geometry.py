@@ -9,6 +9,7 @@ from PySide6.QtWidgets import QApplication, QDialog
 
 
 DATA_MANAGER_DIALOG_INITIAL_WIDTH_RATIO = 0.60
+DATA_MANAGER_DIALOG_INITIAL_HEIGHT_RATIO = 0.60
 
 
 def apply_data_manager_dialog_initial_width(
@@ -27,6 +28,50 @@ def apply_data_manager_dialog_initial_width(
     smaller than that height.
     """
 
+    _apply_data_manager_dialog_initial_geometry(
+        dialog,
+        default_width=default_width,
+        default_height=default_height,
+        width_ratio=width_ratio,
+        height_ratio=None,
+    )
+
+
+def apply_data_manager_dialog_initial_size(
+    dialog: QDialog,
+    *,
+    default_width: int,
+    default_height: int,
+    width_ratio: float = DATA_MANAGER_DIALOG_INITIAL_WIDTH_RATIO,
+    height_ratio: float = DATA_MANAGER_DIALOG_INITIAL_HEIGHT_RATIO,
+) -> None:
+    """
+    Apply the Data Manager dialog initial width and height sizing policy.
+
+    Both dimensions are based on the available screen geometry while existing
+    minimum-size constraints remain authoritative. The dialog is centered and
+    adjusted after show so the native frame remains inside usable geometry.
+    """
+
+    _apply_data_manager_dialog_initial_geometry(
+        dialog,
+        default_width=default_width,
+        default_height=default_height,
+        width_ratio=width_ratio,
+        height_ratio=height_ratio,
+    )
+
+
+def _apply_data_manager_dialog_initial_geometry(
+    dialog: QDialog,
+    *,
+    default_width: int,
+    default_height: int,
+    width_ratio: float,
+    height_ratio: float | None,
+) -> None:
+    """Apply screen-aware initial dialog geometry."""
+
     screen = _screen_for_dialog(dialog)
     if screen is None:
         dialog.resize(default_width, default_height)
@@ -43,8 +88,13 @@ def apply_data_manager_dialog_initial_width(
         minimum=dialog.minimumWidth(),
         maximum=available.width(),
     )
+    preferred_height = (
+        int(available.height() * height_ratio)
+        if height_ratio is not None
+        else min(default_height, available.height())
+    )
     height = _bounded_dimension(
-        min(default_height, available.height()),
+        preferred_height,
         minimum=dialog.minimumHeight(),
         maximum=available.height(),
     )

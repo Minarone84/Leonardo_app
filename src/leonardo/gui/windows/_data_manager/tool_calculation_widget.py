@@ -58,6 +58,12 @@ from leonardo.gui.windows._data_manager.artifact_recipe_dialog import (
     ArtifactRecipeDialog,
 )
 from leonardo.gui.windows._data_manager.button_rack import make_button_rack
+from leonardo.gui.windows._data_manager.construct_batch_dialog import (
+    ConstructBatchBuilderDialog,
+)
+from leonardo.gui.windows._data_manager.dialog_geometry import (
+    apply_data_manager_dialog_initial_size,
+)
 from leonardo.gui.windows._data_manager.study_setup_recipe_export_dialog import (
     StudySetupRecipeExportDialog,
 )
@@ -67,6 +73,75 @@ from leonardo.gui.windows._data_manager.update_manager_dialog import (
 from leonardo.gui.windows.financial_tools_manager_window import (
     FinancialToolsManagerWindow,
 )
+
+
+class _DataManagerFinancialToolsWindow(FinancialToolsManagerWindow):
+    """Data Manager save-only financial-tools dialog with local shell actions."""
+
+    def __init__(self, **kwargs: object) -> None:
+        super().__init__(**kwargs)
+        self._construct_batch_dialog: Optional[ConstructBatchBuilderDialog] = None
+
+    def _build_action_row(self) -> QWidget:
+        row = super()._build_action_row()
+
+        self._construct_batch_button = QPushButton("Construct Batch...", row)
+        self._construct_batch_button.setToolTip(
+            "Open the Construct Batch Builder shell for future batch workflows."
+        )
+        self._construct_batch_button.clicked.connect(
+            self._open_construct_batch_builder
+        )
+
+        layout = row.layout()
+        if isinstance(layout, QHBoxLayout):
+            recipe_index = layout.indexOf(self._recipe_button)
+            if recipe_index >= 0:
+                layout.insertWidget(recipe_index, self._construct_batch_button)
+            else:
+                layout.addWidget(self._construct_batch_button)
+
+        self._refresh_construct_batch_button()
+        return row
+
+    def _refresh_buttons(self) -> None:
+        super()._refresh_buttons()
+        self._refresh_construct_batch_button()
+
+    def _refresh_construct_batch_button(self) -> None:
+        button = getattr(self, "_construct_batch_button", None)
+        if button is None:
+            return
+        is_construct_family = (
+            bool(getattr(self, "_save_only", False))
+            and self._get_selected_tool_type() == "construct"
+        )
+        button.setVisible(is_construct_family)
+        button.setEnabled(is_construct_family)
+
+    def _open_construct_batch_builder(self) -> None:
+        if self._get_selected_tool_type() != "construct":
+            return
+
+        existing = getattr(self, "_construct_batch_dialog", None)
+        if existing is not None:
+            try:
+                if not existing.isVisible():
+                    existing.show()
+                existing.raise_()
+                existing.activateWindow()
+                return
+            except RuntimeError:
+                self._construct_batch_dialog = None
+
+        dialog = ConstructBatchBuilderDialog(parent=self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.destroyed.connect(self._on_construct_batch_dialog_destroyed)
+        self._construct_batch_dialog = dialog
+        dialog.show()
+
+    def _on_construct_batch_dialog_destroyed(self, _obj: object = None) -> None:
+        self._construct_batch_dialog = None
 
 
 class ToolCalculationWidget(QGroupBox):
@@ -249,7 +324,7 @@ class ToolCalculationWidget(QGroupBox):
             return self._tool_window
         self._tool_window = None
 
-        window = FinancialToolsManagerWindow(
+        window = _DataManagerFinancialToolsWindow(
             exchange=market.exchange,
             market_type=market.market_type,
             symbol=market.symbol,
@@ -259,6 +334,11 @@ class ToolCalculationWidget(QGroupBox):
             parent=self.window(),
         )
         window.setMinimumSize(900, 620)
+        apply_data_manager_dialog_initial_size(
+            window,
+            default_width=900,
+            default_height=620,
+        )
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         window.save_requested.connect(self._save_requested)
         window.recipe_requested.connect(self._recipe_requested)

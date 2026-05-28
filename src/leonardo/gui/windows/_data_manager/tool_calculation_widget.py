@@ -78,6 +78,8 @@ from leonardo.gui.windows.financial_tools_manager_window import (
 class _DataManagerFinancialToolsWindow(FinancialToolsManagerWindow):
     """Data Manager save-only financial-tools dialog with local shell actions."""
 
+    construct_batch_persistence_finished = Signal(object)
+
     def __init__(self, **kwargs: object) -> None:
         super().__init__(**kwargs)
         self._construct_batch_dialog: Optional[ConstructBatchBuilderDialog] = None
@@ -134,8 +136,20 @@ class _DataManagerFinancialToolsWindow(FinancialToolsManagerWindow):
             except RuntimeError:
                 self._construct_batch_dialog = None
 
-        dialog = ConstructBatchBuilderDialog(parent=self)
+        dialog = ConstructBatchBuilderDialog(
+            historical_root=self._historical_root,
+            market=MarketId(
+                exchange=self._exchange,
+                market_type=self._market_type,
+                symbol=self._symbol,
+                timeframe=self._timeframe,
+            ),
+            parent=self,
+        )
         dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
+        dialog.persistence_finished.connect(
+            self.construct_batch_persistence_finished.emit
+        )
         dialog.destroyed.connect(self._on_construct_batch_dialog_destroyed)
         self._construct_batch_dialog = dialog
         dialog.show()
@@ -342,6 +356,9 @@ class ToolCalculationWidget(QGroupBox):
         window.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
         window.save_requested.connect(self._save_requested)
         window.recipe_requested.connect(self._recipe_requested)
+        window.construct_batch_persistence_finished.connect(
+            self._construct_batch_persistence_finished
+        )
         window.destroyed.connect(self._on_tool_window_destroyed)
 
         self._tool_window = window
@@ -548,6 +565,24 @@ class ToolCalculationWidget(QGroupBox):
         )
         self.status_message.emit(
             f"Study Environment export saved {saved_count} recipe(s){collection_text}"
+        )
+
+    def _construct_batch_persistence_finished(self, report: object) -> None:
+        if self._recipe_dialog is not None:
+            self._recipe_dialog.refresh()
+        if self._collection_dialog is not None:
+            self._collection_dialog.refresh()
+
+        saved_count = int(getattr(report, "saved_recipe_count", 0) or 0)
+        reused_count = int(getattr(report, "reused_recipe_count", 0) or 0)
+        collection_text = (
+            ", collection saved"
+            if bool(getattr(report, "collection_saved", False))
+            else ""
+        )
+        self.status_message.emit(
+            f"Construct batch persisted {saved_count} saved recipe(s), "
+            f"{reused_count} reused recipe(s){collection_text}"
         )
 
     def _load_recipe_requested(self, recipe_obj: object) -> None:

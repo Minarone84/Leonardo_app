@@ -5,10 +5,22 @@ from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PySide6.QtCore import QRect
-from PySide6.QtWidgets import QApplication, QDialog, QLabel, QPlainTextEdit, QPushButton
+from PySide6.QtCore import QRect, Qt
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QLabel,
+    QMessageBox,
+    QPlainTextEdit,
+    QPushButton,
+)
 
+from leonardo.data.historical.artifact_recipe_collection_store import (
+    ArtifactRecipeCollectionStore,
+)
+from leonardo.data.historical.artifact_recipe_store import ArtifactRecipeStore
 from leonardo.gui.windows._data_manager import dialog_geometry as dm_dialog_geometry
+from leonardo.gui.windows._data_manager.saved_artifact_columns import SavedArtifactColumn
 from leonardo.gui.windows._data_manager.construct_batch_dialog import (
     ConstructBatchBuilderDialog,
 )
@@ -49,6 +61,55 @@ def _set_combo_value(combo, value: str) -> None:
             combo.setCurrentIndex(index)
             return
     raise AssertionError(f"Combo value not found: {value!r}")
+
+
+def _write_csv(path: Path, timestamps: tuple[int, ...], column_name: str) -> Path:
+    lines = ["ts_ms," + column_name]
+    lines.extend(f"{ts},{idx + 1}.0" for idx, ts in enumerate(timestamps))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def _write_ohlcv(root: Path) -> Path:
+    path = root / "bybit" / "linear" / "BTCUSDT" / "1m" / "ohlcv" / "candles.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        "ts_ms,open,high,low,close,volume\n"
+        "1000,1,2,0.5,1.5,10\n"
+        "2000,2,3,1.5,2.5,20\n"
+        "3000,3,4,2.5,3.5,30\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _saved_column(
+    root: Path,
+    *,
+    family: str = "indicators",
+    column_name: str = "rsi_14",
+) -> SavedArtifactColumn:
+    path = _write_csv(root / f"{column_name}.csv", (1000, 2000, 3000), column_name)
+    return SavedArtifactColumn(
+        family=family,
+        tool_key=column_name.split("_", 1)[0],
+        tool_title=column_name.split("_", 1)[0].upper(),
+        instance_key=column_name,
+        column_name=column_name,
+        path=path,
+        analysis_usable=True,
+        renderable=True,
+    )
+
+
+def _dialog(tmp_path: Path, *, columns: list[SavedArtifactColumn] | None = None) -> ConstructBatchBuilderDialog:
+    from leonardo.data.naming import canonicalize
+
+    return ConstructBatchBuilderDialog(
+        historical_root=tmp_path,
+        market=canonicalize("bybit", "linear", "BTCUSDT", "1m"),
+        source_loader=lambda **_kwargs: list(columns or [_saved_column(tmp_path)]),
+    )
 
 
 def test_data_manager_popup_uses_sixty_percent_available_width_and_height(monkeypatch) -> None:
@@ -112,7 +173,7 @@ def test_construct_batch_button_is_data_manager_save_only_and_construct_scoped(
         window.close()
 
 
-def test_construct_batch_button_opens_placeholder_dialog(tmp_path: Path) -> None:
+def test_construct_batch_button_opens_dialog_with_backend_context(tmp_path: Path) -> None:
     _qapp()
     window = _DataManagerFinancialToolsWindow(
         exchange="bybit",
@@ -127,48 +188,167 @@ def test_construct_batch_button_opens_placeholder_dialog(tmp_path: Path) -> None
         window._construct_batch_button.click()
 
         assert isinstance(window._construct_batch_dialog, ConstructBatchBuilderDialog)
+        assert window._construct_batch_dialog._historical_root == tmp_path
     finally:
         if window._construct_batch_dialog is not None:
             window._construct_batch_dialog.close()
         window.close()
 
 
-def test_construct_batch_builder_shell_labels_and_disabled_actions() -> None:
+def test_construct_batch_builder_modes_and_disabled_calculation(tmp_path: Path) -> None:
     _qapp()
-    dialog = ConstructBatchBuilderDialog()
+    dialog = _dialog(tmp_path)
     try:
         text = "\n".join(
             [label.text() for label in dialog.findChildren(QLabel)]
             + [edit.toPlainText() for edit in dialog.findChildren(QPlainTextEdit)]
-            + [
-                dialog._construct_list.item(index).text()
-                for index in range(dialog._construct_list.count())
-            ]
+            + [dialog._mode_combo.itemText(index) for index in range(dialog._mode_combo.count())]
+            + [dialog._construct_combo.itemText(index) for index in range(dialog._construct_combo.count())]
         )
 
         for expected in (
             "Unary source expansion",
-            "Binary delta expansion",
             "delta = minuend - subtrahend",
             "derivative",
             "angle",
             "percent_span_angle",
             "angle_momentum",
-            "delta",
         ):
             assert expected in text
 
-        buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
-        for text in (
-            "Preview Plan",
-            "Save Recipes",
-            "Save as Collection",
-            "Calculate Artifacts",
-        ):
-            assert text in buttons
-            assert not buttons[text].isEnabled()
+        assert {
+            dialog._construct_combo.itemData(index)
+            for index in range(dialog._construct_combo.count())
+        } == {"derivative", "angle", "percent_span_angle", "angle_momentum"}
+        _set_combo_value(dialog._mode_combo, "delta")
+        assert dialog._construct_combo.count() == 1
+        assert dialog._construct_combo.itemData(0) == "delta"
 
+        buttons = {button.text(): button for button in dialog.findChildren(QPushButton)}
+        assert buttons["Preview Plan"].isEnabled()
+        assert not buttons["Save Recipes"].isEnabled()
+        assert not buttons["Save as Collection"].isEnabled()
+        assert not buttons["Calculate Artifacts"].isEnabled()
+        assert "Artifact calculation" in buttons["Calculate Artifacts"].toolTip()
         assert buttons["Close"].isEnabled()
+        for unsupported in ("braids", "braid_instability", "trap_area", "dynamic_binning"):
+            assert unsupported not in {
+                dialog._construct_combo.itemData(index)
+                for index in range(dialog._construct_combo.count())
+            }
+    finally:
+        dialog.close()
+
+
+def test_preview_plan_builds_unary_plan_without_persistence(tmp_path: Path) -> None:
+    _qapp()
+    column = _saved_column(tmp_path, family="indicators", column_name="rsi_14")
+    dialog = _dialog(tmp_path, columns=[column])
+    try:
+        _set_combo_value(dialog._mode_combo, "unary")
+        _set_combo_value(dialog._construct_combo, "derivative")
+        _set_combo_value(dialog._unary_source_group_combo, "indicators")
+
+        dialog._preview_plan_button.click()
+
+        assert dialog._latest_plan is not None
+        assert dialog._latest_plan.batch_kind == "unary"
+        assert dialog._latest_plan.planned_count == 1
+        assert dialog._plan_table.rowCount() == 1
+        assert dialog._plan_table.item(0, 1).text() == "planned"
+        assert dialog._plan_table.item(0, 0).checkState() == Qt.CheckState.Checked
+        assert dialog._save_recipes_button.isEnabled()
+        assert ArtifactRecipeStore(historical_root=tmp_path).list_recipes(
+            market=_market_from_dialog(dialog)
+        ) == []
+        assert "Planned: 1" in dialog._report_text.toPlainText()
+    finally:
+        dialog.close()
+
+
+def test_preview_plan_builds_delta_plan_with_close_fixed_source(tmp_path: Path) -> None:
+    _qapp()
+    _write_ohlcv(tmp_path)
+    column = _saved_column(tmp_path, family="indicators", column_name="rsi_14")
+    dialog = _dialog(tmp_path, columns=[column])
+    try:
+        _set_combo_value(dialog._mode_combo, "delta")
+        _set_combo_value(dialog._variable_source_group_combo, "indicators")
+        _set_combo_value(dialog._fixed_role_combo, "minuend")
+
+        dialog._preview_plan_button.click()
+
+        assert dialog._latest_plan is not None
+        assert dialog._latest_plan.batch_kind == "delta"
+        assert dialog._latest_plan.planned_count == 1
+        item = dialog._latest_plan.items[0]
+        assert item.role_bindings["minuend"] == "close"
+        assert item.role_bindings["subtrahend"] == "rsi_14"
+        assert "delta = minuend - subtrahend" in dialog._report_text.toPlainText()
+    finally:
+        dialog.close()
+
+
+def test_blocked_plan_items_are_not_selectable_for_persistence(tmp_path: Path) -> None:
+    _qapp()
+    missing_column = SavedArtifactColumn(
+        family="indicators",
+        tool_key="rsi",
+        tool_title="RSI",
+        instance_key="missing",
+        column_name="missing",
+        path=tmp_path / "missing.csv",
+        analysis_usable=True,
+        renderable=True,
+    )
+    dialog = _dialog(tmp_path, columns=[missing_column])
+    try:
+        dialog._preview_plan_button.click()
+
+        assert dialog._latest_plan is not None
+        assert dialog._latest_plan.blocked_count == 1
+        select_item = dialog._plan_table.item(0, 0)
+        assert not bool(select_item.flags() & Qt.ItemFlag.ItemIsUserCheckable)
+        assert not dialog._save_recipes_button.isEnabled()
+    finally:
+        dialog.close()
+
+
+def test_save_recipes_and_collection_use_persistence_service(monkeypatch, tmp_path: Path) -> None:
+    _qapp()
+    column = _saved_column(tmp_path, family="indicators", column_name="rsi_14")
+    dialog = _dialog(tmp_path, columns=[column])
+    messages: list[object] = []
+    dialog.persistence_finished.connect(messages.append)
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *_args, **_kwargs: QMessageBox.StandardButton.Yes,
+    )
+    monkeypatch.setattr(QMessageBox, "information", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *_args, **_kwargs: None)
+    try:
+        dialog._preview_plan_button.click()
+        dialog._save_recipes_button.click()
+
+        assert messages
+        assert messages[-1].saved_recipe_count == 1
+        assert messages[-1].collection_saved is False
+
+        dialog._collection_name_edit.setText("Construct Batch Pack")
+        assert dialog._save_collection_button.isEnabled()
+        dialog._save_collection_button.click()
+
+        assert messages[-1].collection_saved is True
+        assert messages[-1].reused_recipe_count == 1
+        collection = ArtifactRecipeCollectionStore(historical_root=tmp_path).load_collection(
+            market=_market_from_dialog(dialog),
+            collection_id=messages[-1].collection_id,
+        )
+        assert collection.display_name == "Construct Batch Pack"
+        assert [recipe.recipe_id for recipe in collection.recipe_snapshots] == [
+            messages[-1].results[0].recipe_id
+        ]
     finally:
         dialog.close()
 
@@ -182,16 +362,42 @@ def test_construct_batch_gui_shell_keeps_backend_boundaries() -> None:
     assert "Construct Batch" not in _source(WINDOWS / "financial_tools_manager_window.py")
     assert "Construct Batch" not in _source(WINDOWS / "historical_chart_panel.py")
 
+    allowed_dialog_tokens = (
+        "DataManagerConstructBatchPlanner",
+        "DataManagerConstructBatchPersistenceService",
+        "load_saved_artifact_columns",
+    )
+    for token in allowed_dialog_tokens:
+        assert token in dialog_source
+
     forbidden_dialog_tokens = (
         "ArtifactRecipeStore",
         "ArtifactRecipeCollectionStore",
         "ArtifactCalculationService",
+        "ArtifactRecipeExecutor",
+        "ArtifactRecoveryRegenerator",
+        "AnalysisDatabaseStore",
         "DataManagerSelectedUpdateService",
+        "DataManagerUpdateService",
         "write_text",
+        "write_bytes",
         "json.dump",
+        "open(",
         "to_csv",
         "save_manifest",
         "materialize_database",
     )
     for token in forbidden_dialog_tokens:
         assert token not in dialog_source
+
+
+def _market_from_dialog(dialog: ConstructBatchBuilderDialog):
+    from leonardo.data.naming import canonicalize
+
+    assert dialog._market is not None
+    return canonicalize(
+        dialog._market.exchange,
+        dialog._market.market_type,
+        dialog._market.symbol,
+        dialog._market.timeframe,
+    )

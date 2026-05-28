@@ -10,6 +10,7 @@ from leonardo.core.state import StateStore
 from leonardo.gui.core_bridge import CoreBridge
 from leonardo.gui.windows.signals_window import SignalsWindow
 from leonardo.gui.windows.runtime_inspector_window import WindowsInspectorWindow
+from leonardo.gui.windows.analysis_suite_window import AnalysisSuiteWindow
 from leonardo.gui.windows.data_manager_window import DataManagerWindow
 from leonardo.gui.windows.historical_download_window import HistoricalDownloadWindow
 from leonardo.gui.windows.ohlcv_maintenance_window import OHLCVMaintenanceWindow
@@ -40,6 +41,7 @@ class WindowManager(QObject):
 
         self._signals: Optional[SignalsWindow] = None
         self._inspector: Optional[WindowsInspectorWindow] = None
+        self._analysis_suite: Optional[AnalysisSuiteWindow] = None
         self._data_manager: Optional[DataManagerWindow] = None
 
         self._historical_download: Optional[HistoricalDownloadWindow] = None
@@ -101,6 +103,34 @@ class WindowManager(QObject):
     def _on_inspector_destroyed(self) -> None:
         self._inspector = None
         self._safe_submit(self._state.window_close("windows_inspector", where="gui"))
+
+    def get_analysis_suite(self) -> Optional[AnalysisSuiteWindow]:
+        return self._analysis_suite
+
+    def open_analysis_suite(self, *, parent: Optional[QObject] = None) -> AnalysisSuiteWindow:
+        if self._analysis_suite is None:
+            parent_widget = parent if isinstance(parent, QWidget) else self._parent
+            self._analysis_suite = AnalysisSuiteWindow(
+                ctx=self._ctx,
+                parent=parent_widget if isinstance(parent_widget, QWidget) else None,
+                open_data_manager_callback=lambda: self.open_data_manager(parent=parent_widget),
+            )
+            self._analysis_suite.setAttribute(Qt.WA_DeleteOnClose, True)
+            self._analysis_suite.destroyed.connect(self._on_analysis_suite_destroyed)
+            self._safe_submit(self._state.window_open("analysis_suite", "AnalysisSuiteWindow", where="gui"))
+
+        self._analysis_suite.show()
+        self._analysis_suite.raise_()
+        self._analysis_suite.activateWindow()
+        return self._analysis_suite
+
+    def close_analysis_suite(self) -> None:
+        if self._analysis_suite is not None:
+            self._analysis_suite.close()
+
+    def _on_analysis_suite_destroyed(self) -> None:
+        self._analysis_suite = None
+        self._safe_submit(self._state.window_close("analysis_suite", where="gui"))
 
     def get_data_manager(self) -> Optional[DataManagerWindow]:
         return self._data_manager

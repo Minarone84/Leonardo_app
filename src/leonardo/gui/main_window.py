@@ -122,6 +122,11 @@ class MainWindow(QMainWindow):
         self._act_open_data_manager.triggered.connect(self._open_data_manager)
         menu2.addAction(self._act_open_data_manager)
 
+        self._act_open_analysis_suite = QAction("Analysis Suite", self)
+        self._act_open_analysis_suite.setEnabled(False)
+        self._act_open_analysis_suite.triggered.connect(self._open_analysis_suite)
+        menu2.addAction(self._act_open_analysis_suite)
+
         # ---- Historical tools ----
         self._act_open_hist_download = QAction("Historical Download Manager", self)
         self._act_open_hist_download.setEnabled(False)
@@ -155,6 +160,7 @@ class MainWindow(QMainWindow):
     def on_core_started(self) -> None:
         self._act_open_runtime_inspector.setEnabled(True)
         self._act_open_data_manager.setEnabled(True)
+        self._act_open_analysis_suite.setEnabled(True)
         self._act_open_hist_download.setEnabled(True)
         self._act_open_ohlcv_maintenance.setEnabled(True)
         self._act_open_hist_manager.setEnabled(True)
@@ -283,6 +289,14 @@ class MainWindow(QMainWindow):
             return
         wm.open_data_manager(parent=self)
         self.statusBar().showMessage("Data Manager opened")
+
+    def _open_analysis_suite(self) -> None:
+        wm = self._wm()
+        if wm is None:
+            self.statusBar().showMessage("Window manager missing")
+            return
+        wm.open_analysis_suite(parent=self)
+        self.statusBar().showMessage("Analysis Suite opened")
 
     # ---- Runtime Inspector handler ----
 

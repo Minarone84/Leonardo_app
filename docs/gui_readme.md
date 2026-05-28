@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.31
+Version: v3.32
 Date: 2026-05-28
 
 ## Overview
@@ -282,7 +282,17 @@ Responsibilities include:
 - previewing tabular artifacts in a read-only dataframe view;
 - exposing explicit data-check / metadata-restore workflows.
 
-Analysis Suite remains unimplemented as a GUI/product workflow. AS1 added only the data-layer `AnalysisSuiteDatasetReadinessService` for future Analysis Suite consumers. No Analysis Suite window, Analysis Project/Run/Report store, model workflow, signal generation, or trading workflow is exposed by the GUI.
+## Analysis Suite Window
+
+`AnalysisSuiteWindow` is a top-level managed read-only catalog window opened from `Analysis -> Analysis Suite`. `Analysis -> Data Manager` remains the separate Data Manager preparation workflow.
+
+The window consumes `AnalysisSuiteDatasetReadinessService` reports. It lists Analysis Databases with readiness status, `strict_ready`, `can_preview`, market identity, row and column counts, first and last timestamps, materialization source-drift status, and topology/geography status. Selecting a row shows database id, display name, manifest path, dataframe path, readiness fields, source OHLCV drift status, missing topology, blockers, warnings, and errors.
+
+Allowed actions are `Refresh Catalog`, row detail display, `Open Data Manager`, and close. `Open Data Manager` is routing only; Analysis Suite does not perform repair, build, update, or calculation work itself.
+
+The Analysis Suite GUI does not own readiness policy. Policy remains in `AnalysisSuiteDatasetReadinessService`; the GUI must not inspect `manifest.json`, `dataframe.csv`, or `source_ohlcv.snapshot` to classify readiness. AS2 does not preview dataframe rows or load full `dataframe.csv`; bounded dataframe preview remains future AS3.
+
+Still out of scope: Analysis Projects, Analysis Runs, Analysis Reports, model workflows, signal generation, trading workflows, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, and raw OHLCV repair/validation.
 
 Current Analysis Database UI behavior:
 

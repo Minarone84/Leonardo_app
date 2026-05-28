@@ -90,7 +90,8 @@ class _DataManagerFinancialToolsWindow(FinancialToolsManagerWindow):
 
         self._construct_batch_button = QPushButton("Construct Batch...", row)
         self._construct_batch_button.setToolTip(
-            "Open the Construct Batch Builder shell for future batch workflows."
+            "Open Construct Batch Builder for batch planning, recipe saving, "
+            "collection saving, and artifact calculation."
         )
         self._construct_batch_button.clicked.connect(
             self._open_construct_batch_builder

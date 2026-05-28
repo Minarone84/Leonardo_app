@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.30
+Version: v3.31
 Date: 2026-05-28
 
 ## Overview
@@ -281,6 +281,8 @@ Responsibilities include:
 - extending a selected existing Analysis Database from current recipe-collection artifacts through `Extend Database from Collection...`;
 - previewing tabular artifacts in a read-only dataframe view;
 - exposing explicit data-check / metadata-restore workflows.
+
+Analysis Suite remains unimplemented as a GUI/product workflow. AS1 added only the data-layer `AnalysisSuiteDatasetReadinessService` for future Analysis Suite consumers. No Analysis Suite window, Analysis Project/Run/Report store, model workflow, signal generation, or trading workflow is exposed by the GUI.
 
 Current Analysis Database UI behavior:
 

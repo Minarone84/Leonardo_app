@@ -1,6 +1,6 @@
 # Financial Tools Contract System
 
-Version: v1.7
+Version: v1.8
 Date: 2026-05-28
 
 ## Purpose
@@ -144,6 +144,8 @@ Analysis Database creation is a user-facing `Database seed creator` workflow. Re
 Selected artifact and Analysis Database updates are planned through `DataManagerSelectedUpdateService`, not by GUI-side sidecar or manifest policy. `Check Update` is read-only and reports service-owned statuses. `Update Selected Artifacts` may execute only checked OLD/actionable artifact actions through the existing recovery/regeneration/calculation path. `Update Selected Databases` may rebuild only checked OLD/actionable materialized databases through Analysis Database materialization ownership; DRAFT is not OLD, components are not added/removed/replaced, and unknown lineage is not treated as actionable by default.
 
 Data Manager Construct Batch planning consumes contract/spec/naming metadata through data-layer services. Generic batch supports unary `derivative`, `angle`, `percent_span_angle`, and `angle_momentum`, plus binary `delta` with report semantics `delta = minuend - subtrahend`. Source eligibility uses saved artifact `selectable` / `analysis_usable` metadata; non-renderable but analysis-usable outputs may be valid sources, while non-selectable utility columns are blocked. Timestamp-safe alignment requires shared timestamp keys and common range evidence, not equal row count alone. Preview planning writes nothing, Save Recipes writes through `ArtifactRecipeStore`, Save as Collection writes through `ArtifactRecipeCollectionStore`, and Calculate Artifacts delegates through `ArtifactRecipeExecutor` / `ArtifactCalculationService` after recipes are saved or reused. Construct Batch does not create or materialize Analysis Databases, and the GUI does not write artifact CSV or sidecar files directly.
+
+Analysis Suite dataset readiness is a read-only consumer contract. `AnalysisSuiteDatasetReadinessService` evaluates Data Manager Analysis Databases before future Analysis Suite code consumes `dataframe.csv`, returning `AnalysisSuiteDatasetCatalogReport` and `AnalysisSuiteDatasetReadinessReport` objects. Readiness statuses are `ready`, `draft`, `missing_dataframe`, `stale_source`, `incomplete_topology`, `corrupt_manifest`, `corrupt_dataframe`, `blocked`, and `error`. Strict-ready requires a readable manifest, materialized database, readable and hash-consistent dataframe when hash metadata exists, clean materialization source-OHLCV drift status, and complete minimum topology: accepted OHLC base, explicit Volume artifact, Braids artifact, Peaks & Troughs artifact, and UTC / Universal Trend Classifier artifact. Raw OHLCV volume does not satisfy the explicit Volume artifact requirement. The readiness service reports only; it does not calculate artifacts, rebuild/materialize databases, repair OHLCV, edit components, write manifests, write dataframes, or add Analysis Project/Run/Report persistence.
 
 The sidecar may include:
 

@@ -1,6 +1,6 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.14
+Version: v3.15
 Date: 2026-05-28
 
 ## Overview
@@ -621,6 +621,37 @@ GUI code may collect a new database name and checked artifact columns for `Datab
 Data Manager materialization uses accepted OHLCV only. `ArtifactCalculationService._load_full_dataset_dataframe(...)` and `AnalysisDatabaseStore._load_selected_ohlcv_dataframe(...)` call the shared OHLCV loadability gate before reading `candles.csv`. `ArtifactRecoveryPlanner._recalculation_blockers(...)` reports a blocker when source OHLCV exists but is not accepted/loadable. The shared helpers are `evaluate_ohlcv_dataset_loadability(...)`, `require_ohlcv_dataset_loadable(...)`, and `format_ohlcv_loadability_error(...)`.
 
 `ArtifactCalculationService` writes the source OHLCV snapshot into saved derived artifact sidecars under `source_ohlcv.snapshot`. `AnalysisDatabaseStore` writes the same snapshot namespace into materialization metadata, refreshes it on rebuild, and exposes `materialization_source_ohlcv_drift_report(...)` for read-only materialization source-drift checks.
+
+### Analysis Suite dataset readiness semantics
+
+Analysis Suite is still not implemented as a GUI, project/run store, model workflow, signal engine, report system, or trading system. AS1 adds only a read-only backend contract for future Analysis Suite dataset consumption.
+
+`AnalysisSuiteDatasetReadinessService` catalogs and evaluates Data Manager Analysis Databases for future Analysis Suite use. It returns JSON-safe `AnalysisSuiteDatasetCatalogReport` and `AnalysisSuiteDatasetReadinessReport` objects. The service scans Analysis Database manifest paths directly so corrupt or unreadable manifests can be reported as diagnostics instead of disappearing through Data Manager's resilient listing behavior.
+
+Readiness status values are:
+
+- `ready`
+- `draft`
+- `missing_dataframe`
+- `stale_source`
+- `incomplete_topology`
+- `corrupt_manifest`
+- `corrupt_dataframe`
+- `blocked`
+- `error`
+
+Strict-ready requires:
+
+- a readable `manifest.json`;
+- a materialized Analysis Database;
+- an existing readable `dataframe.csv`;
+- dataframe metadata and hash/fingerprint consistency when materialization metadata provides a hash;
+- clean materialization source-OHLCV drift status from `AnalysisDatabaseStore.materialization_source_ohlcv_drift_report(...)`;
+- complete minimum topology from `AnalysisDatasetGeographyPolicy`.
+
+The minimum Analysis Suite topology is accepted OHLC base plus explicit Volume artifact, Braids artifact, Peaks & Troughs artifact, and UTC / Universal Trend Classifier artifact. Raw OHLCV volume is not an explicit Volume artifact; the explicit artifact has artifact identity, recipe identity, sidecar metadata, update/recovery lineage, and Analysis Database component behavior.
+
+AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. It does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
 
 ### Artifact recipe and recovery orchestration semantics
 

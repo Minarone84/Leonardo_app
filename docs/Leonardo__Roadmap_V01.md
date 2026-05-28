@@ -1,6 +1,6 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.32
+Version: v0.33
 Status: Living document (expected to change)
 Updated: 2026-05-28
 
@@ -329,6 +329,7 @@ Implemented baseline:
 - `DataManagerWindow` introduced as a top-level managed GUI window under the Analysis workflow.
 - Analysis Database contract, naming policy, draft manifest workflow, materialization, explicit component editing, and read-only dataframe preview were introduced.
 - Analysis Databases are stored under `analysis_databases/{database_id}/` with `manifest.json` and optional/materialized `dataframe.csv`.
+- AS1 added the read-only `AnalysisSuiteDatasetReadinessService` for future Analysis Suite dataset consumption. It reports `ready`, `draft`, `missing_dataframe`, `stale_source`, `incomplete_topology`, `corrupt_manifest`, `corrupt_dataframe`, `blocked`, and `error` readiness states without adding an Analysis Suite GUI, project/run/report stores, model logic, artifact calculation, database materialization, or OHLCV repair.
 - `Database seed creator` creates named database seeds with dataset-prefix defaults such as `BTCUSDT_30m_`, no-whitespace validation, and same-market duplicate-name rejection.
 - Checked saved artifact columns feed the `Database seed creator` only; they do not feed Database Builder.
 - Saved artifact column discovery is shared through a GUI-owned loader so the main selector, build dialog, and component editor use the same artifact listing behavior.
@@ -639,6 +640,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.33: Analysis Suite dataset readiness AS1 sync. Documents the read-only `AnalysisSuiteDatasetReadinessService`, readiness/catalog reports, strict-ready policy, minimum topology requirements, corrupt manifest/dataframe/source-drift diagnostics, and unchanged Data Manager/OHLCV/GUI boundaries. Analysis Suite GUI, Analysis Projects/Runs/Reports, model logic, artifact calculation, database rebuild/materialization, and OHLCV repair remain out of scope.
+
 v0.32: Data Manager Construct Batch Builder sync. Documents DMCB1-DMCB5: Data Manager-only construct batch popup/button behavior, read-only planner preview, recipe persistence, optional ordered collection persistence, artifact calculation through existing recipe execution/calculation ownership, supported unary/delta constructs, excluded topology-template/grouped-analysis constructs, timestamp-safe alignment rules, and unchanged Analysis Database/raw-OHLCV/Research Suite boundaries.
 
 v0.31: Data Manager selected update sync. Documents DMU1 60% usable-screen-width Data Manager dialogs, DMU2 `DataManagerSelectedUpdateService`, DMU3 selected artifact/database `Check Update` and `Update Selected...` controls, OLD/DRAFT semantics, synchronous selected-update reports, and unchanged raw-OHLCV/recipe-collection ownership boundaries. Final smoke remains pending.

@@ -1,6 +1,6 @@
 # Financial Tools Contract System
 
-Version: v1.6
+Version: v1.7
 Date: 2026-05-28
 
 ## Purpose
@@ -142,6 +142,8 @@ This applies to OHLCV, indicator, oscillator, and construct CSV artifacts. Analy
 Analysis Database creation is a user-facing `Database seed creator` workflow. Recipe collections may extend a selected Analysis Database through C2 planning and `RecipeCollectionDatabaseService.extend_database_from_plan(...)`, but the GUI does not expose collection-driven database creation. Extension does not materialize databases, calculate artifacts, or execute recipes.
 
 Selected artifact and Analysis Database updates are planned through `DataManagerSelectedUpdateService`, not by GUI-side sidecar or manifest policy. `Check Update` is read-only and reports service-owned statuses. `Update Selected Artifacts` may execute only checked OLD/actionable artifact actions through the existing recovery/regeneration/calculation path. `Update Selected Databases` may rebuild only checked OLD/actionable materialized databases through Analysis Database materialization ownership; DRAFT is not OLD, components are not added/removed/replaced, and unknown lineage is not treated as actionable by default.
+
+Data Manager Construct Batch planning consumes contract/spec/naming metadata through data-layer services. Generic batch supports unary `derivative`, `angle`, `percent_span_angle`, and `angle_momentum`, plus binary `delta` with report semantics `delta = minuend - subtrahend`. Source eligibility uses saved artifact `selectable` / `analysis_usable` metadata; non-renderable but analysis-usable outputs may be valid sources, while non-selectable utility columns are blocked. Timestamp-safe alignment requires shared timestamp keys and common range evidence, not equal row count alone. Preview planning writes nothing, Save Recipes writes through `ArtifactRecipeStore`, Save as Collection writes through `ArtifactRecipeCollectionStore`, and Calculate Artifacts delegates through `ArtifactRecipeExecutor` / `ArtifactCalculationService` after recipes are saved or reused. Construct Batch does not create or materialize Analysis Databases, and the GUI does not write artifact CSV or sidecar files directly.
 
 The sidecar may include:
 

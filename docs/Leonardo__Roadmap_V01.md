@@ -1,8 +1,8 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.20
+Version: v0.32
 Status: Living document (expected to change)
-Updated: 2026-05-25
+Updated: 2026-05-28
 
 Purpose
 
@@ -342,7 +342,7 @@ Implemented baseline:
 - Duplicate visible-name validation applies to draft creation and rename, not to build/rebuild of an existing database by `database_id`.
 - Data Manager opens maximized and uses the accepted M6F compact visual layout: Dataset and Calculate and Save Tool Outputs on the top row, DataFrame Preview and Saved Indicators / Oscillators / Constructs on the middle row, Data Checks / Metadata Tools plus Database seed creator on the lower-left area, and Database Builder on the lower-right area.
 - Main Data Manager widgets use the shared right-side button rack for actions.
-- Data Manager button racks have a 260px minimum width, and the artifact calculator popup has a 900x620 minimum size.
+- Data Manager button racks have a 260px minimum width, and the artifact calculator popup opens at 60% of usable screen width and height while preserving its 900x620 minimum size.
 - DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack.
 - Saved artifact actions and Database Builder actions use the shared button rack so lists and details retain content width.
 - Data Manager-local text is enlarged and widget titles are bold while normal labels/buttons remain normal weight.
@@ -478,6 +478,19 @@ Implemented baseline:
   - Check Update is read-only; Update Selected acts only on checked OLD/actionable items from the latest plan.
   - Selected update dialogs provide preflight, synchronous running state, and terminal report without fake mid-operation cancellation.
   - Raw OHLCV update/repair/acceptance remains Download Manager / OHLCV Maintenance.
+
+- DMCB Data Manager Construct Batch Builder workflow is accepted:
+  - DMCB1 added the Data Manager-only `Construct Batch...` entry point from Calculate and Save Tool Outputs when Constructs are selected, and sized the Data Manager financial-tools popup at 60% usable screen width and height while preserving minimum-size intent.
+  - DMCB2 added `DataManagerConstructBatchPlanner` with `plan_unary_batch(...)`, `plan_delta_batch(...)`, and `plan_from_intent(...)` for read-only batch planning.
+  - Supported generic batch constructs are unary `derivative`, `angle`, `percent_span_angle`, `angle_momentum`, and binary `delta` with `delta = minuend - subtrahend` reporting.
+  - Generic batch excludes `braids`, `braid_instability`, `trap_area`, and `dynamic_binning`; topology-template and grouped-analysis workflows remain future/special-case work.
+  - Planning uses saved artifact metadata, `selectable` / `analysis_usable` eligibility, timestamp-safe alignment/common-range checks, expected recipe/output preview, and read-only existing-recipe detection. Equal row count alone is not alignment proof.
+  - DMCB3 added `DataManagerConstructBatchPersistenceService` for saving selected planned recipes through `ArtifactRecipeStore`, reusing existing recipes, and optionally saving ordered recipe collections through `ArtifactRecipeCollectionStore`.
+  - DMCB4 wired the GUI to Preview Plan, Save Recipes, and Save as Collection. Blocked/error items cannot be persisted, existing_recipe items can be reused, and cross-widget selected saved artifact column handoff remains postponed until a clean selection bridge exists.
+  - DMCB5 added `DataManagerConstructBatchExecutionService` and enabled Calculate Artifacts after a valid plan with selected persistable items.
+  - Calculation persists/reuses selected recipes first, then executes saved/reused recipes sequentially through `ArtifactRecipeExecutor` / `ArtifactCalculationService`.
+  - The GUI displays preflight/running/terminal reports and refreshes saved artifact lists, but it does not directly write CSV or sidecar files and does not calculate artifacts directly.
+  - Construct Batch does not create, extend, build, rebuild, or materialize Analysis Databases, and raw OHLCV update/repair/acceptance remains Download Manager / OHLCV Maintenance.
 
 - M17 Study Environment recipe-to-database workflow is accepted:
   - Historical saved studies now carry `StudyUserMetadata` with `important`, `description`, and `dataset_role`.
@@ -626,6 +639,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.32: Data Manager Construct Batch Builder sync. Documents DMCB1-DMCB5: Data Manager-only construct batch popup/button behavior, read-only planner preview, recipe persistence, optional ordered collection persistence, artifact calculation through existing recipe execution/calculation ownership, supported unary/delta constructs, excluded topology-template/grouped-analysis constructs, timestamp-safe alignment rules, and unchanged Analysis Database/raw-OHLCV/Research Suite boundaries.
+
 v0.31: Data Manager selected update sync. Documents DMU1 60% usable-screen-width Data Manager dialogs, DMU2 `DataManagerSelectedUpdateService`, DMU3 selected artifact/database `Check Update` and `Update Selected...` controls, OLD/DRAFT semantics, synchronous selected-update reports, and unchanged raw-OHLCV/recipe-collection ownership boundaries. Final smoke remains pending.
 
 v0.30: Post-smoke correction sync. Documents DM3 selected-database-only collection extension, DM2 Data Manager readability/highlight polish, RS8 Style editor Apply semantics, RS9 notebook indicator refresh, RS10 Workspace Snapshot load preflight/loading, and DL1 Download Manager GUI-layer progress throttling. Final smoke remains pending.

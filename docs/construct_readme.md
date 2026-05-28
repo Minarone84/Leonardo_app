@@ -1,7 +1,7 @@
 # Construct Naming & Behavior Policy (Leonardo)
 
-Version: v1.7
-Date: 2026-05-22
+Version: v1.8
+Date: 2026-05-28
 Scope: Construct runtime naming, input-role semantics, multi-output behavior, saved identity, metadata sidecars, execution environment context, renderability boundary, and controller/UI integration
 
 This document defines the canonical rules for:
@@ -469,6 +469,20 @@ Saved construct sources must be aligned by shared key data such as `ts_ms` or `t
 Equal row count alone is not considered valid alignment proof.
 
 Positional artifact injection is not a valid deterministic alignment strategy.
+
+### Data Manager Construct Batch policy
+
+Generic Data Manager Construct Batch supports batch-friendly construct expansion only:
+
+- unary `derivative`;
+- unary `angle`;
+- unary `percent_span_angle`;
+- unary `angle_momentum`;
+- binary `delta`, reported as `delta = minuend - subtrahend`.
+
+The planner consumes structured saved artifact metadata rather than display labels. Source eligibility is based on `selectable` and `analysis_usable`; non-renderable but analysis-usable outputs may be valid sources, while non-selectable utility outputs are blocked. Delta candidates require timestamp overlap/common range evidence between the fixed and variable sources. Equal row count alone is not alignment proof.
+
+Generic batch does not support `braids`, `braid_instability`, `trap_area`, or `dynamic_binning`. Braids, braid instability, and trap area require curated topology templates rather than broad source expansion. Dynamic binning is a grouped analysis workflow and remains outside one-source/per-recipe batch generation.
 
 ---
 

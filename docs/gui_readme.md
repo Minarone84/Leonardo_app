@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.29
+Version: v3.30
 Date: 2026-05-28
 
 ## Overview
@@ -23,7 +23,7 @@ It is built around a modular chart engine that supports:
 - per-study metadata controls in Save Study Environment / Update existing Study Environment
 - Save as new / Update existing flows for saved Study Environments, Workspace Snapshots, and Notebooks
 - Research Suite managers for saved Study Environments and Workspace Snapshots
-- Data Manager Study Environment to recipe export, selected Analysis Database extension from recipe collections, and selected artifact/database update workflows
+- Data Manager Study Environment to recipe export, selected Analysis Database extension from recipe collections, selected artifact/database update workflows, and Construct Batch Builder workflows
 - OHLCV Maintenance for explicit validation, repair, source-invalid reporting, and source correction
 - accepted OHLCV gating for Research Suite and Data Manager workflows
 - centralized runtime diagnostics
@@ -313,7 +313,8 @@ Current Analysis Database UI behavior:
 - rename and delete are exposed as user actions, but durable mutation is store-owned;
 - Data Manager opens maximized and uses a compact layout where the top row contains Dataset and Calculate and Save Tool Outputs, the middle row contains DataFrame Preview and Saved Indicators / Oscillators / Constructs, and the lower area keeps Data Checks / Metadata Tools plus Database seed creator on the left with Database Builder on the right;
 - main Data Manager widgets use the shared right-side `make_button_rack(...)` action layout with a 260px minimum action rack width;
-- the artifact calculator popup opens with a 900x620 minimum size so Calculate and Save Tool Outputs controls remain readable;
+- the artifact calculator popup opens at 60% of usable screen width and 60% of usable screen height while preserving its 900x620 minimum size so Calculate and Save Tool Outputs controls remain readable;
+- the Data Manager-only `Construct Batch...` action appears when the Calculate and Save Tool Outputs family is Constructs; Research Suite Financial Tools windows do not expose this action;
 - Saved Artifact Recipes, Saved Artifact Recipe Collections, Edit Analysis Database Components, and Extend Analysis Database from Collection dialogs open at 60% of usable screen width and are centered/fitted against available geometry while preserving their minimum sizes;
 - DataFrame Preview keeps source, row-limit, and visible timestamp information in the content header while its action remains in the shared button rack;
 - saved artifact actions use the shared button rack so the list retains content width;
@@ -352,6 +353,25 @@ Current selected artifact/database update UI behavior:
 - no fake mid-operation cancellation is offered for synchronous calculation or materialization;
 - status markings are display state from the latest check and are not written into artifact or database metadata; refreshing lists may clear or refresh those markings.
 
+Current Construct Batch Builder UI behavior:
+
+- the workflow opens from Data Manager -> Calculate and Save Tool Outputs -> Constructs -> `Construct Batch...`;
+- unary source expansion supports `derivative`, `angle`, `percent_span_angle`, and `angle_momentum`;
+- binary delta expansion supports `delta` and reports direction as `delta = minuend - subtrahend`;
+- generic batch mode does not offer `braids`, `braid_instability`, `trap_area`, or `dynamic_binning`; braids, braid instability, and trap area require curated topology templates, while dynamic binning is a grouped analysis workflow;
+- supported source groups include all saved indicators, all saved oscillators, all saved constructs, delta fixed close, and saved artifact fixed sources for delta;
+- cross-widget handoff for currently selected saved artifact columns is postponed until a clean selection bridge exists;
+- `Preview Plan` calls the data-layer construct batch planner and writes nothing;
+- the plan table shows planned, existing_recipe, blocked, and error items, including expected outputs and blocker/warning summaries;
+- blocked and error plan items cannot be selected for persistence or calculation;
+- planned items may be saved as recipes and existing_recipe items may be reused or included in collections;
+- `Save Recipes` calls the construct batch persistence service to save selected planned recipes through `ArtifactRecipeStore` and reuse selected existing recipes;
+- `Save as Collection` persists/reuses selected recipes first and saves an ordered recipe collection through `ArtifactRecipeCollectionStore`;
+- `Calculate Artifacts` persists/reuses selected recipes first, then calls the construct batch execution service, which executes saved/reused recipes sequentially through `ArtifactRecipeExecutor` / `ArtifactCalculationService`;
+- preflight, running, and terminal states report selected counts, saved/reused recipes, completed/skipped/blocked/failed calculation results, and partial failures without claiming background task execution;
+- the dialog refreshes saved artifact lists after calculation and refreshes recipe/collection lists when persistence occurs where safe hooks exist;
+- Construct Batch never extends, builds, rebuilds, creates, or materializes Analysis Databases automatically.
+
 Research Suite artifact save also saves or reuses the corresponding reproducible recipe in the same Data Manager-visible `ArtifactRecipeStore(historical_root=...)` partition-local `artifact_recipes` store. Artifact sidecars record `recipe_id`, `recipe_hash`, and `recipe_hash_short` as recipe metadata.
 
 Study application remains chart-local and non-persistent. Saving a Study Environment or Workspace Snapshot does not directly persist recipes.
@@ -374,6 +394,7 @@ It must not:
 - silently mutate valid artifact metadata;
 - classify artifact recovery state locally;
 - classify selected update state locally;
+- classify Construct Batch source eligibility, alignment, or existing-recipe truth locally;
 - classify dataset geography locally;
 - map recipe collection snapshots to Analysis Database components locally;
 - classify OHLCV loadability locally;
@@ -381,6 +402,7 @@ It must not:
 - regenerate artifacts without the data-layer recovery/executor boundary;
 - rebuild linked Analysis Databases outside `ArtifactRecoveryDatabaseRebuilder` / `AnalysisDatabaseStore`;
 - rebuild selected Analysis Databases outside `DataManagerSelectedUpdateService`;
+- execute Construct Batch recipes outside `DataManagerConstructBatchExecutionService`;
 - consume checked artifact columns inside Database Builder;
 - replace Analysis Database components during build/rebuild;
 - execute Plan Updates from the recipe collection database create/extend dialog.
@@ -391,9 +413,11 @@ Data Manager lineage hardening, source-drift classification, and update planning
 
 The implemented update UI covers recipe-collection scoped plans plus explicit selected saved artifact and selected Analysis Database plans. These workflows follow local Data Manager data-layer service patterns rather than adding CoreBridge update-plan APIs. They are not a dataset-wide Update Manager dashboard, arbitrary dependency graph workflow, or background task/progress monitor.
 
+Construct Batch Builder follows the same local Data Manager service boundary. The GUI collects batch intent, displays planner/persistence/execution reports, and requests list refreshes. `DataManagerConstructBatchPlanner` owns source eligibility, timestamp-safe alignment, expected recipe preview, and read-only existing-recipe detection. `DataManagerConstructBatchPersistenceService` owns recipe and collection persistence. `DataManagerConstructBatchExecutionService` owns persistence-before-calculation orchestration and delegates artifact calculation to the existing recipe executor/calculation services. The GUI must not parse sidecars for policy, prove alignment from row counts, directly write artifact files, or call artifact calculation internals.
+
 Study Environment recipe export and selected-database collection extension are also local Data Manager workflows that display data-layer plans and reports.
 
-They do not calculate artifacts, execute recipes, run update plans, export Workspace Snapshots, offer collection-driven database creation, or materialize databases.
+Study Environment recipe export and selected-database collection extension do not calculate artifacts, execute recipes, run update plans, export Workspace Snapshots, offer collection-driven database creation, or materialize databases.
 
 
 ## Historical Workspace Model

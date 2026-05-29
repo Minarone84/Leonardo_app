@@ -7,7 +7,7 @@ from types import SimpleNamespace
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PySide6.QtGui import QAction
-from PySide6.QtWidgets import QApplication, QPushButton, QPlainTextEdit, QTableWidget
+from PySide6.QtWidgets import QApplication, QComboBox, QPushButton, QPlainTextEdit, QSpinBox, QTableWidget
 
 from leonardo.gui.windows.analysis_suite_window import AnalysisSuiteWindow
 from leonardo.gui.windows.window_manager import WindowManager
@@ -82,6 +82,30 @@ class _FakeReadinessService:
         )
 
 
+class _FakePreviewService:
+    def __init__(self, report: object) -> None:
+        self.report = report
+        self.calls: list[dict[str, object]] = []
+
+    def preview_for_database(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        mode: str = "head",
+        row_limit: int | None = None,
+    ) -> object:
+        self.calls.append(
+            {
+                "market": market,
+                "database_id": database_id,
+                "mode": mode,
+                "row_limit": row_limit,
+            }
+        )
+        return self.report
+
+
 def _ctx(tmp_path: Path, state: _FakeState | None = None):
     return SimpleNamespace(
         config=SimpleNamespace(runtime=SimpleNamespace(data_dir=str(tmp_path))),
@@ -127,6 +151,54 @@ def _report(
         missing_topology=tuple(missing_topology),
         blockers=tuple(blockers),
         warnings=tuple(warnings),
+        errors=tuple(errors),
+    )
+
+
+def _preview_report(
+    *,
+    database_id: str = "adb_ready",
+    status: str = "previewable",
+    mode: str = "head",
+    strict_ready: bool = True,
+    can_preview: bool = True,
+    blockers=(),
+    warnings=(),
+    errors=(),
+):
+    return SimpleNamespace(
+        database_id=database_id,
+        display_name=database_id,
+        exchange="bybit",
+        market_type="linear",
+        symbol="BTCUSDT",
+        timeframe="30m",
+        dataframe_path=f"C:/data/{database_id}/dataframe.csv",
+        manifest_path=f"C:/data/{database_id}/manifest.json",
+        readiness_status="ready" if strict_ready else "incomplete_topology",
+        strict_ready=strict_ready,
+        can_preview=can_preview,
+        status=status,
+        mode=mode,
+        requested_limit=25,
+        effective_limit=25,
+        max_limit=500,
+        total_row_count=100,
+        total_column_count=3,
+        returned_row_count=2,
+        columns=("ts_ms", "ts_utc", "value"),
+        rows=(
+            {"ts_ms": 1000, "ts_utc": "1970-01-01 00:00:01 UTC", "value": "1.0"},
+            {"ts_ms": 2000, "ts_utc": "1970-01-01 00:00:02 UTC", "value": None},
+        )
+        if status == "previewable"
+        else (),
+        preview_first_ts_ms=1000 if status == "previewable" else None,
+        preview_last_ts_ms=2000 if status == "previewable" else None,
+        dataset_first_ts_ms=1000,
+        dataset_last_ts_ms=5000,
+        warnings=tuple(warnings),
+        blockers=tuple(blockers),
         errors=tuple(errors),
     )
 
@@ -213,6 +285,219 @@ def test_analysis_suite_window_constructs_and_populates_readiness_rows(tmp_path:
     assert "- volume_artifact" in details.toPlainText()
     assert "missing_topology: volume_artifact, utc" in details.toPlainText()
     assert service.calls == 1
+
+
+def test_analysis_suite_window_preview_controls_exist(tmp_path: Path) -> None:
+    _qapp()
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(),
+        preview_service=_FakePreviewService(_preview_report()),
+    )
+
+    mode = window.findChild(QComboBox, "analysisSuitePreviewModeCombo")
+    row_limit = window.findChild(QSpinBox, "analysisSuitePreviewRowLimitSpin")
+    button = window.findChild(QPushButton, "analysisSuitePreviewButton")
+    table = window.findChild(QTableWidget, "analysisSuitePreviewTable")
+    summary = window.findChild(QPlainTextEdit, "analysisSuitePreviewSummaryText")
+
+    assert mode is not None
+    assert [mode.itemText(index) for index in range(mode.count())] == ["Head", "Tail"]
+    assert row_limit is not None
+    assert row_limit.value() == 100
+    assert row_limit.maximum() >= 500
+    assert button is not None
+    assert button.text() == "Preview Dataframe"
+    assert button.isEnabled() is False
+    assert table is not None
+    assert table.isSortingEnabled() is False
+    assert summary is not None
+    assert summary.isReadOnly() is True
+
+
+def test_analysis_suite_window_preview_button_follows_can_preview(tmp_path: Path) -> None:
+    _qapp()
+    service = _FakeReadinessService(
+        items=(
+            _report(
+                database_id="adb_ready",
+                display_name="ReadyDB",
+                readiness_status="ready",
+                strict_ready=True,
+                can_preview=True,
+            ),
+            _report(
+                database_id="adb_draft",
+                display_name="DraftDB",
+                readiness_status="draft",
+                strict_ready=False,
+                can_preview=False,
+                blockers=("database_not_materialized",),
+            ),
+        )
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=service,
+        preview_service=_FakePreviewService(_preview_report()),
+    )
+
+    table = window.findChild(QTableWidget, "analysisSuiteCatalogTable")
+    button = window.findChild(QPushButton, "analysisSuitePreviewButton")
+    summary = window.findChild(QPlainTextEdit, "analysisSuitePreviewSummaryText")
+    assert table is not None
+    assert button is not None
+    assert summary is not None
+
+    assert button.isEnabled() is True
+    table.selectRow(1)
+    assert button.isEnabled() is False
+    assert "database_not_materialized" in summary.toPlainText()
+    table.selectRow(0)
+    assert button.isEnabled() is True
+
+
+def test_analysis_suite_window_preview_calls_service_and_renders_table(tmp_path: Path) -> None:
+    _qapp()
+    preview_service = _FakePreviewService(
+        _preview_report(
+            strict_ready=False,
+            warnings=("non_strict_preview",),
+            blockers=("missing_topology: utc",),
+        )
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="incomplete_topology",
+                    strict_ready=False,
+                    can_preview=True,
+                ),
+            )
+        ),
+        preview_service=preview_service,
+    )
+
+    mode = window.findChild(QComboBox, "analysisSuitePreviewModeCombo")
+    row_limit = window.findChild(QSpinBox, "analysisSuitePreviewRowLimitSpin")
+    button = window.findChild(QPushButton, "analysisSuitePreviewButton")
+    preview_table = window.findChild(QTableWidget, "analysisSuitePreviewTable")
+    summary = window.findChild(QPlainTextEdit, "analysisSuitePreviewSummaryText")
+    assert mode is not None
+    assert row_limit is not None
+    assert button is not None
+    assert preview_table is not None
+    assert summary is not None
+
+    mode.setCurrentIndex(1)
+    row_limit.setValue(25)
+    button.click()
+
+    assert len(preview_service.calls) == 1
+    call = preview_service.calls[0]
+    market = call["market"]
+    assert getattr(market, "exchange") == "bybit"
+    assert getattr(market, "market_type") == "linear"
+    assert getattr(market, "symbol") == "BTCUSDT"
+    assert getattr(market, "timeframe") == "30m"
+    assert call["database_id"] == "adb_ready"
+    assert call["mode"] == "tail"
+    assert call["row_limit"] == 25
+
+    assert preview_table.rowCount() == 2
+    assert preview_table.columnCount() == 3
+    assert preview_table.horizontalHeaderItem(0).text() == "ts_ms"
+    assert preview_table.item(0, 0).text() == "1000"
+    assert preview_table.item(1, 2).text() == "-"
+    assert preview_table.editTriggers() == QTableWidget.NoEditTriggers
+
+    summary_text = summary.toPlainText()
+    assert "Status: previewable" in summary_text
+    assert "Requested limit: 25" in summary_text
+    assert "Effective limit: 25" in summary_text
+    assert "Returned rows: 2" in summary_text
+    assert "Strict ready: No" in summary_text
+    assert "non_strict_preview" in summary_text
+    assert "missing_topology: utc" in summary_text
+
+
+def test_analysis_suite_window_displays_blocked_preview_report(tmp_path: Path) -> None:
+    _qapp()
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        preview_service=_FakePreviewService(
+            _preview_report(
+                status="blocked",
+                blockers=("dataset_not_previewable",),
+                errors=("preview refused",),
+            )
+        ),
+    )
+
+    button = window.findChild(QPushButton, "analysisSuitePreviewButton")
+    preview_table = window.findChild(QTableWidget, "analysisSuitePreviewTable")
+    summary = window.findChild(QPlainTextEdit, "analysisSuitePreviewSummaryText")
+    assert button is not None
+    assert preview_table is not None
+    assert summary is not None
+
+    button.click()
+
+    assert preview_table.rowCount() == 0
+    assert "Status: blocked" in summary.toPlainText()
+    assert "dataset_not_previewable" in summary.toPlainText()
+    assert "preview refused" in summary.toPlainText()
+
+
+def test_analysis_suite_window_refresh_clears_stale_preview(tmp_path: Path) -> None:
+    _qapp()
+    readiness = _FakeReadinessService(
+        items=(
+            _report(
+                database_id="adb_ready",
+                display_name="ReadyDB",
+                readiness_status="ready",
+                strict_ready=True,
+                can_preview=True,
+            ),
+        )
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=readiness,
+        preview_service=_FakePreviewService(_preview_report()),
+    )
+    button = window.findChild(QPushButton, "analysisSuitePreviewButton")
+    preview_table = window.findChild(QTableWidget, "analysisSuitePreviewTable")
+    summary = window.findChild(QPlainTextEdit, "analysisSuitePreviewSummaryText")
+    assert button is not None
+    assert preview_table is not None
+    assert summary is not None
+
+    button.click()
+    assert preview_table.rowCount() == 2
+
+    readiness.items = ()
+    window.refresh_catalog()
+
+    assert preview_table.rowCount() == 0
+    assert button.isEnabled() is False
+    assert "Select a previewable Analysis Database" in summary.toPlainText()
 
 
 def test_analysis_suite_window_handles_empty_and_service_failure(tmp_path: Path) -> None:
@@ -313,6 +598,10 @@ def test_analysis_suite_window_static_boundaries() -> None:
     window_manager_source = Path("src/leonardo/gui/windows/window_manager.py").read_text(encoding="utf-8")
 
     forbidden = (
+        "pandas",
+        "pd.read_csv",
+        "csv.",
+        "load_dataframe",
         "ArtifactCalculationService",
         "ArtifactRecipeExecutor",
         "ArtifactRecoveryRegenerator",

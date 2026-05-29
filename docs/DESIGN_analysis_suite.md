@@ -1,7 +1,7 @@
 # Analysis Suite Design
 
-Version: v0.1
-Status: AS8-AUDIT design only
+Version: v0.2
+Status: AS8 accepted backend MVP plus future architecture
 Date: 2026-05-29
 
 ## Purpose
@@ -10,10 +10,11 @@ This document defines the first Analysis Suite architecture for POIs, event
 families, roads, outcomes, false-signal classes, genome states, and genome
 paths.
 
-AS8-AUDIT is a design boundary. It does not implement backend services, GUI
-controls, persistence, white-box rule discovery, backtesting, model training,
-signals, neural agents, Decisor logic, artifact calculation, recipe execution,
-Analysis Database mutation, or OHLCV repair.
+AS8-AUDIT established the design boundary. AS8 implements the first backend
+POI/family planner within that boundary. The accepted AS8 backend does not add
+GUI controls, persistence, white-box rule discovery, backtesting, model
+training, signals, neural agents, Decisor logic, artifact calculation, recipe
+execution, Analysis Database mutation, or OHLCV repair.
 
 ## Current Foundation
 
@@ -38,10 +39,12 @@ The accepted Analysis Suite foundation is read-only:
   CSV headers.
 - AS7: `AnalysisSuiteDiagnosticReportService` composes AS1, AS5, and AS6
   reports into JSON-safe pre-analysis coherence reports.
+- AS8: `AnalysisSuitePoiFamilyPlanner` previews POI occurrences and POI
+  family membership from prepared Analysis Database columns with bounded
+  JSON-safe reports.
 
-AS8 builds on that foundation conceptually. It should later consume only
-readiness/diagnostic contexts that are acceptable for analysis, but AS8-AUDIT
-does not wire those services.
+AS8 consumes AS1 readiness or optional AS7 diagnostic context. It remains
+backend-only, read-only, and non-persistent.
 
 ## Manifesto Direction
 
@@ -73,7 +76,8 @@ The operating sequence remains:
 8. Neural refinement.
 9. Decisor selection.
 
-AS8 is step 5 architecture only.
+AS8 is the first backend foundation for step 5. It remains limited to typed
+POI/family occurrence preview.
 
 ## World-Line Model
 
@@ -165,7 +169,7 @@ Future family definition metadata:
 - Leakage and knowability constraints.
 - Version/schema.
 
-AS8 should define family membership with explicit rules, not with free-form GUI
+AS8 defines family membership with explicit rules, not with free-form GUI
 labeling or raw header matching.
 
 ## Road Definition
@@ -207,9 +211,9 @@ Examples:
 - Range continuation or range break after the POI.
 
 Outcomes are event-centered. AS5 targets are generic future labels aligned to
-each timestamp. AS8 outcomes are measured relative to POI occurrences and
-families. Future AS8 code may reuse AS5-style future-return or direction logic,
-but outcome reports must remain POI/event-family aware.
+each timestamp. Future outcome analysis is measured relative to POI
+occurrences and families, and may reuse AS5-style future-return or direction
+logic without becoming generic per-row labels.
 
 ## False-Signal Class
 
@@ -298,8 +302,7 @@ than silently filled.
 AS1:
 
 - Owns dataset readiness and `can_preview`.
-- Future AS8 implementation should block when AS1 says the dataset is not
-  safely consumable.
+- AS8 blocks when AS1 says the dataset is not safely consumable.
 
 AS3/AS4:
 
@@ -309,25 +312,26 @@ AS3/AS4:
 AS5:
 
 - Defines generic target/label preview.
-- AS8 outcomes are POI/event-centered and may later reuse AS5-style formulas
-  without becoming generic per-row labels.
+- Future outcome work in this architecture is POI/event-centered and may reuse
+  AS5-style formulas without becoming generic per-row labels.
 
 AS6:
 
 - Owns feature eligibility and leakage prevention.
-- AS8 genome inputs and event-family predicates must consume AS6-validated
-  columns and metadata, not raw dataframe headers.
+- AS8 event-family predicates consume AS6-validated columns and metadata when
+  available, not raw dataframe headers. Future genome inputs must preserve the
+  same metadata boundary.
 
 AS7:
 
 - Checks setup coherence across dataset, target, and feature-set reports.
-- Future AS8 implementation should consume only diagnostic contexts that are
-  `ready` or acceptable `warning` states, and should block `blocked` or `error`
-  diagnostics.
+- AS8 can consume AS7 diagnostic context.
+- AS8 blocks `blocked` or `error` diagnostics and may run on acceptable
+  `ready` or `warning` diagnostics with warnings preserved.
 
-## Future AS8 Backend MVP Recommendation
+## Accepted AS8 Backend MVP
 
-Recommended next implementation:
+Accepted implementation:
 
 AS8 - POI Definition and Family Planner Backend.
 
@@ -342,37 +346,78 @@ Scope:
 - No model training.
 - No signals.
 
-Likely source file:
+Source file:
 
 - `src/leonardo/data/historical/analysis_suite_poi_family_planner.py`
 
-Likely test file:
+Test file:
 
 - `tests/test_analysis_suite_poi_family_planner.py`
 
-Suggested public models:
+Public models:
 
 - `AnalysisSuitePoiDefinition`.
+- `AnalysisSuitePoiCondition`.
 - `AnalysisSuitePoiOccurrence`.
 - `AnalysisSuitePoiFamilyDefinition`.
+- `AnalysisSuitePoiFamilyMembership`.
+- `AnalysisSuitePoiOccurrencePreviewReport`.
 - `AnalysisSuitePoiFamilyPreviewReport`.
 - `AnalysisSuitePoiFamilyPlanner`.
 
-MVP behavior:
+Public methods:
 
-- Consume AS1/AS7 acceptable Analysis Database context.
-- Use manifest/artifact metadata to resolve source columns.
-- Start with existing topology columns:
-  - Peaks & Troughs T7 peak/trough occurrences.
-  - UTC state/transition context where columns are available.
-  - Braids compression context where columns are available.
+- `preview_poi_occurrences(...)`.
+- `preview_family(...)`.
+- `validate_family_definition(...)`.
+
+Supported POI event kinds:
+
+- `sparse_event`: occurrence where the source column has a non-null,
+  non-NaN, nonzero event marker.
+- `boolean_true`: occurrence where the source column is true or `1`.
+- `value_equals`: occurrence where the source column equals an explicit event
+  value.
+- `transition`: occurrence where the previous value changes into the target
+  event value.
+
+Supported family condition operators:
+
+- `equals`
+- `not_equals`
+- `gt`
+- `gte`
+- `lt`
+- `lte`
+- `in`
+- `not_in`
+- `is_null`
+- `not_null`
+
+Accepted behavior:
+
+- Consume AS1 readiness or optional AS7 diagnostic context.
+- Block when AS1 `can_preview == false`.
+- Block blocked/error AS7 diagnostics.
+- Allow non-strict but previewable datasets with warnings and blockers
+  preserved.
+- Use manifest/artifact metadata to validate source and condition columns
+  before dataframe reads.
+- Reject target-only, future-derived, and `feature_eligible = false` inputs
+  when metadata is available.
+- Read dataframe values only for read-only physical event and condition
+  previews.
+- Bound samples with default `100` and max `500`.
 - Produce occurrence previews and family membership previews.
 - Preserve `anchor_ts_ms`, `event_ts_ms`, and `confirmation_ts_ms` where
   knowability differs.
 - Return JSON-safe reports with blockers/warnings/errors.
 
-The MVP should not discover families automatically. It should evaluate explicit
-POI/family definitions.
+AS8 does not discover families automatically. It evaluates explicit POI/family
+definitions. It does not treat raw CSV headers as feature or event truth.
+
+AS8 does not compute Peaks & Troughs, UTC, or Braids. It consumes already
+prepared Analysis Database columns.
 
 ## Future GUI Implications
 
@@ -388,16 +433,24 @@ Suite surface exposes:
 - occurrence preview;
 - road/outcome summaries.
 
-Current AS8-AUDIT does not add GUI controls and does not change
-`AnalysisSuiteWindow`.
+Current AS8 does not add GUI controls and does not change
+`AnalysisSuiteWindow`. AnalysisSuiteWindow still exposes only the read-only
+catalog and bounded dataframe preview.
 
 ## Out-Of-Scope Boundaries
 
-AS8-AUDIT and the recommended AS8 MVP must not add:
+AS8 does not add:
 
 - GUI category builder.
+- POI/family GUI controls.
 - Persistent POI family store.
+- POI definition or POI family definition persistence.
 - Analysis Project/Run/Report stores.
+- Road classification.
+- Full outcome distribution measurement.
+- Genome path building.
+- Dynamic Binner implementation.
+- Variation Analyzer implementation.
 - White-box rule discovery.
 - Backtesting engine.
 - Research Suite validation integration.
@@ -407,6 +460,9 @@ AS8-AUDIT and the recommended AS8 MVP must not add:
 - Trading signals.
 - Artifact calculation.
 - Recipe execution.
+- Peaks & Troughs calculation.
+- UTC calculation.
+- Braids calculation.
 - Analysis Database build/rebuild/materialization.
 - Manifest or dataframe writes.
 - OHLCV repair or validation.
@@ -416,21 +472,14 @@ AS8-AUDIT and the recommended AS8 MVP must not add:
 
 Recommended sequence:
 
-1. AS8 - POI Definition and Family Planner Backend.
-   - Backend-only, read-only, no persistence.
-   - Consume AS1/AS7 acceptable database context.
-   - Define POI definitions, occurrence previews, and family membership
-     previews.
-   - Start with existing topology columns such as Peaks & Troughs, UTC, and
-     Braids.
-2. AS8D - Docs sync.
-3. AS9-AUDIT - Genome Encoding / Variation Analyzer / Dynamic Binner
-   Integration.
-4. AS9 - Genome Path Builder Backend.
-5. AS-GUI-AUDIT - Analysis Suite GUI functionality audit.
+1. AS8D - Docs sync.
+2. AS-GUI-AUDIT - Analysis Suite GUI functionality audit.
    - Decide how to expose target preview, feature-set builder, diagnostic
      reports, and POI/family/category builder after backend concepts are
      stable.
+3. AS9-AUDIT - Genome Encoding / Variation Analyzer / Dynamic Binner
+   Integration.
+4. AS9 - Genome Path Builder Backend.
 
 White-box rule discovery, Research Suite validation integration, neural
 refinement, and Decisor logic remain later architecture tracks.

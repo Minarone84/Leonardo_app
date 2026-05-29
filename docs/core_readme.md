@@ -1,6 +1,6 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.19
+Version: v3.20
 Date: 2026-05-29
 
 ## Overview
@@ -624,7 +624,7 @@ Data Manager materialization uses accepted OHLCV only. `ArtifactCalculationServi
 
 ### Analysis Suite dataset readiness semantics
 
-A read-only Analysis Suite catalog, bounded preview surface, target preview planner, feature-set planner, and diagnostic-report backend now exist, but project/run stores, model workflows, signal engines, persisted report systems, and trading systems remain out of scope. AS1 adds the read-only backend contract for Analysis Suite dataset consumption, AS2 exposes that contract in `AnalysisSuiteWindow`, AS3 adds the bounded dataframe preview service, AS4 wires that service into the window, AS5 adds backend target/label preview planning, AS6 adds backend feature-set planning, and AS7 adds backend diagnostic-report composition.
+A read-only Analysis Suite catalog, bounded preview surface, target preview planner, feature-set planner, diagnostic-report backend, and POI/family planner backend now exist, but project/run stores, model workflows, signal engines, persisted report systems, and trading systems remain out of scope. AS1 adds the read-only backend contract for Analysis Suite dataset consumption, AS2 exposes that contract in `AnalysisSuiteWindow`, AS3 adds the bounded dataframe preview service, AS4 wires that service into the window, AS5 adds backend target/label preview planning, AS6 adds backend feature-set planning, AS7 adds backend diagnostic-report composition, and AS8 adds backend POI/family occurrence planning.
 
 `AnalysisSuiteDatasetReadinessService` catalogs and evaluates Data Manager Analysis Databases for future Analysis Suite use. It returns JSON-safe `AnalysisSuiteDatasetCatalogReport` and `AnalysisSuiteDatasetReadinessReport` objects. The service scans Analysis Database manifest paths directly so corrupt or unreadable manifests can be reported as diagnostics instead of disappearing through Data Manager's resilient listing behavior.
 
@@ -655,7 +655,11 @@ AS7 owns only cross-report coherence checks. It reports dataset readiness, targe
 
 AS7 reads dataframe values only for AS6-accepted selected-feature consistency checks. Feature truth remains AS6 manifest/artifact metadata, not raw CSV headers. The diagnostic report is a pre-analysis coherence checkpoint before POI / event-family / road / genome architecture; it does not perform POI analysis, white-box rule discovery, Research Suite validation, neural refinement, or Decisor logic.
 
-AS8-AUDIT is documented in `docs/DESIGN_analysis_suite.md`. It defines the World Line, POIs, event families/subfamilies, roads, outcomes, false-signal classes, genomes, genome paths, event windows, AS1-AS7 relationships, and the recommended backend-only AS8 POI Definition and Family Planner MVP. AS8-AUDIT is design-only: no AS8 backend service, GUI wiring, persistence, POI discovery engine, white-box discovery, backtesting, model training, signals, artifact calculation, recipe execution, Analysis Database mutation, or OHLCV repair is implemented by the audit.
+AS8-AUDIT is documented in `docs/DESIGN_analysis_suite.md`. It defines the World Line, POIs, event families/subfamilies, roads, outcomes, false-signal classes, genomes, genome paths, event windows, AS1-AS7 relationships, and the backend-only AS8 POI Definition and Family Planner boundary.
+
+`AnalysisSuitePoiFamilyPlanner` is the backend-only read-only AS8 POI/family planning contract. It returns bounded JSON-safe `AnalysisSuitePoiOccurrencePreviewReport` and `AnalysisSuitePoiFamilyPreviewReport` diagnostics from in-memory `AnalysisSuitePoiDefinition`, `AnalysisSuitePoiCondition`, and `AnalysisSuitePoiFamilyDefinition` inputs. POI occurrence previews support `sparse_event`, `boolean_true`, `value_equals`, and `transition` event kinds. Family membership previews support AND-style same-row and fixed-lookback conditions with `equals`, `not_equals`, `gt`, `gte`, `lt`, `lte`, `in`, `not_in`, `is_null`, and `not_null` operators.
+
+AS8 gates access through AS1 readiness or an optional AS7 diagnostic report. `can_preview == false` blocks, blocked/error AS7 diagnostics block, and non-strict but previewable datasets may run while preserving warnings and blockers. The planner validates POI source and condition columns through Analysis Database manifest metadata before dataframe reads, rejects target-only, future-derived, and `feature_eligible = false` inputs when metadata is available, and reads dataframe values only for read-only physical occurrence and condition preview. Sample output is service-bounded with default `100` and max `500`. AS8 does not treat raw CSV headers as event truth and does not compute Peaks & Troughs, UTC, or Braids.
 
 Readiness status values are:
 
@@ -680,7 +684,7 @@ Strict-ready requires:
 
 The minimum Analysis Suite topology is accepted OHLC base plus explicit Volume artifact, Braids artifact, Peaks & Troughs artifact, and UTC / Universal Trend Classifier artifact. Raw OHLCV volume is not an explicit Volume artifact; the explicit artifact has artifact identity, recipe identity, sidecar metadata, update/recovery lineage, and Analysis Database component behavior.
 
-AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. AS5 target planning, AS6 feature-set planning, and AS7 diagnostic reports are not wired into `AnalysisSuiteWindow` yet. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, persist labels, persist target definitions, persist feature sets, persist diagnostic reports, add `FeatureSetStore`, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
+AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. AS5 target planning, AS6 feature-set planning, AS7 diagnostic reports, and AS8 POI/family planning are not wired into `AnalysisSuiteWindow` yet. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, persist labels, persist target definitions, persist feature sets, persist diagnostic reports, persist POI/family definitions, add POI stores, add `FeatureSetStore`, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
 
 ### Artifact recipe and recovery orchestration semantics
 

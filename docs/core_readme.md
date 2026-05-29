@@ -1,7 +1,7 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.18
-Date: 2026-05-28
+Version: v3.19
+Date: 2026-05-29
 
 ## Overview
 
@@ -654,6 +654,8 @@ AS6 reserves `ts_ms` as the alignment key instead of a normal numeric feature. I
 AS7 owns only cross-report coherence checks. It reports dataset readiness, target coherence, feature-set validity, label availability, enough-row/label checks, target regression stats or class distribution, selected-feature missingness, selected-feature dtype summaries, leakage blockers, and combined blockers/warnings/errors. It blocks unsafe analysis setups such as unavailable labels, no accepted features, propagated target/feature blockers, detected leakage blockers, and accepted selected features missing from `dataframe.csv`. It may warn on non-strict but previewable datasets, low label availability, imbalanced classification labels, small feature sets, or high selected-feature missingness.
 
 AS7 reads dataframe values only for AS6-accepted selected-feature consistency checks. Feature truth remains AS6 manifest/artifact metadata, not raw CSV headers. The diagnostic report is a pre-analysis coherence checkpoint before POI / event-family / road / genome architecture; it does not perform POI analysis, white-box rule discovery, Research Suite validation, neural refinement, or Decisor logic.
+
+AS8-AUDIT is documented in `docs/DESIGN_analysis_suite.md`. It defines the World Line, POIs, event families/subfamilies, roads, outcomes, false-signal classes, genomes, genome paths, event windows, AS1-AS7 relationships, and the recommended backend-only AS8 POI Definition and Family Planner MVP. AS8-AUDIT is design-only: no AS8 backend service, GUI wiring, persistence, POI discovery engine, white-box discovery, backtesting, model training, signals, artifact calculation, recipe execution, Analysis Database mutation, or OHLCV repair is implemented by the audit.
 
 Readiness status values are:
 

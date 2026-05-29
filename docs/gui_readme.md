@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.33
+Version: v3.34
 Date: 2026-05-28
 
 ## Overview
@@ -292,11 +292,11 @@ Allowed actions are `Refresh Catalog`, row detail display, bounded `Preview Data
 
 Bounded preview supports Head and Tail modes through `AnalysisSuiteDataframePreviewService`. The preview button is enabled only when the selected readiness report has `can_preview == True`. Row limits are enforced by the service with default `100` and max `500`; the preview table is read-only, and refresh or selection changes clear stale preview state. Preview reports preserve readiness status, `strict_ready`, warnings, blockers, errors, row limits, returned row count, dataset and preview timestamp ranges, raw `ts_ms`, and `ts_utc` / `ts_rome` display fields when `ts_ms` exists.
 
-AS5 target planning and AS6 feature-set planning are backend-only. `AnalysisSuiteTargetPlanner` can produce read-only target/label preview reports for future return and future direction targets, and `AnalysisSuiteFeatureSetPlanner` can list manifest-derived feature candidates, validate selected feature columns, preserve selection order, enforce AS5 leakage metadata, reserve `ts_ms`, block unknown metadata in MVP, and keep current-row `close[t]` eligible for future-return targets when otherwise valid. `AnalysisSuiteWindow` does not expose target controls, label preview actions, feature-set controls, or feature-set persistence yet.
+AS5 target planning, AS6 feature-set planning, and AS7 diagnostic reporting are backend-only. `AnalysisSuiteTargetPlanner` can produce read-only target/label preview reports for future return and future direction targets, `AnalysisSuiteFeatureSetPlanner` can list manifest-derived feature candidates, validate selected feature columns, preserve selection order, enforce AS5 leakage metadata, reserve `ts_ms`, block unknown metadata in MVP, and keep current-row `close[t]` eligible for future-return targets when otherwise valid, and `AnalysisSuiteDiagnosticReportService` can compose AS1 readiness, AS5 target, and AS6 feature-set reports into JSON-safe pre-analysis diagnostic reports. `AnalysisSuiteWindow` does not expose target controls, label preview actions, feature-set controls, diagnostic controls, diagnostic report actions, or target/label/feature-set/report persistence yet.
 
 The Analysis Suite GUI does not own readiness or preview policy. Policy remains in `AnalysisSuiteDatasetReadinessService` and `AnalysisSuiteDataframePreviewService`; the GUI must not inspect `manifest.json`, `dataframe.csv`, or `source_ohlcv.snapshot` to classify readiness, and it must not load `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. Previewable does not mean analysis-ready: non-strict datasets may be previewed only when AS1 allows it, with warnings and blockers still visible.
 
-Still out of scope for the GUI: target controls, label preview actions, feature-set controls, feature-set persistence, `FeatureSetStore`, Analysis Projects, Analysis Runs, Analysis Reports, model workflows, signal generation, trading workflows, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, and raw OHLCV repair/validation.
+Still out of scope for the GUI: target controls, label preview actions, feature-set controls, diagnostic controls, diagnostic report actions, target/label/feature-set/report persistence, `FeatureSetStore`, Analysis Projects, Analysis Runs, Analysis Reports, model workflows, signal generation, trading workflows, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, and raw OHLCV repair/validation.
 
 Current Analysis Database UI behavior:
 
@@ -1685,6 +1685,7 @@ Recommended tooling (in the GUI package):
 
 ## Change log
 
+- **v3.34 (2026-05-28)** - Analysis Suite diagnostic report AS7 sync: documented `AnalysisSuiteDiagnosticReportService` as backend-only, read-only composition of AS1 readiness, AS5 target preview, and AS6 feature-set preview reports; clarified that `AnalysisSuiteWindow` still exposes only the read-only catalog and bounded dataframe preview, with no target, feature-set, diagnostic, persistence, project/run/report, model, signal, artifact, recipe, database materialization, or OHLCV repair controls.
 - **v3.29 (2026-05-28)** - Data Manager selected update sync: documented 60% usable-screen-width Data Manager dialogs, `DataManagerSelectedUpdateService`, selected artifact/database `Check Update` and `Update Selected...` controls, OLD/DRAFT status semantics, synchronous preflight/report dialogs, and unchanged GUI/data ownership boundaries.
 - **v3.28 (2026-05-28)** - Post-smoke correction sync: documented DM3 extend-only recipe collection database workflow, DM2 Data Manager dialog/highlight polish, RS8 Style editor Apply behavior, RS9 notebook indicator refresh, RS10 Workspace Snapshot load preflight/loading, and DL1 Download Manager GUI-layer progress throttling.
 - **v3.27 (2026-05-26)** - Research Suite notebook UX RS5 sync: documented notebook dirty-state protection, Save / Don't Save / Cancel close/replace flow, rich-text formatting palettes for notebook free-text fields, plain-text compatibility, and optional parallel HTML fields.

@@ -1,6 +1,6 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.17
+Version: v3.18
 Date: 2026-05-28
 
 ## Overview
@@ -624,7 +624,7 @@ Data Manager materialization uses accepted OHLCV only. `ArtifactCalculationServi
 
 ### Analysis Suite dataset readiness semantics
 
-A read-only Analysis Suite catalog, bounded preview surface, target preview planner, and feature-set planner now exist, but project/run stores, model workflows, signal engines, report systems, and trading systems remain out of scope. AS1 adds the read-only backend contract for Analysis Suite dataset consumption, AS2 exposes that contract in `AnalysisSuiteWindow`, AS3 adds the bounded dataframe preview service, AS4 wires that service into the window, AS5 adds backend target/label preview planning, and AS6 adds backend feature-set planning.
+A read-only Analysis Suite catalog, bounded preview surface, target preview planner, feature-set planner, and diagnostic-report backend now exist, but project/run stores, model workflows, signal engines, persisted report systems, and trading systems remain out of scope. AS1 adds the read-only backend contract for Analysis Suite dataset consumption, AS2 exposes that contract in `AnalysisSuiteWindow`, AS3 adds the bounded dataframe preview service, AS4 wires that service into the window, AS5 adds backend target/label preview planning, AS6 adds backend feature-set planning, and AS7 adds backend diagnostic-report composition.
 
 `AnalysisSuiteDatasetReadinessService` catalogs and evaluates Data Manager Analysis Databases for future Analysis Suite use. It returns JSON-safe `AnalysisSuiteDatasetCatalogReport` and `AnalysisSuiteDatasetReadinessReport` objects. The service scans Analysis Database manifest paths directly so corrupt or unreadable manifests can be reported as diagnostics instead of disappearing through Data Manager's resilient listing behavior.
 
@@ -649,6 +649,12 @@ AS6 exposes `list_feature_candidates(...)`, `validate_selected_features(...)`, a
 
 AS6 reserves `ts_ms` as the alignment key instead of a normal numeric feature. It rejects target output columns, label columns, columns marked `target_only`, columns marked `future_derived`, columns with `feature_eligible = false`, the exact AS5 target output column, unknown/unclassified metadata in MVP, and non-selectable or non-analysis-usable utility/internal columns. It validates selected feature names while preserving selection order, rejects missing or blocked selected columns with reasons, and returns JSON-safe candidates, selected/rejected features, group summaries, leakage summaries, blockers, warnings, and errors.
 
+`AnalysisSuiteDiagnosticReportService` is the backend-only read-only AS7 diagnostic-report contract. It composes an AS1 `AnalysisSuiteDatasetReadinessReport`, an AS5 `AnalysisSuiteTargetPreviewReport`, and an AS6 `AnalysisSuiteFeatureSetPreviewReport` into a JSON-safe `AnalysisSuiteDiagnosticReport`; selected accepted feature columns receive `AnalysisSuiteFeatureColumnDiagnostic` physical consistency summaries. The report status is one of `ready`, `warning`, `blocked`, or `error`.
+
+AS7 owns only cross-report coherence checks. It reports dataset readiness, target coherence, feature-set validity, label availability, enough-row/label checks, target regression stats or class distribution, selected-feature missingness, selected-feature dtype summaries, leakage blockers, and combined blockers/warnings/errors. It blocks unsafe analysis setups such as unavailable labels, no accepted features, propagated target/feature blockers, detected leakage blockers, and accepted selected features missing from `dataframe.csv`. It may warn on non-strict but previewable datasets, low label availability, imbalanced classification labels, small feature sets, or high selected-feature missingness.
+
+AS7 reads dataframe values only for AS6-accepted selected-feature consistency checks. Feature truth remains AS6 manifest/artifact metadata, not raw CSV headers. The diagnostic report is a pre-analysis coherence checkpoint before POI / event-family / road / genome architecture; it does not perform POI analysis, white-box rule discovery, Research Suite validation, neural refinement, or Decisor logic.
+
 Readiness status values are:
 
 - `ready`
@@ -672,7 +678,7 @@ Strict-ready requires:
 
 The minimum Analysis Suite topology is accepted OHLC base plus explicit Volume artifact, Braids artifact, Peaks & Troughs artifact, and UTC / Universal Trend Classifier artifact. Raw OHLCV volume is not an explicit Volume artifact; the explicit artifact has artifact identity, recipe identity, sidecar metadata, update/recovery lineage, and Analysis Database component behavior.
 
-AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. AS5 target planning and AS6 feature-set planning are not wired into `AnalysisSuiteWindow` yet. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, persist labels, persist target definitions, persist feature sets, add `FeatureSetStore`, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
+AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. AS5 target planning, AS6 feature-set planning, and AS7 diagnostic reports are not wired into `AnalysisSuiteWindow` yet. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, persist labels, persist target definitions, persist feature sets, persist diagnostic reports, add `FeatureSetStore`, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
 
 ### Artifact recipe and recovery orchestration semantics
 

@@ -1,6 +1,6 @@
 # Financial Tools Contract System
 
-Version: v1.10
+Version: v1.11
 Date: 2026-05-28
 
 ## Purpose
@@ -154,6 +154,8 @@ Analysis Suite feature-set planning is read-only. `AnalysisSuiteFeatureSetPlanne
 AS6 provides `list_feature_candidates(...)`, `validate_selected_features(...)`, and `preview_feature_set(...)`. Eligible groups include current-row OHLC base columns (`open`, `high`, `low`, `close`), raw volume as `raw_volume` when present, explicit Volume artifact outputs, indicators, oscillators, constructs, topology artifacts, construct batch outputs, and non-renderable but `analysis_usable` outputs. Groups are reported as `alignment`, `base_ohlc`, `raw_volume`, `volume`, `indicators`, `oscillators`, `constructs`, `topology`, `construct_batch`, and `unknown`. Raw volume is not equivalent to an explicit Volume artifact, and current-row `close[t]` remains eligible for future-return targets when otherwise valid.
 
 AS6 rejects `ts_ms` as a normal feature because it is the alignment key. It also rejects target output columns, label columns, `target_only`, `future_derived`, `feature_eligible = false`, the exact AS5 target output column, unknown metadata in MVP, and non-selectable or non-analysis-usable internal/utility columns. Planning is gated by AS1 `can_preview`; `strict_ready = false` datasets may still be planned when `can_preview = true`, with warnings and blockers preserved. Reports include candidates, selected/rejected features, group summaries, leakage summaries, blockers, warnings, and errors, and they remain JSON-safe. AS6 does not add GUI wiring, feature-set persistence, `FeatureSetStore`, Analysis Project/Run/Report stores, model training, signals, trading logic, artifact calculation, recipe execution, OHLCV repair, or Analysis Database mutation.
+
+Analysis Suite diagnostic reporting is a read-only pre-analysis consumer contract. `AnalysisSuiteDiagnosticReportService` composes an AS1 readiness report, an AS5 target preview report, and an AS6 feature-set preview report into a JSON-safe `AnalysisSuiteDiagnosticReport` with status `ready`, `warning`, `blocked`, or `error`. `AnalysisSuiteFeatureColumnDiagnostic` reports selected accepted feature column consistency, including dtype and missingness summaries, only after AS6 has accepted the feature. AS7 reports dataset readiness, target coherence, feature-set validity, label availability, enough-row/label checks, target stats or class distribution, selected-feature diagnostics, leakage blockers, and combined blockers/warnings/errors. It reads dataframe values only for AS6-accepted selected-feature consistency checks and does not treat raw CSV headers as feature truth. AS7 does not add GUI wiring, persisted diagnostic reports, Analysis Project/Run/Report stores, target/label/feature-set persistence, model training, signals, trading logic, artifact calculation, recipe execution, OHLCV repair, or Analysis Database mutation/materialization.
 
 The sidecar may include:
 

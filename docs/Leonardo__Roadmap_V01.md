@@ -1,6 +1,6 @@
 🧠 Leonardo — Roadmap
 
-Version: v0.33
+Version: v0.35
 Status: Living document (expected to change)
 Updated: 2026-05-28
 
@@ -330,7 +330,8 @@ Implemented baseline:
 - Analysis Database contract, naming policy, draft manifest workflow, materialization, explicit component editing, and read-only dataframe preview were introduced.
 - Analysis Databases are stored under `analysis_databases/{database_id}/` with `manifest.json` and optional/materialized `dataframe.csv`.
 - AS1 added the read-only `AnalysisSuiteDatasetReadinessService` for Analysis Suite dataset consumption. It reports `ready`, `draft`, `missing_dataframe`, `stale_source`, `incomplete_topology`, `corrupt_manifest`, `corrupt_dataframe`, `blocked`, and `error` readiness states without adding project/run/report stores, model logic, artifact calculation, database materialization, or OHLCV repair.
-- AS2 added `AnalysisSuiteWindow`, the first read-only Analysis Suite GUI surface, opened from `Analysis -> Analysis Suite`. `Analysis -> Data Manager` remains the separate preparation workflow. The window displays AS1 readiness reports, can route users back to Data Manager, and does not preview dataframe rows, mutate databases, calculate artifacts, repair OHLCV, create projects/runs/reports, train models, or generate signals.
+- AS2 added `AnalysisSuiteWindow`, the first read-only Analysis Suite GUI surface, opened from `Analysis -> Analysis Suite`. `Analysis -> Data Manager` remains the separate preparation workflow. The window displays AS1 readiness reports and can route users back to Data Manager without mutating databases.
+- AS3/AS4 added bounded dataframe preview for `AnalysisSuiteWindow` through `AnalysisSuiteDataframePreviewService`. The catalog supports Head/Tail previews with AS1 `can_preview` gating, service-enforced default `100` / max `500` row limits, JSON-safe rows, and raw `ts_ms` plus `ts_utc` / `ts_rome` display fields when available. The GUI does not load `dataframe.csv` directly and does not create projects/runs/reports, train models, generate signals, calculate artifacts, repair OHLCV, or build/rebuild/materialize databases.
 - `Database seed creator` creates named database seeds with dataset-prefix defaults such as `BTCUSDT_30m_`, no-whitespace validation, and same-market duplicate-name rejection.
 - Checked saved artifact columns feed the `Database seed creator` only; they do not feed Database Builder.
 - Saved artifact column discovery is shared through a GUI-owned loader so the main selector, build dialog, and component editor use the same artifact listing behavior.
@@ -641,6 +642,8 @@ V1 Milestones (initial target)
 ------------------------------------------------------------
 Change log
 ------------------------------------------------------------
+v0.35: Analysis Suite bounded preview AS4 sync. Documents `AnalysisSuiteDataframePreviewService`, Head/Tail preview in `AnalysisSuiteWindow`, AS1 `can_preview` gating, service-enforced default `100` / max `500` row limits, JSON-safe rows, timestamp display fields, and unchanged read-only/no-mutation/project/run/model/signal boundaries.
+
 v0.34: Analysis Suite read-only catalog AS2 sync. Documents `AnalysisSuiteWindow`, the `Analysis -> Analysis Suite` menu action, preserved `Analysis -> Data Manager` separation, AS1 readiness-report consumption, read-only catalog/details behavior, Data Manager routing, postponed bounded dataframe preview, and unchanged database/artifact/OHLCV/project/run/model/signal boundaries.
 
 v0.33: Analysis Suite dataset readiness AS1 sync. Documents the read-only `AnalysisSuiteDatasetReadinessService`, readiness/catalog reports, strict-ready policy, minimum topology requirements, corrupt manifest/dataframe/source-drift diagnostics, and unchanged Data Manager/OHLCV boundaries. Analysis Projects/Runs/Reports, model logic, artifact calculation, database rebuild/materialization, and OHLCV repair remain out of scope.

@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.32
+Version: v3.33
 Date: 2026-05-28
 
 ## Overview
@@ -288,9 +288,11 @@ Responsibilities include:
 
 The window consumes `AnalysisSuiteDatasetReadinessService` reports. It lists Analysis Databases with readiness status, `strict_ready`, `can_preview`, market identity, row and column counts, first and last timestamps, materialization source-drift status, and topology/geography status. Selecting a row shows database id, display name, manifest path, dataframe path, readiness fields, source OHLCV drift status, missing topology, blockers, warnings, and errors.
 
-Allowed actions are `Refresh Catalog`, row detail display, `Open Data Manager`, and close. `Open Data Manager` is routing only; Analysis Suite does not perform repair, build, update, or calculation work itself.
+Allowed actions are `Refresh Catalog`, row detail display, bounded `Preview Dataframe`, `Open Data Manager`, and close. `Open Data Manager` is routing only; Analysis Suite does not perform repair, build, update, or calculation work itself.
 
-The Analysis Suite GUI does not own readiness policy. Policy remains in `AnalysisSuiteDatasetReadinessService`; the GUI must not inspect `manifest.json`, `dataframe.csv`, or `source_ohlcv.snapshot` to classify readiness. AS2 does not preview dataframe rows or load full `dataframe.csv`; bounded dataframe preview remains future AS3.
+Bounded preview supports Head and Tail modes through `AnalysisSuiteDataframePreviewService`. The preview button is enabled only when the selected readiness report has `can_preview == True`. Row limits are enforced by the service with default `100` and max `500`; the preview table is read-only, and refresh or selection changes clear stale preview state. Preview reports preserve readiness status, `strict_ready`, warnings, blockers, errors, row limits, returned row count, dataset and preview timestamp ranges, raw `ts_ms`, and `ts_utc` / `ts_rome` display fields when `ts_ms` exists.
+
+The Analysis Suite GUI does not own readiness or preview policy. Policy remains in `AnalysisSuiteDatasetReadinessService` and `AnalysisSuiteDataframePreviewService`; the GUI must not inspect `manifest.json`, `dataframe.csv`, or `source_ohlcv.snapshot` to classify readiness, and it must not load `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. Previewable does not mean analysis-ready: non-strict datasets may be previewed only when AS1 allows it, with warnings and blockers still visible.
 
 Still out of scope: Analysis Projects, Analysis Runs, Analysis Reports, model workflows, signal generation, trading workflows, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, and raw OHLCV repair/validation.
 

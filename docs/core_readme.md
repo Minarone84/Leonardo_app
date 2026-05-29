@@ -1,6 +1,6 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.16
+Version: v3.17
 Date: 2026-05-28
 
 ## Overview
@@ -624,11 +624,13 @@ Data Manager materialization uses accepted OHLCV only. `ArtifactCalculationServi
 
 ### Analysis Suite dataset readiness semantics
 
-A read-only Analysis Suite catalog surface now exists, but project/run stores, model workflows, signal engines, report systems, and trading systems remain out of scope. AS1 adds the read-only backend contract for Analysis Suite dataset consumption, and AS2 exposes that contract in `AnalysisSuiteWindow`.
+A read-only Analysis Suite catalog and bounded preview surface now exists, but project/run stores, model workflows, signal engines, report systems, and trading systems remain out of scope. AS1 adds the read-only backend contract for Analysis Suite dataset consumption, AS2 exposes that contract in `AnalysisSuiteWindow`, AS3 adds the bounded dataframe preview service, and AS4 wires that service into the window.
 
 `AnalysisSuiteDatasetReadinessService` catalogs and evaluates Data Manager Analysis Databases for future Analysis Suite use. It returns JSON-safe `AnalysisSuiteDatasetCatalogReport` and `AnalysisSuiteDatasetReadinessReport` objects. The service scans Analysis Database manifest paths directly so corrupt or unreadable manifests can be reported as diagnostics instead of disappearing through Data Manager's resilient listing behavior.
 
 `AnalysisSuiteWindow` is opened from `Analysis -> Analysis Suite`; `Analysis -> Data Manager` remains the separate dataset preparation workflow. The window displays service-produced readiness status, `strict_ready`, `can_preview`, market identity, dataframe metadata, source-drift status, topology/geography status, missing topology, blockers, warnings, and errors. It may route users back to Data Manager, but it is read-only and does not own readiness policy.
+
+`AnalysisSuiteDataframePreviewService` provides bounded read-only Head and Tail previews for previewable Analysis Databases. Preview is gated by AS1 `can_preview`; row limits are enforced in the service with default `100` and max `500`; rows are JSON-safe; raw `ts_ms` is preserved; and `ts_utc` / `ts_rome` display fields are added when `ts_ms` exists. Non-strict datasets may be previewable, but preview reports retain readiness status, blockers, and warnings so previewable is not confused with analysis-ready.
 
 Readiness status values are:
 
@@ -653,7 +655,7 @@ Strict-ready requires:
 
 The minimum Analysis Suite topology is accepted OHLC base plus explicit Volume artifact, Braids artifact, Peaks & Troughs artifact, and UTC / Universal Trend Classifier artifact. Raw OHLCV volume is not an explicit Volume artifact; the explicit artifact has artifact identity, recipe identity, sidecar metadata, update/recovery lineage, and Analysis Database component behavior.
 
-AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS2 does not load full dataframe rows; bounded dataframe preview remains future AS3. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
+AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
 
 ### Artifact recipe and recovery orchestration semantics
 

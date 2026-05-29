@@ -632,6 +632,17 @@ A read-only Analysis Suite catalog and bounded preview surface now exists, but p
 
 `AnalysisSuiteDataframePreviewService` provides bounded read-only Head and Tail previews for previewable Analysis Databases. Preview is gated by AS1 `can_preview`; row limits are enforced in the service with default `100` and max `500`; rows are JSON-safe; raw `ts_ms` is preserved; and `ts_utc` / `ts_rome` display fields are added when `ts_ms` exists. Non-strict datasets may be previewable, but preview reports retain readiness status, blockers, and warnings so previewable is not confused with analysis-ready.
 
+`AnalysisSuiteTargetPlanner` is the backend-only read-only target/label preview contract. `AnalysisSuiteTargetDefinition` defines a future-dependent target rule, and `AnalysisSuiteTargetPreviewReport` returns in-memory label diagnostics without persisting target definitions or labels. A target is the future-dependent value or event the Analysis Suite wants to predict, classify, measure, or explain. A label is the generated per-row target series aligned back to the current timestamp `t`; features at `t` predict the label at `t`.
+
+AS5 supports two target families:
+
+- future return regression: `(close[t + N] - close[t]) / close[t]`, using `ts_ms` and `close`;
+- future direction classification: `up`, `down`, or `flat` from thresholded future return with explicit thresholds.
+
+`horizon_bars` must be positive. `N` bars means `N` dataframe rows forward in the Analysis Database timeframe. Labels remain aligned to timestamp `t`, `label_end_ts_ms` points to the row at `t + N`, and the last `N` rows are unavailable. Target preview is gated by AS1 `can_preview`; if `strict_ready` is false but `can_preview` is true, the planner may run while preserving readiness warnings and blockers.
+
+Target preview reports include the target definition, database identity, row count, available/unavailable label counts, first/last available timestamps, sample rows, blockers/warnings/errors, regression stats or class distribution, and leakage summary. Leakage metadata marks label outputs as `target_only`, `future_derived = true`, and `feature_eligible = false`. Labels are not appended to Analysis Database `dataframe.csv`, are not ordinary feature columns, and future feature-set planners must reject target-only or future-derived label outputs.
+
 Readiness status values are:
 
 - `ready`
@@ -655,7 +666,7 @@ Strict-ready requires:
 
 The minimum Analysis Suite topology is accepted OHLC base plus explicit Volume artifact, Braids artifact, Peaks & Troughs artifact, and UTC / Universal Trend Classifier artifact. Raw OHLCV volume is not an explicit Volume artifact; the explicit artifact has artifact identity, recipe identity, sidecar metadata, update/recovery lineage, and Analysis Database component behavior.
 
-AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
+AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. AS5 target planning is not wired into `AnalysisSuiteWindow` yet. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, persist labels or target definitions, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
 
 ### Artifact recipe and recovery orchestration semantics
 

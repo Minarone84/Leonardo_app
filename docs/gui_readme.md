@@ -292,9 +292,11 @@ Allowed actions are `Refresh Catalog`, row detail display, bounded `Preview Data
 
 Bounded preview supports Head and Tail modes through `AnalysisSuiteDataframePreviewService`. The preview button is enabled only when the selected readiness report has `can_preview == True`. Row limits are enforced by the service with default `100` and max `500`; the preview table is read-only, and refresh or selection changes clear stale preview state. Preview reports preserve readiness status, `strict_ready`, warnings, blockers, errors, row limits, returned row count, dataset and preview timestamp ranges, raw `ts_ms`, and `ts_utc` / `ts_rome` display fields when `ts_ms` exists.
 
+AS5 target planning is backend-only. `AnalysisSuiteTargetPlanner` can produce read-only target/label preview reports for future return and future direction targets, but `AnalysisSuiteWindow` does not expose target controls or label preview actions yet.
+
 The Analysis Suite GUI does not own readiness or preview policy. Policy remains in `AnalysisSuiteDatasetReadinessService` and `AnalysisSuiteDataframePreviewService`; the GUI must not inspect `manifest.json`, `dataframe.csv`, or `source_ohlcv.snapshot` to classify readiness, and it must not load `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. Previewable does not mean analysis-ready: non-strict datasets may be previewed only when AS1 allows it, with warnings and blockers still visible.
 
-Still out of scope: Analysis Projects, Analysis Runs, Analysis Reports, model workflows, signal generation, trading workflows, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, and raw OHLCV repair/validation.
+Still out of scope for the GUI: target controls, label preview actions, Analysis Projects, Analysis Runs, Analysis Reports, model workflows, signal generation, trading workflows, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, and raw OHLCV repair/validation.
 
 Current Analysis Database UI behavior:
 

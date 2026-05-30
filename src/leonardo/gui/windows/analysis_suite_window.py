@@ -33,6 +33,12 @@ from leonardo.data.historical.analysis_suite_dataframe_preview import (
 from leonardo.data.historical.analysis_suite_dataset_readiness import AnalysisSuiteDatasetReadinessService
 from leonardo.data.historical.analysis_suite_diagnostic_report import AnalysisSuiteDiagnosticReportService
 from leonardo.data.historical.analysis_suite_feature_set_planner import AnalysisSuiteFeatureSetPlanner
+from leonardo.data.historical.analysis_suite_genome_path_builder import (
+    AnalysisSuiteGenomeComponentDefinition,
+    AnalysisSuiteGenomeEncodingDefinition,
+    AnalysisSuiteGenomePathBuilder,
+    AnalysisSuiteStaticBinRule,
+)
 from leonardo.data.historical.analysis_suite_poi_family_planner import (
     AnalysisSuitePoiCondition,
     AnalysisSuitePoiDefinition,
@@ -75,6 +81,27 @@ _POI_CONDITION_OPERATORS = (
     "not_in",
     "is_null",
     "not_null",
+)
+_GENOME_COMPONENT_COLUMNS = (
+    "Enabled",
+    "Component Key",
+    "Source Column",
+    "Encoding",
+    "Static Bins",
+    "Lookback",
+    "Missing Token",
+    "Display Name",
+)
+_GENOME_ENCODINGS = (
+    "identity_numeric",
+    "categorical",
+    "boolean_symbolic",
+    "static_bin",
+    "variation_direction",
+)
+_GENOME_ANCHOR_MODES = (
+    ("Row", "row"),
+    ("POI family", "poi_occurrence"),
 )
 
 
@@ -168,6 +195,48 @@ class _PoiFamilyPreviewService(Protocol):
         ...
 
 
+class _GenomePathPreviewService(Protocol):
+    def validate_encoding_definition(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        encoding_definition: object,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+        feature_set_report: object | None = None,
+    ) -> object:
+        ...
+
+    def preview_paths(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        encoding_definition: object,
+        sample_limit: int | None = None,
+        anchor_rows: object | None = None,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+        feature_set_report: object | None = None,
+    ) -> object:
+        ...
+
+    def preview_paths_for_poi_family(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        encoding_definition: object,
+        family_report: object,
+        sample_limit: int | None = None,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+        feature_set_report: object | None = None,
+    ) -> object:
+        ...
+
+
 class AnalysisSuiteWindow(QMainWindow):
     """
     Read-only Analysis Suite dataset readiness catalog.
@@ -189,6 +258,7 @@ class AnalysisSuiteWindow(QMainWindow):
         feature_set_service: _FeatureSetPreviewService | None = None,
         diagnostic_service: _DiagnosticReportService | None = None,
         poi_family_service: _PoiFamilyPreviewService | None = None,
+        genome_path_service: _GenomePathPreviewService | None = None,
         open_data_manager_callback: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent, Qt.Window)
@@ -210,6 +280,9 @@ class AnalysisSuiteWindow(QMainWindow):
         self._poi_family_service = poi_family_service or AnalysisSuitePoiFamilyPlanner(
             historical_root=self._historical_root,
         )
+        self._genome_path_service = genome_path_service or AnalysisSuiteGenomePathBuilder(
+            historical_root=self._historical_root,
+        )
         self._open_data_manager_callback = open_data_manager_callback
         self._latest_catalog: object | None = None
         self._selected_report: object | None = None
@@ -222,6 +295,8 @@ class AnalysisSuiteWindow(QMainWindow):
         self._diagnostic_report: object | None = None
         self._poi_occurrence_report: object | None = None
         self._poi_family_report: object | None = None
+        self._genome_validation_report: object | None = None
+        self._genome_path_report: object | None = None
 
         self.setObjectName("analysisSuiteWindow")
         self.setWindowTitle("Leonardo - Analysis Suite")
@@ -354,6 +429,7 @@ class AnalysisSuiteWindow(QMainWindow):
         tabs.addTab(self._build_feature_group(parent), "Feature Set")
         tabs.addTab(self._build_diagnostic_group(parent), "Diagnostic Report")
         tabs.addTab(self._build_poi_family_group(parent), "POI / Family Preview")
+        tabs.addTab(self._build_genome_path_group(parent), "Genome Path Preview")
         return tabs
 
     def _build_preview_group(self, parent: QWidget) -> QGroupBox:
@@ -678,6 +754,149 @@ class AnalysisSuiteWindow(QMainWindow):
         layout.addWidget(family_group, 1)
         self._refresh_poi_value_state()
         return poi_group
+
+    def _build_genome_path_group(self, parent: QWidget) -> QGroupBox:
+        genome_group = QGroupBox("Genome Path Preview", parent)
+        layout = QVBoxLayout(genome_group)
+        layout.setSpacing(8)
+
+        definition_group = QGroupBox("Encoding Definition", genome_group)
+        definition_layout = QVBoxLayout(definition_group)
+        definition_layout.setSpacing(8)
+
+        definition_row = QHBoxLayout()
+        definition_row.setSpacing(8)
+        definition_layout.addLayout(definition_row)
+
+        definition_row.addWidget(QLabel("Encoding key", definition_group))
+        self._genome_encoding_key = QLineEdit(definition_group)
+        self._genome_encoding_key.setObjectName("analysisSuiteGenomeEncodingKeyEdit")
+        self._genome_encoding_key.setText("genome_preview")
+        self._genome_encoding_key.textChanged.connect(self._on_genome_encoding_changed)
+        definition_row.addWidget(self._genome_encoding_key)
+
+        definition_row.addWidget(QLabel("Name", definition_group))
+        self._genome_encoding_display_name = QLineEdit(definition_group)
+        self._genome_encoding_display_name.setObjectName(
+            "analysisSuiteGenomeEncodingDisplayNameEdit"
+        )
+        self._genome_encoding_display_name.setText("Genome preview")
+        self._genome_encoding_display_name.textChanged.connect(
+            self._on_genome_encoding_changed
+        )
+        definition_row.addWidget(self._genome_encoding_display_name)
+
+        definition_row.addWidget(QLabel("Path length", definition_group))
+        self._genome_path_length = QSpinBox(definition_group)
+        self._genome_path_length.setObjectName("analysisSuiteGenomePathLengthSpin")
+        self._genome_path_length.setRange(1, 100000)
+        self._genome_path_length.setValue(12)
+        self._genome_path_length.valueChanged.connect(self._on_genome_encoding_changed)
+        definition_row.addWidget(self._genome_path_length)
+
+        definition_row.addWidget(QLabel("Anchor", definition_group))
+        self._genome_anchor_mode = QComboBox(definition_group)
+        self._genome_anchor_mode.setObjectName("analysisSuiteGenomeAnchorModeCombo")
+        for label, value in _GENOME_ANCHOR_MODES:
+            self._genome_anchor_mode.addItem(label, value)
+        self._genome_anchor_mode.currentIndexChanged.connect(
+            self._on_genome_encoding_changed
+        )
+        definition_row.addWidget(self._genome_anchor_mode)
+        definition_row.addStretch(1)
+
+        component_controls = QHBoxLayout()
+        component_controls.setSpacing(8)
+        definition_layout.addLayout(component_controls)
+
+        self._genome_add_component_button = QPushButton("Add Component", definition_group)
+        self._genome_add_component_button.setObjectName(
+            "analysisSuiteGenomeAddComponentButton"
+        )
+        self._genome_add_component_button.clicked.connect(self._add_genome_component_row)
+        component_controls.addWidget(self._genome_add_component_button)
+
+        self._genome_remove_component_button = QPushButton(
+            "Remove Selected Component",
+            definition_group,
+        )
+        self._genome_remove_component_button.setObjectName(
+            "analysisSuiteGenomeRemoveComponentButton"
+        )
+        self._genome_remove_component_button.clicked.connect(
+            self._remove_selected_genome_component_row
+        )
+        component_controls.addWidget(self._genome_remove_component_button)
+
+        self._genome_validate_button = QPushButton("Validate Encoding", definition_group)
+        self._genome_validate_button.setObjectName("analysisSuiteGenomeValidateButton")
+        self._genome_validate_button.setEnabled(False)
+        self._genome_validate_button.clicked.connect(self._validate_genome_encoding)
+        component_controls.addWidget(self._genome_validate_button)
+        component_controls.addStretch(1)
+
+        self._genome_component_table = QTableWidget(
+            0,
+            len(_GENOME_COMPONENT_COLUMNS),
+            definition_group,
+        )
+        self._genome_component_table.setObjectName("analysisSuiteGenomeComponentTable")
+        self._genome_component_table.setHorizontalHeaderLabels(
+            list(_GENOME_COMPONENT_COLUMNS)
+        )
+        self._genome_component_table.setEditTriggers(QTableWidget.AllEditTriggers)
+        self._genome_component_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._genome_component_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._genome_component_table.itemChanged.connect(
+            self._on_genome_component_item_changed
+        )
+        definition_layout.addWidget(self._genome_component_table, 1)
+
+        layout.addWidget(definition_group, 1)
+
+        preview_group = QGroupBox("Preview Paths", genome_group)
+        preview_layout = QVBoxLayout(preview_group)
+        preview_layout.setSpacing(8)
+
+        preview_controls = QHBoxLayout()
+        preview_controls.setSpacing(8)
+        preview_layout.addLayout(preview_controls)
+
+        self._genome_preview_rows_button = QPushButton(
+            "Preview Row-Anchored Paths",
+            preview_group,
+        )
+        self._genome_preview_rows_button.setObjectName(
+            "analysisSuiteGenomeRowPreviewButton"
+        )
+        self._genome_preview_rows_button.setEnabled(False)
+        self._genome_preview_rows_button.clicked.connect(self._preview_genome_paths)
+        preview_controls.addWidget(self._genome_preview_rows_button)
+
+        self._genome_preview_poi_family_button = QPushButton(
+            "Preview POI-Family-Anchored Paths",
+            preview_group,
+        )
+        self._genome_preview_poi_family_button.setObjectName(
+            "analysisSuiteGenomePoiFamilyPreviewButton"
+        )
+        self._genome_preview_poi_family_button.setEnabled(False)
+        self._genome_preview_poi_family_button.clicked.connect(
+            self._preview_genome_paths_for_poi_family
+        )
+        preview_controls.addWidget(self._genome_preview_poi_family_button)
+        preview_controls.addStretch(1)
+
+        self._genome_path_report_text = QPlainTextEdit(preview_group)
+        self._genome_path_report_text.setObjectName("analysisSuiteGenomePathReportText")
+        self._genome_path_report_text.setReadOnly(True)
+        self._genome_path_report_text.setPlainText(
+            "Add at least one genome component for a previewable Analysis Database."
+        )
+        preview_layout.addWidget(self._genome_path_report_text, 1)
+
+        layout.addWidget(preview_group, 1)
+        return genome_group
 
     def _open_data_manager(self) -> None:
         if self._open_data_manager_callback is None:
@@ -1106,12 +1325,20 @@ class AnalysisSuiteWindow(QMainWindow):
             and bool(self._poi_type.text().strip())
             and bool(self._poi_source_column.currentText().strip())
         )
+        if hasattr(self, "_genome_validate_button"):
+            has_genome_components = self._has_enabled_genome_components()
+            self._genome_validate_button.setEnabled(can_preview and has_genome_components)
+            self._genome_preview_rows_button.setEnabled(can_preview and has_genome_components)
+            self._genome_preview_poi_family_button.setEnabled(
+                can_preview and has_genome_components
+            )
 
     def _clear_analysis_setup(self) -> None:
         self._clear_target_setup()
         self._clear_feature_setup()
         self._clear_diagnostic_setup()
         self._clear_poi_family_setup()
+        self._clear_genome_setup()
         self._refresh_analysis_setup_state()
 
     def _clear_target_setup(self) -> None:
@@ -1127,6 +1354,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._clear_feature_table()
         self._feature_report_text.setPlainText(message)
         self._refresh_poi_column_options()
+        self._clear_genome_reports("Feature candidates changed. Preview genome paths again.")
 
     def _clear_feature_table(self) -> None:
         self._feature_table.blockSignals(True)
@@ -1139,6 +1367,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._diagnostic_report_text.setPlainText(
             "Preview a target and feature set before running diagnostics."
         )
+        self._clear_genome_reports("Diagnostic context changed. Preview genome paths again.")
 
     def _clear_poi_family_setup(self) -> None:
         self._poi_occurrence_report = None
@@ -1147,6 +1376,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._poi_family_report_text.setPlainText(
             "Preview POI occurrences before family membership."
         )
+        self._clear_genome_reports("Preview POI/family context before POI-anchored genome paths.")
 
     def _clear_poi_family_reports(
         self,
@@ -1158,6 +1388,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._poi_family_report = None
         self._poi_report_text.setPlainText(poi_message)
         self._poi_family_report_text.setPlainText(family_message)
+        self._clear_genome_reports("POI/family context changed. Preview genome paths again.")
 
     def _on_poi_definition_changed(self) -> None:
         if getattr(self, "_poi_report_text", None) is not None:
@@ -1170,6 +1401,7 @@ class AnalysisSuiteWindow(QMainWindow):
             self._poi_family_report_text.setPlainText(
                 "Family definition changed. Preview the family again."
             )
+        self._clear_genome_reports("POI family definition changed. Preview genome paths again.")
         self._refresh_analysis_setup_state()
 
     def _on_poi_condition_item_changed(self, _item: QTableWidgetItem) -> None:
@@ -1223,6 +1455,172 @@ class AnalysisSuiteWindow(QMainWindow):
         self._poi_condition_table.removeRow(selected[0].row())
         self._on_family_definition_changed()
 
+    def _clear_genome_setup(self) -> None:
+        self._genome_validation_report = None
+        self._genome_path_report = None
+        self._genome_path_report_text.setPlainText(
+            "Add at least one genome component for a previewable Analysis Database."
+        )
+
+    def _clear_genome_reports(
+        self,
+        message: str = "Genome encoding changed. Preview genome paths again.",
+    ) -> None:
+        if not hasattr(self, "_genome_path_report_text"):
+            return
+        self._genome_validation_report = None
+        self._genome_path_report = None
+        self._genome_path_report_text.setPlainText(message)
+
+    def _on_genome_encoding_changed(self) -> None:
+        if getattr(self, "_genome_path_report_text", None) is not None:
+            self._clear_genome_reports()
+        self._refresh_analysis_setup_state()
+
+    def _on_genome_component_item_changed(self, _item: QTableWidgetItem) -> None:
+        self._on_genome_encoding_changed()
+
+    def _add_genome_component_row(self) -> None:
+        row = self._genome_component_table.rowCount()
+        source_column = self._default_genome_source_column()
+        component_key = source_column or f"component_{row + 1}"
+        self._genome_component_table.blockSignals(True)
+        self._genome_component_table.insertRow(row)
+
+        self._genome_component_table.setItem(row, 0, _checkable_table_item(True))
+        self._genome_component_table.setItem(row, 1, QTableWidgetItem(component_key))
+        source_item = QTableWidgetItem(source_column)
+        source_options = self._genome_source_column_names()
+        if source_options:
+            source_item.setToolTip("Suggested sources: " + ", ".join(source_options))
+        self._genome_component_table.setItem(row, 2, source_item)
+        encoding_item = QTableWidgetItem(_GENOME_ENCODINGS[0])
+        encoding_item.setToolTip("Supported encodings: " + ", ".join(_GENOME_ENCODINGS))
+        self._genome_component_table.setItem(row, 3, encoding_item)
+        self._genome_component_table.setItem(row, 4, QTableWidgetItem(""))
+        self._genome_component_table.setItem(row, 5, QTableWidgetItem("1"))
+        self._genome_component_table.setItem(row, 6, QTableWidgetItem("missing"))
+        self._genome_component_table.setItem(row, 7, QTableWidgetItem(""))
+        self._genome_component_table.blockSignals(False)
+        self._on_genome_encoding_changed()
+
+    def _remove_selected_genome_component_row(self) -> None:
+        selected = self._genome_component_table.selectedItems()
+        if not selected:
+            return
+        self._genome_component_table.removeRow(selected[0].row())
+        self._on_genome_encoding_changed()
+
+    def _validate_genome_encoding(self) -> None:
+        context = self._selected_database_context()
+        if context is None:
+            self.statusBar().showMessage("Select an Analysis Database before genome validation")
+            return
+        readiness_report, market, database_id = context
+        definition = self._genome_encoding_definition_from_controls()
+        try:
+            report = self._genome_path_service.validate_encoding_definition(
+                market=market,
+                database_id=database_id,
+                encoding_definition=definition,
+                readiness_report=readiness_report,
+                diagnostic_report=self._current_diagnostic_report_for_preview(),
+                feature_set_report=self._current_feature_set_report_for_preview(),
+            )
+        except Exception as exc:
+            self._genome_validation_report = None
+            self._genome_path_report = None
+            self._genome_path_report_text.setPlainText(
+                f"Genome encoding validation failed:\n{type(exc).__name__}: {exc}"
+            )
+            self.statusBar().showMessage("Analysis Suite genome encoding validation failed")
+            self._refresh_analysis_setup_state()
+            return
+
+        self._genome_validation_report = report
+        self._genome_path_report = None
+        self._genome_path_report_text.setPlainText(_genome_validation_report_summary(report))
+        self.statusBar().showMessage(
+            f"Analysis Suite genome encoding: {_value_text(_report_status(report))}"
+        )
+        self._refresh_analysis_setup_state()
+
+    def _preview_genome_paths(self) -> None:
+        context = self._selected_database_context()
+        if context is None:
+            self.statusBar().showMessage("Select an Analysis Database before genome preview")
+            return
+        readiness_report, market, database_id = context
+        definition = self._genome_encoding_definition_from_controls(anchor="row")
+        try:
+            report = self._genome_path_service.preview_paths(
+                market=market,
+                database_id=database_id,
+                encoding_definition=definition,
+                sample_limit=None,
+                anchor_rows=None,
+                readiness_report=readiness_report,
+                diagnostic_report=self._current_diagnostic_report_for_preview(),
+                feature_set_report=self._current_feature_set_report_for_preview(),
+            )
+        except Exception as exc:
+            self._genome_path_report = None
+            self._genome_path_report_text.setPlainText(
+                f"Genome path preview failed:\n{type(exc).__name__}: {exc}"
+            )
+            self.statusBar().showMessage("Analysis Suite genome path preview failed")
+            self._refresh_analysis_setup_state()
+            return
+
+        self._genome_path_report = report
+        self._genome_path_report_text.setPlainText(_genome_path_report_summary(report))
+        self.statusBar().showMessage(
+            f"Analysis Suite genome paths: {_value_text(getattr(report, 'status', None))}"
+        )
+        self._refresh_analysis_setup_state()
+
+    def _preview_genome_paths_for_poi_family(self) -> None:
+        context = self._selected_database_context()
+        if context is None:
+            self.statusBar().showMessage("Select an Analysis Database before genome preview")
+            return
+        if self._poi_family_report is None:
+            self._genome_path_report = None
+            self._genome_path_report_text.setPlainText(
+                "Preview a current POI family before POI-family-anchored genome paths."
+            )
+            self.statusBar().showMessage("POI family preview required before genome path preview")
+            return
+
+        readiness_report, market, database_id = context
+        definition = self._genome_encoding_definition_from_controls(anchor="poi_occurrence")
+        try:
+            report = self._genome_path_service.preview_paths_for_poi_family(
+                market=market,
+                database_id=database_id,
+                encoding_definition=definition,
+                family_report=self._poi_family_report,
+                sample_limit=None,
+                readiness_report=readiness_report,
+                diagnostic_report=self._current_diagnostic_report_for_preview(),
+                feature_set_report=self._current_feature_set_report_for_preview(),
+            )
+        except Exception as exc:
+            self._genome_path_report = None
+            self._genome_path_report_text.setPlainText(
+                f"POI-family genome path preview failed:\n{type(exc).__name__}: {exc}"
+            )
+            self.statusBar().showMessage("Analysis Suite POI-family genome preview failed")
+            self._refresh_analysis_setup_state()
+            return
+
+        self._genome_path_report = report
+        self._genome_path_report_text.setPlainText(_genome_path_report_summary(report))
+        self.statusBar().showMessage(
+            f"Analysis Suite POI-family genome paths: {_value_text(getattr(report, 'status', None))}"
+        )
+        self._refresh_analysis_setup_state()
+
     def _preview_poi_occurrences(self) -> None:
         context = self._selected_database_context()
         if context is None:
@@ -1258,6 +1656,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._poi_family_report_text.setPlainText(
             "Preview POI family membership when the family definition is ready."
         )
+        self._clear_genome_reports("POI occurrence preview changed. Preview genome paths again.")
         self.statusBar().showMessage(
             f"Analysis Suite POI preview: {_value_text(getattr(report, 'status', None))}"
         )
@@ -1290,6 +1689,7 @@ class AnalysisSuiteWindow(QMainWindow):
 
         self._poi_family_report = report
         self._poi_family_report_text.setPlainText(_poi_family_report_summary(report))
+        self._clear_genome_reports("POI family preview changed. Preview genome paths again.")
         self.statusBar().showMessage(
             f"Analysis Suite POI family preview: {_value_text(getattr(report, 'status', None))}"
         )
@@ -1339,6 +1739,85 @@ class AnalysisSuiteWindow(QMainWindow):
                 )
             )
         return tuple(conditions)
+
+    def _genome_encoding_definition_from_controls(
+        self,
+        *,
+        anchor: str | None = None,
+    ) -> AnalysisSuiteGenomeEncodingDefinition:
+        return AnalysisSuiteGenomeEncodingDefinition(
+            encoding_key=self._genome_encoding_key.text().strip(),
+            display_name=self._genome_encoding_display_name.text().strip(),
+            components=self._genome_components_from_table(),
+            path_length_bars=int(self._genome_path_length.value()),
+            anchor=anchor or str(self._genome_anchor_mode.currentData() or "row"),
+            metadata={"origin": "analysis_suite_gui"},
+        )
+
+    def _genome_components_from_table(
+        self,
+    ) -> tuple[AnalysisSuiteGenomeComponentDefinition, ...]:
+        components: list[AnalysisSuiteGenomeComponentDefinition] = []
+        for row in range(self._genome_component_table.rowCount()):
+            if not self._genome_component_check_state(row, 0):
+                continue
+            encoding = _table_text(self._genome_component_table, row, 3)
+            static_bins = _parse_static_bin_rules(
+                _table_text(self._genome_component_table, row, 4)
+            )
+            components.append(
+                AnalysisSuiteGenomeComponentDefinition(
+                    component_key=_table_text(self._genome_component_table, row, 1),
+                    source_column=_table_text(self._genome_component_table, row, 2),
+                    encoding=encoding,
+                    display_name=_table_text(self._genome_component_table, row, 7) or None,
+                    bins=static_bins if encoding == "static_bin" else (),
+                    lookback_bars=_parse_non_negative_int(
+                        _table_text(self._genome_component_table, row, 5)
+                    ),
+                    missing_token=(
+                        _table_text(self._genome_component_table, row, 6) or "missing"
+                    ),
+                    metadata={"origin": "analysis_suite_gui"},
+                )
+            )
+        return tuple(components)
+
+    def _genome_component_check_state(self, row: int, column: int) -> bool:
+        item = self._genome_component_table.item(row, column)
+        return item is not None and item.checkState() == Qt.Checked
+
+    def _has_enabled_genome_components(self) -> bool:
+        if not hasattr(self, "_genome_component_table"):
+            return False
+        return any(
+            self._genome_component_check_state(row, 0)
+            for row in range(self._genome_component_table.rowCount())
+        )
+
+    def _current_feature_set_report_for_preview(self) -> object | None:
+        if self._feature_set_report_is_current():
+            return self._feature_set_report
+        return None
+
+    def _default_genome_source_column(self) -> str:
+        names = self._genome_source_column_names()
+        return names[0] if names else ""
+
+    def _genome_source_column_names(self) -> list[str]:
+        names: list[str] = []
+        feature_set_report = (
+            self._feature_set_report if self._feature_set_report_is_current() else None
+        )
+        for attr in ("selected_features", "accepted_features"):
+            for candidate in tuple(getattr(feature_set_report, attr, ()) or ()):
+                name = str(getattr(candidate, "column_name", "") or "")
+                if name and name not in names:
+                    names.append(name)
+        for name in _feature_candidate_names(self._feature_candidates_report):
+            if name not in names:
+                names.append(name)
+        return names
 
     def _condition_check_state(self, row: int, column: int) -> bool:
         item = self._poi_condition_table.item(row, column)
@@ -1623,6 +2102,76 @@ def _poi_family_report_summary(report: object) -> str:
     return "\n".join(lines).strip()
 
 
+def _genome_validation_report_summary(report: object) -> str:
+    return "\n".join(
+        [
+            f"Status: {_value_text(_report_status(report))}",
+            _list_section("Warnings", _report_sequence(report, "warnings")),
+            _list_section("Blockers", _report_sequence(report, "blockers")),
+            _list_section("Errors", _report_sequence(report, "errors")),
+        ]
+    ).strip()
+
+
+def _genome_path_report_summary(report: object) -> str:
+    lines = [
+        f"Status: {_value_text(getattr(report, 'status', None))}",
+        f"Rows: {_value_text(getattr(report, 'row_count', None))}",
+        f"Path count: {_value_text(getattr(report, 'path_count', None))}",
+        f"Requested sample limit: {_value_text(getattr(report, 'requested_sample_limit', None))}",
+        f"Sample limit: {_value_text(getattr(report, 'sample_limit', None))}",
+        _genome_path_section("Sample paths", getattr(report, "sample_paths", ())),
+        _list_section("Warnings", getattr(report, "warnings", ())),
+        _list_section("Blockers", getattr(report, "blockers", ())),
+        _list_section("Errors", getattr(report, "errors", ())),
+    ]
+    return "\n".join(lines).strip()
+
+
+def _genome_path_section(label: str, paths: object) -> str:
+    items = tuple(paths or ())
+    if not items:
+        return f"{label}: none"
+    lines = [f"{label}:"]
+    for path in items[:6]:
+        snapshots = tuple(getattr(path, "snapshots", ()) or ())
+        lines.append(
+            "- "
+            f"anchor_row={_value_text(getattr(path, 'anchor_row_index', None))}, "
+            f"anchor_ts={_value_text(getattr(path, 'anchor_ts_ms', None))}, "
+            f"anchor_kind={_value_text(getattr(path, 'anchor_kind', None))}, "
+            f"snapshots={len(snapshots)}"
+        )
+        for snapshot in snapshots[:4]:
+            lines.append("  - " + _genome_snapshot_summary(snapshot))
+        if len(snapshots) > 4:
+            lines.append(f"  - ... {len(snapshots) - 4} more snapshots")
+        if tuple(getattr(path, "blockers", ()) or ()):
+            lines.append("  " + _list_section("Blockers", getattr(path, "blockers", ())).replace("\n", "\n  "))
+        if tuple(getattr(path, "warnings", ()) or ()):
+            lines.append("  " + _list_section("Warnings", getattr(path, "warnings", ())).replace("\n", "\n  "))
+    if len(items) > 6:
+        lines.append(f"- ... {len(items) - 6} more paths")
+    return "\n".join(lines)
+
+
+def _genome_snapshot_summary(snapshot: object) -> str:
+    components = getattr(snapshot, "components", {})
+    if not isinstance(components, dict):
+        components = dict(components or {}) if hasattr(components, "items") else {}
+    component_text = ", ".join(
+        f"{key}={_value_text(value)}"
+        for key, value in sorted(components.items(), key=lambda item: str(item[0]))[:8]
+    )
+    if len(components) > 8:
+        component_text += f", ... {len(components) - 8} more"
+    return (
+        f"row={_value_text(getattr(snapshot, 'row_index', None))}, "
+        f"ts={_value_text(getattr(snapshot, 'ts_ms', None))}, "
+        f"components={component_text or 'none'}"
+    )
+
+
 def _poi_occurrence_section(label: str, occurrences: object) -> str:
     items = tuple(occurrences or ())
     if not items:
@@ -1747,6 +2296,18 @@ def _feature_candidate_names(report: object | None) -> list[str]:
     return names
 
 
+def _report_status(report: object) -> object:
+    if isinstance(report, dict):
+        return report.get("status")
+    return getattr(report, "status", None)
+
+
+def _report_sequence(report: object, key: str) -> tuple[object, ...]:
+    if isinstance(report, dict):
+        return tuple(report.get(key, ()) or ())
+    return tuple(getattr(report, key, ()) or ())
+
+
 def _checkable_table_item(checked: bool) -> QTableWidgetItem:
     item = QTableWidgetItem("")
     item.setFlags(
@@ -1791,6 +2352,37 @@ def _parse_literal(text: str) -> object:
 
 def _split_values(text: str) -> tuple[str, ...]:
     return tuple(item.strip() for item in text.split(",") if item.strip())
+
+
+def _parse_static_bin_rules(text: str) -> tuple[AnalysisSuiteStaticBinRule, ...]:
+    rules: list[AnalysisSuiteStaticBinRule] = []
+    normalized = text.replace(";", "\n")
+    for raw_line in normalized.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = tuple(part.strip() for part in line.split(":"))
+        if len(parts) != 3:
+            continue
+        label, lower, upper = parts
+        rules.append(
+            AnalysisSuiteStaticBinRule(
+                label=label,
+                lower=_parse_optional_float_boundary(lower),
+                upper=_parse_optional_float_boundary(upper),
+            )
+        )
+    return tuple(rules)
+
+
+def _parse_optional_float_boundary(text: str) -> float | None:
+    value = text.strip().lower()
+    if value in {"", "-inf", "inf", "+inf", "none", "null"}:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        return None
 
 
 def _parse_non_negative_int(text: str) -> int:

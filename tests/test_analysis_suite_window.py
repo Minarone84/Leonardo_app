@@ -272,6 +272,89 @@ class _FakePoiFamilyPlanner:
         return self.family_report
 
 
+class _FakeGenomePathBuilder:
+    def __init__(self, *, validation_report: object, path_report: object) -> None:
+        self.validation_report = validation_report
+        self.path_report = path_report
+        self.validation_calls: list[dict[str, object]] = []
+        self.path_calls: list[dict[str, object]] = []
+        self.poi_family_path_calls: list[dict[str, object]] = []
+
+    def validate_encoding_definition(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        encoding_definition: object,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+        feature_set_report: object | None = None,
+    ) -> object:
+        self.validation_calls.append(
+            {
+                "market": market,
+                "database_id": database_id,
+                "encoding_definition": encoding_definition,
+                "readiness_report": readiness_report,
+                "diagnostic_report": diagnostic_report,
+                "feature_set_report": feature_set_report,
+            }
+        )
+        return self.validation_report
+
+    def preview_paths(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        encoding_definition: object,
+        sample_limit: int | None = None,
+        anchor_rows: object | None = None,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+        feature_set_report: object | None = None,
+    ) -> object:
+        self.path_calls.append(
+            {
+                "market": market,
+                "database_id": database_id,
+                "encoding_definition": encoding_definition,
+                "sample_limit": sample_limit,
+                "anchor_rows": anchor_rows,
+                "readiness_report": readiness_report,
+                "diagnostic_report": diagnostic_report,
+                "feature_set_report": feature_set_report,
+            }
+        )
+        return self.path_report
+
+    def preview_paths_for_poi_family(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        encoding_definition: object,
+        family_report: object,
+        sample_limit: int | None = None,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+        feature_set_report: object | None = None,
+    ) -> object:
+        self.poi_family_path_calls.append(
+            {
+                "market": market,
+                "database_id": database_id,
+                "encoding_definition": encoding_definition,
+                "family_report": family_report,
+                "sample_limit": sample_limit,
+                "readiness_report": readiness_report,
+                "diagnostic_report": diagnostic_report,
+                "feature_set_report": feature_set_report,
+            }
+        )
+        return self.path_report
+
+
 def _ctx(tmp_path: Path, state: _FakeState | None = None):
     return SimpleNamespace(
         config=SimpleNamespace(runtime=SimpleNamespace(data_dir=str(tmp_path))),
@@ -584,6 +667,45 @@ def _poi_family_report(*, status: str = "ready") -> SimpleNamespace:
     )
 
 
+def _genome_validation_report(*, status: str = "ready") -> dict[str, object]:
+    return {
+        "status": status,
+        "warnings": ("genome_warning",),
+        "blockers": (),
+        "errors": (),
+    }
+
+
+def _genome_path_report(*, status: str = "ready") -> SimpleNamespace:
+    snapshot = SimpleNamespace(
+        row_index=4,
+        ts_ms=4000,
+        components={"close_value": 101.5},
+        component_metadata={},
+        blockers=(),
+        warnings=(),
+    )
+    path = SimpleNamespace(
+        anchor_row_index=4,
+        anchor_ts_ms=4000,
+        anchor_kind="row",
+        snapshots=(snapshot,),
+        blockers=(),
+        warnings=(),
+    )
+    return SimpleNamespace(
+        status=status,
+        row_count=20,
+        path_count=7,
+        requested_sample_limit=100,
+        sample_limit=100,
+        sample_paths=(path,),
+        warnings=("path_warning",),
+        blockers=(),
+        errors=(),
+    )
+
+
 def test_analysis_suite_window_constructs_and_populates_readiness_rows(tmp_path: Path) -> None:
     _qapp()
     service = _FakeReadinessService(
@@ -723,6 +845,7 @@ def test_analysis_suite_window_target_feature_diagnostic_controls_exist(tmp_path
         "Feature Set",
         "Diagnostic Report",
         "POI / Family Preview",
+        "Genome Path Preview",
     ]
     assert family is not None
     assert [family.itemText(index) for index in range(family.count())] == [
@@ -792,6 +915,63 @@ def test_analysis_suite_window_poi_family_controls_exist(tmp_path: Path) -> None
     assert poi_report.isReadOnly() is True
     assert family_report is not None
     assert family_report.isReadOnly() is True
+
+
+def test_analysis_suite_window_genome_path_controls_exist(tmp_path: Path) -> None:
+    _qapp()
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(),
+        genome_path_service=_FakeGenomePathBuilder(
+            validation_report=_genome_validation_report(),
+            path_report=_genome_path_report(),
+        ),
+    )
+
+    encoding_key = window.findChild(QLineEdit, "analysisSuiteGenomeEncodingKeyEdit")
+    display_name = window.findChild(QLineEdit, "analysisSuiteGenomeEncodingDisplayNameEdit")
+    path_length = window.findChild(QSpinBox, "analysisSuiteGenomePathLengthSpin")
+    anchor_mode = window.findChild(QComboBox, "analysisSuiteGenomeAnchorModeCombo")
+    component_table = window.findChild(QTableWidget, "analysisSuiteGenomeComponentTable")
+    add_component = window.findChild(QPushButton, "analysisSuiteGenomeAddComponentButton")
+    remove_component = window.findChild(
+        QPushButton,
+        "analysisSuiteGenomeRemoveComponentButton",
+    )
+    validate_button = window.findChild(QPushButton, "analysisSuiteGenomeValidateButton")
+    row_preview_button = window.findChild(
+        QPushButton,
+        "analysisSuiteGenomeRowPreviewButton",
+    )
+    poi_preview_button = window.findChild(
+        QPushButton,
+        "analysisSuiteGenomePoiFamilyPreviewButton",
+    )
+    report_text = window.findChild(QPlainTextEdit, "analysisSuiteGenomePathReportText")
+
+    assert encoding_key is not None
+    assert encoding_key.text() == "genome_preview"
+    assert display_name is not None
+    assert display_name.text() == "Genome preview"
+    assert path_length is not None
+    assert path_length.minimum() == 1
+    assert anchor_mode is not None
+    assert [anchor_mode.itemData(index) for index in range(anchor_mode.count())] == [
+        "row",
+        "poi_occurrence",
+    ]
+    assert component_table is not None
+    assert component_table.columnCount() == 8
+    assert add_component is not None
+    assert remove_component is not None
+    assert validate_button is not None
+    assert validate_button.isEnabled() is False
+    assert row_preview_button is not None
+    assert row_preview_button.isEnabled() is False
+    assert poi_preview_button is not None
+    assert poi_preview_button.isEnabled() is False
+    assert report_text is not None
+    assert report_text.isReadOnly() is True
 
 
 def test_analysis_suite_window_target_preview_calls_as5_service(tmp_path: Path) -> None:
@@ -1203,6 +1383,266 @@ def test_analysis_suite_window_family_preview_calls_as8_service(tmp_path: Path) 
     assert "family_warning" in text
 
 
+def test_analysis_suite_window_genome_validation_calls_as9_service(tmp_path: Path) -> None:
+    _qapp()
+    feature_service = _FakeFeatureSetPlanner(candidates=(_candidate("close"),))
+    genome_service = _FakeGenomePathBuilder(
+        validation_report=_genome_validation_report(),
+        path_report=_genome_path_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        feature_set_service=feature_service,
+        genome_path_service=genome_service,
+    )
+
+    list_button = window.findChild(QPushButton, "analysisSuiteFeatureRefreshButton")
+    add_component = window.findChild(QPushButton, "analysisSuiteGenomeAddComponentButton")
+    component_table = window.findChild(QTableWidget, "analysisSuiteGenomeComponentTable")
+    validate_button = window.findChild(QPushButton, "analysisSuiteGenomeValidateButton")
+    report_text = window.findChild(QPlainTextEdit, "analysisSuiteGenomePathReportText")
+    assert list_button is not None
+    assert add_component is not None
+    assert component_table is not None
+    assert validate_button is not None
+    assert report_text is not None
+
+    list_button.click()
+    add_component.click()
+    assert component_table.item(0, 2).text() == "close"
+    component_table.item(0, 1).setText("close_variation")
+    component_table.item(0, 3).setText("variation_direction")
+    component_table.item(0, 5).setText("2")
+    validate_button.click()
+
+    assert len(genome_service.validation_calls) == 1
+    call = genome_service.validation_calls[0]
+    assert call["database_id"] == "adb_ready"
+    assert call["readiness_report"] is not None
+    definition = call["encoding_definition"]
+    assert getattr(definition, "encoding_key") == "genome_preview"
+    assert getattr(definition, "path_length_bars") == 12
+    assert getattr(definition, "anchor") == "row"
+    assert len(definition.components) == 1
+    component = definition.components[0]
+    assert component.component_key == "close_variation"
+    assert component.source_column == "close"
+    assert component.encoding == "variation_direction"
+    assert component.lookback_bars == 2
+
+    text = report_text.toPlainText()
+    assert "Status: ready" in text
+    assert "genome_warning" in text
+
+
+def test_analysis_suite_window_genome_row_preview_calls_as9_service(tmp_path: Path) -> None:
+    _qapp()
+    genome_service = _FakeGenomePathBuilder(
+        validation_report=_genome_validation_report(),
+        path_report=_genome_path_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        genome_path_service=genome_service,
+    )
+
+    add_component = window.findChild(QPushButton, "analysisSuiteGenomeAddComponentButton")
+    component_table = window.findChild(QTableWidget, "analysisSuiteGenomeComponentTable")
+    preview_button = window.findChild(QPushButton, "analysisSuiteGenomeRowPreviewButton")
+    report_text = window.findChild(QPlainTextEdit, "analysisSuiteGenomePathReportText")
+    assert add_component is not None
+    assert component_table is not None
+    assert preview_button is not None
+    assert report_text is not None
+
+    add_component.click()
+    component_table.item(0, 1).setText("close_value")
+    component_table.item(0, 2).setText("close")
+    preview_button.click()
+
+    assert len(genome_service.path_calls) == 1
+    call = genome_service.path_calls[0]
+    assert call["database_id"] == "adb_ready"
+    assert call["anchor_rows"] is None
+    definition = call["encoding_definition"]
+    assert getattr(definition, "anchor") == "row"
+    assert definition.components[0].source_column == "close"
+
+    text = report_text.toPlainText()
+    assert "Status: ready" in text
+    assert "Path count: 7" in text
+    assert "close_value=101.5" in text
+    assert "path_warning" in text
+
+
+def test_analysis_suite_window_genome_static_bin_config_is_passed_to_as9(
+    tmp_path: Path,
+) -> None:
+    _qapp()
+    genome_service = _FakeGenomePathBuilder(
+        validation_report=_genome_validation_report(),
+        path_report=_genome_path_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        genome_path_service=genome_service,
+    )
+
+    add_component = window.findChild(QPushButton, "analysisSuiteGenomeAddComponentButton")
+    component_table = window.findChild(QTableWidget, "analysisSuiteGenomeComponentTable")
+    validate_button = window.findChild(QPushButton, "analysisSuiteGenomeValidateButton")
+    assert add_component is not None
+    assert component_table is not None
+    assert validate_button is not None
+
+    add_component.click()
+    component_table.item(0, 1).setText("rsi_bin")
+    component_table.item(0, 2).setText("rsi_14")
+    component_table.item(0, 3).setText("static_bin")
+    component_table.item(0, 4).setText("low:-inf:30;middle:30:70;high:70:inf")
+    validate_button.click()
+
+    component = genome_service.validation_calls[0]["encoding_definition"].components[0]
+    assert [rule.label for rule in component.bins] == ["low", "middle", "high"]
+    assert component.bins[0].lower is None
+    assert component.bins[0].upper == 30.0
+    assert component.bins[2].lower == 70.0
+    assert component.bins[2].upper is None
+
+
+def test_analysis_suite_window_genome_poi_family_preview_uses_current_as8_report(
+    tmp_path: Path,
+) -> None:
+    _qapp()
+    poi_service = _FakePoiFamilyPlanner(
+        occurrence_report=_poi_occurrence_report(),
+        family_report=_poi_family_report(),
+    )
+    genome_service = _FakeGenomePathBuilder(
+        validation_report=_genome_validation_report(),
+        path_report=_genome_path_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        poi_family_service=poi_service,
+        genome_path_service=genome_service,
+    )
+
+    poi_source = window.findChild(QComboBox, "analysisSuitePoiSourceColumnCombo")
+    family_button = window.findChild(QPushButton, "analysisSuitePoiFamilyPreviewButton")
+    add_component = window.findChild(QPushButton, "analysisSuiteGenomeAddComponentButton")
+    component_table = window.findChild(QTableWidget, "analysisSuiteGenomeComponentTable")
+    genome_button = window.findChild(QPushButton, "analysisSuiteGenomePoiFamilyPreviewButton")
+    report_text = window.findChild(QPlainTextEdit, "analysisSuiteGenomePathReportText")
+    assert poi_source is not None
+    assert family_button is not None
+    assert add_component is not None
+    assert component_table is not None
+    assert genome_button is not None
+    assert report_text is not None
+
+    poi_source.setEditText("peak_marker")
+    family_button.click()
+    add_component.click()
+    component_table.item(0, 1).setText("rsi_value")
+    component_table.item(0, 2).setText("rsi_14")
+    genome_button.click()
+
+    assert len(poi_service.family_calls) == 1
+    assert len(genome_service.poi_family_path_calls) == 1
+    call = genome_service.poi_family_path_calls[0]
+    assert call["database_id"] == "adb_ready"
+    assert call["family_report"] is poi_service.family_report
+    assert call["encoding_definition"].anchor == "poi_occurrence"
+    assert "Path count: 7" in report_text.toPlainText()
+
+
+def test_analysis_suite_window_genome_poi_family_preview_requires_as8_report(
+    tmp_path: Path,
+) -> None:
+    _qapp()
+    genome_service = _FakeGenomePathBuilder(
+        validation_report=_genome_validation_report(),
+        path_report=_genome_path_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        genome_path_service=genome_service,
+    )
+
+    add_component = window.findChild(QPushButton, "analysisSuiteGenomeAddComponentButton")
+    component_table = window.findChild(QTableWidget, "analysisSuiteGenomeComponentTable")
+    genome_button = window.findChild(QPushButton, "analysisSuiteGenomePoiFamilyPreviewButton")
+    report_text = window.findChild(QPlainTextEdit, "analysisSuiteGenomePathReportText")
+    assert add_component is not None
+    assert component_table is not None
+    assert genome_button is not None
+    assert report_text is not None
+
+    add_component.click()
+    component_table.item(0, 1).setText("close_value")
+    component_table.item(0, 2).setText("close")
+    genome_button.click()
+
+    assert genome_service.poi_family_path_calls == []
+    assert "Preview a current POI family" in report_text.toPlainText()
+
+
 def test_analysis_suite_window_clears_poi_family_state_when_inputs_change(tmp_path: Path) -> None:
     _qapp()
     poi_service = _FakePoiFamilyPlanner(
@@ -1268,6 +1708,62 @@ def test_analysis_suite_window_clears_poi_family_state_when_inputs_change(tmp_pa
     catalog.selectRow(1)
     assert "Select a previewable Analysis Database" in poi_text.toPlainText()
     assert "Preview POI occurrences before family membership" in family_text.toPlainText()
+
+
+def test_analysis_suite_window_clears_genome_state_when_inputs_change(tmp_path: Path) -> None:
+    _qapp()
+    genome_service = _FakeGenomePathBuilder(
+        validation_report=_genome_validation_report(),
+        path_report=_genome_path_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+                _report(
+                    database_id="adb_other",
+                    display_name="OtherDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        genome_path_service=genome_service,
+    )
+
+    catalog = window.findChild(QTableWidget, "analysisSuiteCatalogTable")
+    add_component = window.findChild(QPushButton, "analysisSuiteGenomeAddComponentButton")
+    component_table = window.findChild(QTableWidget, "analysisSuiteGenomeComponentTable")
+    preview_button = window.findChild(QPushButton, "analysisSuiteGenomeRowPreviewButton")
+    report_text = window.findChild(QPlainTextEdit, "analysisSuiteGenomePathReportText")
+    assert catalog is not None
+    assert add_component is not None
+    assert component_table is not None
+    assert preview_button is not None
+    assert report_text is not None
+
+    add_component.click()
+    component_table.item(0, 1).setText("close_value")
+    component_table.item(0, 2).setText("close")
+    preview_button.click()
+    assert "Path count: 7" in report_text.toPlainText()
+
+    component_table.item(0, 2).setText("rsi_14")
+    assert "Genome encoding changed" in report_text.toPlainText()
+
+    preview_button.click()
+    assert "Path count: 7" in report_text.toPlainText()
+
+    catalog.selectRow(1)
+    assert "Add at least one genome component" in report_text.toPlainText()
 
 
 def test_analysis_suite_window_diagnostic_requires_current_target_and_feature_reports(tmp_path: Path) -> None:
@@ -1484,7 +1980,6 @@ def test_analysis_suite_window_allowed_actions_are_read_only(tmp_path: Path) -> 
         "Create Analysis Run",
         "Train Model",
         "Generate Signal",
-        "Genome Path",
         "Category Builder",
         "White-Box Discovery",
         "Backtest",
@@ -1551,9 +2046,11 @@ def test_analysis_suite_window_static_boundaries() -> None:
         "AnalysisProjectStore",
         "AnalysisRunStore",
         "AnalysisReportStore",
-        "AnalysisSuiteGenomePathBuilder",
-        "Genome Path Preview",
         "Category Builder",
+        "White-Box Discovery",
+        "Rule Discovery",
+        "Train Model",
+        "Generate Signal",
         "materialize_database",
         "rebuild_database",
         "replace_database_features",

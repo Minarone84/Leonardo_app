@@ -1,7 +1,7 @@
 # Analysis Suite Design
 
-Version: v0.4
-Status: AS8 and AS9 accepted backend MVPs plus AS10-AUDIT future boundary
+Version: v0.5
+Status: AS8 and AS9 accepted backend MVPs plus AS-GUI-AUDIT GUI exposure boundary
 Date: 2026-05-30
 
 ## Purpose
@@ -13,11 +13,13 @@ paths.
 AS8-AUDIT established the POI/family/road/genome design boundary. AS8
 implements the first backend POI/family planner within that boundary. AS9
 implements the first backend genome/path preview builder within the AS9-AUDIT
-encoding boundary.
+encoding boundary. AS-GUI-AUDIT defines the first safe Analysis Suite GUI
+exposure path without implementing GUI behavior.
 
-AS9 does not add GUI controls, persistence, white-box rule discovery,
-backtesting, model training, signals, neural agents, Decisor logic, artifact
-calculation, recipe execution, Analysis Database mutation, or OHLCV repair.
+AS9 and AS-GUI-AUDIT do not add GUI controls, persistence, white-box rule
+discovery, backtesting, model training, signals, neural agents, Decisor logic,
+artifact calculation, recipe execution, Analysis Database mutation, or OHLCV
+repair.
 
 ## Current Foundation
 
@@ -749,24 +751,148 @@ Postponed behavior:
 - Rule discovery or comparison metrics.
 - GUI genome builder.
 
-## Future GUI Implications
+## AS-GUI-AUDIT - Analysis Suite GUI Functionality Audit
 
-Analysis Suite GUI work should wait until backend concepts are stable.
+AS-GUI-AUDIT is a design-only boundary for exposing accepted backend planners
+in `AnalysisSuiteWindow`. It does not add widgets, dialogs, actions, service
+wiring, persistence, stores, or runtime behavior.
 
-Future GUI audit should decide how `AnalysisSuiteWindow` or a later Analysis
-Suite surface exposes:
+Current `AnalysisSuiteWindow` baseline:
 
-- target preview;
-- feature-set builder;
-- diagnostic report;
-- POI/family/category builder;
-- occurrence preview;
-- genome path preview;
-- road/outcome summaries.
+- Opens from `Analysis -> Analysis Suite` through `WindowManager`.
+- Displays the AS1 readiness catalog in a read-only table.
+- Shows selected readiness details, blockers, warnings, errors, source drift,
+  and topology/geography state.
+- Provides bounded Head/Tail dataframe preview through
+  `AnalysisSuiteDataframePreviewService`.
+- Enables preview only when the selected AS1 report has `can_preview == True`.
+- Routes preparation work back to Data Manager through `Open Data Manager`.
+- Offers `Refresh Catalog` and `Close`.
+- Constructs AS1/AS3 backend services from the configured historical root, with
+  test-injected service protocols available.
+- Does not load `dataframe.csv` directly, inspect manifests for policy, call
+  `AnalysisDatabaseStore.load_dataframe(...)`, mutate Data Manager objects, or
+  call AS5-AS9 services.
 
-Current AS8 and AS9 backend work does not add GUI controls and does not change
-`AnalysisSuiteWindow`. AnalysisSuiteWindow still exposes only the read-only
-catalog and bounded dataframe preview.
+Backend services available for future GUI exposure:
+
+- AS5 `AnalysisSuiteTargetPlanner` is ready for read-only target preview
+  controls. The GUI would collect target family, horizon, thresholds, and
+  preview limit, then display `AnalysisSuiteTargetPreviewReport` fields. The
+  GUI must not persist target definitions or labels, and must not calculate
+  labels itself.
+- AS6 `AnalysisSuiteFeatureSetPlanner` is ready for read-only candidate and
+  feature-selection preview after a selected database and target context exist.
+  The GUI would collect ordered selected columns from service-produced
+  candidates, then display accepted/rejected features, group summaries, leakage
+  summaries, blockers, warnings, and errors. The GUI must not infer eligibility
+  from raw CSV headers or duplicate leakage policy.
+- AS7 `AnalysisSuiteDiagnosticReportService` is ready for read-only diagnostic
+  preview once AS1, AS5, and AS6 reports are available. The GUI would display
+  final status, label availability, target statistics or class distribution,
+  feature missingness/dtype diagnostics, leakage blockers, and combined
+  blockers/warnings/errors. The GUI must not write reports or create project,
+  run, or report stores.
+- AS8 `AnalysisSuitePoiFamilyPlanner` is backend-ready but should wait for a
+  later GUI phase. It requires POI definitions, condition editing, occurrence
+  previews, and family membership presentation. Exposing it before target,
+  feature, and diagnostic setup is stable would overload the first GUI patch.
+- AS9 `AnalysisSuiteGenomePathBuilder` is backend-ready but should wait for a
+  later GUI phase. It requires encoding definitions, component configuration,
+  row or AS8-family anchoring, path preview rendering, and conservative
+  current/past-only wording. It must not be exposed before AS8 GUI concepts are
+  usable.
+
+Recommended first GUI phase:
+
+AS-GUI-1 - Target / Feature / Diagnostic Preview UI.
+
+AS-GUI-1 should expose AS5, AS6, and AS7 together as one read-only setup
+workflow. Target preview alone is useful but incomplete, and diagnostic
+preview cannot be coherent without both target and feature-set reports. AS8 and
+AS9 controls should remain postponed until users can inspect the target,
+feature, and diagnostic setup reliably.
+
+Recommended staging:
+
+1. AS-GUI-1 - Target / Feature / Diagnostic Preview UI.
+   - Add AS5 target definition controls.
+   - Add AS6 feature candidate and selected-feature preview.
+   - Add AS7 diagnostic report preview.
+   - Preserve current AS1 catalog and AS3 dataframe preview behavior.
+   - Keep all definitions and reports in memory.
+2. AS-GUI-2 - POI / Family Preview UI.
+   - Expose AS8 POI definitions, simple condition rules, occurrence previews,
+     and family membership previews.
+   - Keep read-only/no-persistence boundaries.
+3. AS-GUI-3 - Genome Path Preview UI.
+   - Expose AS9 genome component and encoding definitions, row-anchored path
+     preview, and AS8-family-anchored path preview.
+   - Keep read-only/no-persistence boundaries.
+4. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+   Architecture.
+   - Define comparison metrics and rule-discovery boundaries after the GUI can
+     inspect current backend setup objects.
+
+Suggested layout direction:
+
+- Preserve the current read-only catalog as the left-side selection anchor.
+- Keep readiness details and bounded dataframe preview available as the
+  existing baseline.
+- Add a tabbed setup area for AS-GUI-1 rather than several modal dialogs:
+  `Target Preview`, `Feature Set`, and `Diagnostic Report`.
+- Reset target, feature, and diagnostic preview state when the selected
+  database changes.
+- Keep AS8/AS9 tabs absent in AS-GUI-1. Later phases may add `POI / Family
+  Preview` and `Genome Path Preview` tabs after their interaction contracts are
+  stable.
+
+Service orchestration boundary:
+
+- Future GUI code should call backend services through narrow GUI-owned
+  orchestration methods or injected service protocols, matching the current
+  AS1/AS3 testable pattern.
+- New CoreBridge APIs are not needed for AS-GUI-1 unless a later lifecycle
+  audit requires centralized service registration.
+- GUI code may collect user intent and render report objects, but backend
+  services must own target generation, feature eligibility, leakage policy,
+  diagnostic coherence, dataframe reads, and JSON-safe report construction.
+- GUI code must not duplicate Data Manager persistence, Analysis Database
+  materialization, artifact calculation, recipe execution, or OHLCV repair
+  ownership.
+
+AS-GUI-1 test requirements:
+
+- `AnalysisSuiteWindow` exposes target preview controls only after a database
+  selection.
+- Target preview calls `AnalysisSuiteTargetPlanner`; the GUI does not compute
+  labels or read dataframe values directly.
+- Feature candidate and selection preview calls `AnalysisSuiteFeatureSetPlanner`
+  and preserves backend ordering, blockers, warnings, errors, and leakage
+  diagnostics.
+- Diagnostic preview calls `AnalysisSuiteDiagnosticReportService` using the
+  AS1, AS5, and AS6 report objects.
+- Stale target, feature, and diagnostic previews clear when the selected
+  database changes or the catalog refreshes.
+- Existing AS1 readiness catalog and AS3 bounded dataframe preview behavior
+  remains covered.
+- Static boundary tests confirm no Analysis Database build/rebuild/materialize
+  calls, manifest/dataframe writes, Data Manager mutation, stores, model
+  training, signal generation, backtesting, or GUI-owned leakage policy.
+
+AS-GUI-1 must not add:
+
+- Persistence for targets, labels, feature sets, diagnostic reports, POI
+  definitions, POI families, genome definitions, or genome paths.
+- Analysis Project/Run/Report stores.
+- AS8 POI/family controls.
+- AS9 genome/path controls.
+- Category-builder UI.
+- White-box rule discovery, rule mining, backtesting, road classification,
+  model training, signals, or trading logic.
+- Artifact calculation, recipe execution, database build/rebuild/materialize
+  operations, component editing, OHLCV repair/validation, manifest writes, or
+  dataframe writes.
 
 ## Out-Of-Scope Boundaries
 
@@ -807,16 +933,22 @@ AS8 and AS9 do not add:
 
 Recommended sequence:
 
-1. AS9D - Docs sync for Genome Path Builder Backend.
-2. AS-GUI-AUDIT - Analysis Suite GUI functionality audit.
-   - Decide how to expose target preview, feature-set builder, diagnostic
-     reports, POI/family/category builder, and genome path previews after
-     backend contracts are stable.
-3. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+1. AS-GUI-1 - Target / Feature / Diagnostic Preview UI.
+   - Expose AS5 target preview, AS6 feature candidate/selection preview, and
+     AS7 diagnostic report preview in `AnalysisSuiteWindow`.
+   - Keep the patch read-only, non-persistent, and limited to backend report
+     display.
+2. AS-GUI-2 - POI / Family Preview UI.
+   - Expose AS8 POI/family definitions and bounded occurrence/membership
+     previews after AS-GUI-1 is stable.
+3. AS-GUI-3 - Genome Path Preview UI.
+   - Expose AS9 genome encoding definitions and bounded row or AS8-family
+     anchored path previews after AS8 GUI concepts are stable.
+4. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
    Architecture.
    - Define comparison sets, support, precision, recall, lift,
      false-positive rate, stability, and family separation.
-4. Future AS10 implementation and docs sync after AS10 architecture is
+5. Future AS10 implementation and docs sync after AS10 architecture is
    accepted.
 
 Research Suite validation integration, neural refinement, and Decisor logic

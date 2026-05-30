@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.36
+Version: v3.37
 Date: 2026-05-30
 
 ## Overview
@@ -297,6 +297,10 @@ AS5 target planning, AS6 feature-set planning, AS7 diagnostic reporting, AS8 POI
 The Analysis Suite GUI does not own readiness or preview policy. Policy remains in `AnalysisSuiteDatasetReadinessService` and `AnalysisSuiteDataframePreviewService`; the GUI must not inspect `manifest.json`, `dataframe.csv`, or `source_ohlcv.snapshot` to classify readiness, and it must not load `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. Previewable does not mean analysis-ready: non-strict datasets may be previewed only when AS1 allows it, with warnings and blockers still visible.
 
 Still out of scope for the GUI: target controls, label preview actions, feature-set controls, diagnostic controls, diagnostic report actions, POI/family controls, genome/path controls, category-builder controls, target/label/feature-set/report/POI/family/genome persistence, POI stores, genome stores, `FeatureSetStore`, Analysis Projects, Analysis Runs, Analysis Reports, model workflows, signal generation, trading workflows, road classification, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, and raw OHLCV repair/validation.
+
+AS-GUI-AUDIT recommends the first GUI implementation patch be AS-GUI-1 - Target / Feature / Diagnostic Preview UI. AS-GUI-1 should expose AS5 target preview, AS6 feature candidate/selection preview, and AS7 diagnostic report preview together as a read-only setup workflow. The GUI should collect target and feature-selection intent, call the backend planners/services, render report objects, and clear stale target/feature/diagnostic state when the selected Analysis Database changes. It should not expose AS8 POI/family controls or AS9 genome/path controls yet.
+
+Recommended staging after AS-GUI-1 is AS-GUI-2 for POI / Family Preview UI, AS-GUI-3 for Genome Path Preview UI, and then AS10-AUDIT for POI family comparison and white-box rule-discovery architecture. Future Analysis Suite GUI work should keep backend services as the policy owners; GUI code must not infer feature eligibility from raw CSV headers, compute labels, duplicate leakage policy, load `dataframe.csv` directly, write manifests/dataframes, persist definitions/reports, or perform Data Manager mutation.
 
 Current Analysis Database UI behavior:
 
@@ -1685,6 +1689,7 @@ Recommended tooling (in the GUI package):
 
 ## Change log
 
+- **v3.37 (2026-05-30)** - Analysis Suite GUI audit sync: documents AS-GUI-AUDIT, recommends AS-GUI-1 as Target / Feature / Diagnostic Preview UI, stages later AS-GUI-2 POI/family and AS-GUI-3 genome path previews, and preserves the boundary that this is design only with no GUI implementation, persistence, stores, model/training/signal behavior, database mutation, or OHLCV repair.
 - **v3.36 (2026-05-30)** - Analysis Suite genome path builder AS9 sync: documented `AnalysisSuiteGenomePathBuilder` as backend-only, read-only genome/path preview planning, clarified row-anchored and AS8-family-anchored preview scope, and preserved the GUI boundary that `AnalysisSuiteWindow` still exposes only catalog and bounded dataframe preview with no genome/path controls or genome persistence.
 - **v3.35 (2026-05-29)** - Analysis Suite POI/family planner AS8 sync: documented `AnalysisSuitePoiFamilyPlanner` as backend-only, read-only POI occurrence and family membership planning, clarified AS1/AS7 gating and manifest-metadata validation, and preserved the GUI boundary that `AnalysisSuiteWindow` still exposes only catalog and bounded dataframe preview with no POI/family/category controls or POI/family persistence.
 - **v3.34 (2026-05-28)** - Analysis Suite diagnostic report AS7 sync: documented `AnalysisSuiteDiagnosticReportService` as backend-only, read-only composition of AS1 readiness, AS5 target preview, and AS6 feature-set preview reports; clarified that `AnalysisSuiteWindow` still exposes only the read-only catalog and bounded dataframe preview, with no target, feature-set, diagnostic, persistence, project/run/report, model, signal, artifact, recipe, database materialization, or OHLCV repair controls.

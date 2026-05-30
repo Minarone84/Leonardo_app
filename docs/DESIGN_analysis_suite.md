@@ -1,7 +1,7 @@
 # Analysis Suite Design
 
-Version: v0.6
-Status: AS8 and AS9 accepted backend MVPs plus accepted AS-GUI-1 setup workflow
+Version: v0.7
+Status: AS8 and AS9 accepted backend MVPs plus accepted AS-GUI-1 and AS-GUI-2 workflows
 Date: 2026-05-30
 
 ## Purpose
@@ -14,12 +14,13 @@ AS8-AUDIT established the POI/family/road/genome design boundary. AS8
 implements the first backend POI/family planner within that boundary. AS9
 implements the first backend genome/path preview builder within the AS9-AUDIT
 encoding boundary. AS-GUI-AUDIT defined the first safe Analysis Suite GUI
-exposure path, and AS-GUI-1 implements the accepted target, feature-set, and
-diagnostic preview workflow.
+exposure path. AS-GUI-1 implements the accepted target, feature-set, and
+diagnostic preview workflow, and AS-GUI-2 implements the accepted POI/family
+preview workflow.
 
-AS9 and AS-GUI-1 do not add persistence, white-box rule discovery, backtesting,
-model training, signals, neural agents, Decisor logic, artifact calculation,
-recipe execution, Analysis Database mutation, or OHLCV repair.
+AS9, AS-GUI-1, and AS-GUI-2 do not add persistence, white-box rule discovery,
+backtesting, model training, signals, neural agents, Decisor logic, artifact
+calculation, recipe execution, Analysis Database mutation, or OHLCV repair.
 
 ## Current Foundation
 
@@ -47,6 +48,8 @@ The accepted Analysis Suite foundation is read-only:
 - AS-GUI-1: `AnalysisSuiteWindow` exposes AS5 target preview, AS6 feature
   candidate/selection preview, and AS7 diagnostic report preview as read-only,
   non-persistent tabs.
+- AS-GUI-2: `AnalysisSuiteWindow` exposes AS8 POI occurrence preview and
+  POI family membership preview as a read-only, non-persistent tab.
 - AS8: `AnalysisSuitePoiFamilyPlanner` previews POI occurrences and POI
   family membership from prepared Analysis Database columns with bounded
   JSON-safe reports.
@@ -54,8 +57,10 @@ The accepted Analysis Suite foundation is read-only:
   previews from prepared Analysis Database columns with conservative
   current/past-only encodings.
 
-AS8 and AS9 consume AS1 readiness or optional AS7 diagnostic context. They
-remain backend-only, read-only, and non-persistent.
+AS8 and AS9 consume AS1 readiness or optional AS7 diagnostic context. Their
+backend services remain read-only and non-persistent. AS-GUI-2 exposes AS8
+reports in the GUI without moving AS8 policy, dataframe reads, or persistence
+into the GUI. AS9 remains backend-only.
 
 ## Manifesto Direction
 
@@ -870,14 +875,15 @@ Recommended staging:
 1. AS-GUI-1D - Target / Feature / Diagnostic Preview UI docs sync.
    - Document accepted AS-GUI-1 behavior and manual smoke-check status.
 2. AS-GUI-2 - POI / Family Preview UI.
-   - Expose AS8 POI definitions, simple condition rules, occurrence previews,
-     and family membership previews.
-   - Keep read-only/no-persistence boundaries.
-3. AS-GUI-3 - Genome Path Preview UI.
+   - Implemented as the accepted AS8 GUI preview workflow.
+3. AS-GUI-2D - POI / Family Preview UI docs sync.
+   - Document accepted AS-GUI-2 behavior and preserve no-persistence/no-mutation
+     boundaries.
+4. AS-GUI-3 - Genome Path Preview UI.
    - Expose AS9 genome component and encoding definitions, row-anchored path
      preview, and AS8-family-anchored path preview.
    - Keep read-only/no-persistence boundaries.
-4. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+5. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
    Architecture.
    - Define comparison metrics and rule-discovery boundaries after the GUI can
      inspect current backend setup objects.
@@ -887,12 +893,11 @@ Suggested layout direction:
 - Preserve the current read-only catalog as the left-side selection anchor.
 - Keep readiness details and bounded dataframe preview available.
 - Use the accepted tabbed setup area for `Data Preview`, `Target Preview`,
-  `Feature Set`, and `Diagnostic Report`.
-- Reset target, feature, and diagnostic preview state when the selected
-  database changes.
-- Keep AS8/AS9 tabs absent after AS-GUI-1. Later phases may add `POI / Family
-  Preview` and `Genome Path Preview` tabs after their interaction contracts are
-  stable.
+  `Feature Set`, `Diagnostic Report`, and `POI / Family Preview`.
+- Reset target, feature, diagnostic, POI, and family preview state when the
+  selected database changes.
+- Keep AS9 tabs absent after AS-GUI-2. A later phase may add `Genome Path
+  Preview` after the AS9 interaction contract is stable.
 
 Service orchestration boundary:
 
@@ -903,7 +908,9 @@ Service orchestration boundary:
   revisit centralized service registration if needed.
 - GUI code may collect user intent and render report objects, but backend
   services must own target generation, feature eligibility, leakage policy,
-  diagnostic coherence, dataframe reads, and JSON-safe report construction.
+  diagnostic coherence, POI occurrence detection, family membership matching,
+  source/condition validation, dataframe reads, and JSON-safe report
+  construction.
 - GUI code must not duplicate Data Manager persistence, Analysis Database
   materialization, artifact calculation, recipe execution, or OHLCV repair
   ownership.
@@ -941,13 +948,93 @@ AS-GUI-1 does not add:
   operations, component editing, OHLCV repair/validation, manifest writes, or
   dataframe writes.
 
+## Accepted AS-GUI-2 - POI / Family Preview UI
+
+AS-GUI-2 implements the first AS8 POI/family GUI workflow in
+`AnalysisSuiteWindow`. It preserves the AS1 readiness catalog, AS3 bounded
+dataframe preview behavior, AS5 target preview, AS6 feature-set preview, AS7
+diagnostic report preview, `Open Data Manager` routing, `Refresh Catalog`, and
+`Close`.
+
+The accepted tab area now contains:
+
+- `Data Preview`: existing AS3 bounded Head/Tail dataframe preview.
+- `Target Preview`: AS5 target preview controls and report rendering.
+- `Feature Set`: AS6 feature candidate listing, selected-feature validation,
+  and report rendering.
+- `Diagnostic Report`: AS7 diagnostic report rendering from current AS1, AS5,
+  and AS6 report objects.
+- `POI / Family Preview`: AS8 POI occurrence and family membership preview.
+
+The `POI / Family Preview` tab has a POI Definition section. It lets the user
+enter POI key, display name, POI type, source column, event kind, event value,
+and previous value. It exposes AS8 event kinds `sparse_event`,
+`boolean_true`, `value_equals`, and `transition`. The tab builds an in-memory
+`AnalysisSuitePoiDefinition`, calls
+`AnalysisSuitePoiFamilyPlanner.preview_poi_occurrences(...)`, and displays
+status, row count, occurrence count, first/last occurrence timestamps when
+available, sample occurrences, blockers, warnings, and errors. POI definitions
+are not persisted.
+
+The same tab has a Family Conditions section. It lets the user enter family
+key/name and condition rows with column, operator, value, values,
+`lookback_bars`, required flag, and label. Conditions remain simple AND-style
+MVP rules. Supported AS8 operators are `equals`, `not_equals`, `gt`, `gte`,
+`lt`, `lte`, `in`, `not_in`, `is_null`, and `not_null`. The tab builds an
+in-memory `AnalysisSuitePoiFamilyDefinition`, calls
+`AnalysisSuitePoiFamilyPlanner.preview_family(...)`, and displays status,
+occurrence count, matched count, unmatched count, sample memberships,
+condition result summaries, blockers, warnings, and errors. POI family
+definitions are not persisted.
+
+AS-GUI-2 clears stale state:
+
+- selecting a different Analysis Database clears POI and family reports;
+- feature or diagnostic changes clear stale POI/family reports;
+- changing POI definition inputs clears stale occurrence and family reports;
+- changing family condition inputs clears stale family reports.
+
+Backend services remain the policy owners. The GUI collects POI/family intent
+and renders AS8 report objects, while AS8 owns dataframe reads, POI occurrence
+detection, family membership matching, source/condition validation, leakage
+checks, blockers, warnings, errors, and JSON-safe report construction. The GUI
+does not read `dataframe.csv` directly, parse `manifest.json` directly for
+readiness/feature/leakage/POI policy, compute POI occurrences, compute family
+memberships, infer raw CSV header event truth, or duplicate backend leakage or
+source-eligibility policy.
+
+AS-GUI-2 does not add:
+
+- AS9 genome/path controls or genome encoding controls.
+- Category-builder UI.
+- Persistence for POI definitions, POI families, targets, labels, feature
+  sets, diagnostic reports, genome definitions, or genome paths.
+- POI/family stores, genome stores, or Analysis Project/Run/Report stores.
+- White-box rule discovery, rule mining, backtesting, road classification,
+  outcome distribution analysis, model training, signals, or trading logic.
+- Artifact calculation, recipe execution, database build/rebuild/materialize
+  operations, component editing, OHLCV repair/validation, manifest writes, or
+  dataframe writes.
+
+Recommended staging after AS-GUI-2:
+
+1. AS-GUI-2D - POI / Family Preview UI docs sync.
+   - Document accepted AS-GUI-2 behavior and preserve backend-owned policy and
+     no-persistence/no-mutation boundaries.
+2. AS-GUI-3 - Genome Path Preview UI.
+   - Expose AS9 genome encoding definitions and bounded row or AS8-family
+     anchored path previews after AS8 GUI concepts are stable.
+3. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+   Architecture.
+   - Define comparison sets, support, precision, recall, lift,
+     false-positive rate, stability, and family separation.
+
 ## Out-Of-Scope Boundaries
 
-AS8 and AS9 do not add:
+AS8, AS9, AS-GUI-1, and AS-GUI-2 do not add:
 
 - GUI category builder.
-- POI/family GUI controls.
-- Genome builder GUI controls.
+- AS9 genome builder GUI controls.
 - Persistent POI family store.
 - POI definition or POI family definition persistence.
 - Persistent genome stores.
@@ -987,16 +1074,18 @@ Recommended sequence:
    - Review layout and small usability issues found during manual exploration
      without changing backend contracts.
 3. AS-GUI-2 - POI / Family Preview UI.
-   - Expose AS8 POI/family definitions and bounded occurrence/membership
-     previews after AS-GUI-1 is stable.
-4. AS-GUI-3 - Genome Path Preview UI.
+   - Implemented as the accepted read-only AS8 POI/family preview workflow.
+4. AS-GUI-2D - POI / Family Preview UI docs sync.
+   - Document accepted AS-GUI-2 behavior and preserve backend-owned policy and
+     no-persistence/no-mutation boundaries.
+5. AS-GUI-3 - Genome Path Preview UI.
    - Expose AS9 genome encoding definitions and bounded row or AS8-family
      anchored path previews after AS8 GUI concepts are stable.
-5. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+6. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
    Architecture.
    - Define comparison sets, support, precision, recall, lift,
      false-positive rate, stability, and family separation.
-6. Future AS10 implementation and docs sync after AS10 architecture is
+7. Future AS10 implementation and docs sync after AS10 architecture is
    accepted.
 
 Research Suite validation integration, neural refinement, and Decisor logic

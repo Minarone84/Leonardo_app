@@ -1,7 +1,7 @@
 # Analysis Suite Design
 
-Version: v0.7
-Status: AS8 and AS9 accepted backend MVPs plus accepted AS-GUI-1 and AS-GUI-2 workflows
+Version: v0.8
+Status: AS8 and AS9 accepted backend MVPs plus accepted AS-GUI-1, AS-GUI-2, and AS-GUI-3 workflows
 Date: 2026-05-30
 
 ## Purpose
@@ -16,11 +16,13 @@ implements the first backend genome/path preview builder within the AS9-AUDIT
 encoding boundary. AS-GUI-AUDIT defined the first safe Analysis Suite GUI
 exposure path. AS-GUI-1 implements the accepted target, feature-set, and
 diagnostic preview workflow, and AS-GUI-2 implements the accepted POI/family
-preview workflow.
+preview workflow. AS-GUI-3 implements the accepted genome/path preview
+workflow.
 
-AS9, AS-GUI-1, and AS-GUI-2 do not add persistence, white-box rule discovery,
-backtesting, model training, signals, neural agents, Decisor logic, artifact
-calculation, recipe execution, Analysis Database mutation, or OHLCV repair.
+AS9, AS-GUI-1, AS-GUI-2, and AS-GUI-3 do not add persistence, white-box rule
+discovery, backtesting, model training, signals, neural agents, Decisor logic,
+artifact calculation, recipe execution, Analysis Database mutation, or OHLCV
+repair.
 
 ## Current Foundation
 
@@ -50,6 +52,9 @@ The accepted Analysis Suite foundation is read-only:
   non-persistent tabs.
 - AS-GUI-2: `AnalysisSuiteWindow` exposes AS8 POI occurrence preview and
   POI family membership preview as a read-only, non-persistent tab.
+- AS-GUI-3: `AnalysisSuiteWindow` exposes AS9 genome encoding validation,
+  row-anchored path preview, and AS8-family-anchored path preview as a
+  read-only, non-persistent tab.
 - AS8: `AnalysisSuitePoiFamilyPlanner` previews POI occurrences and POI
   family membership from prepared Analysis Database columns with bounded
   JSON-safe reports.
@@ -60,7 +65,9 @@ The accepted Analysis Suite foundation is read-only:
 AS8 and AS9 consume AS1 readiness or optional AS7 diagnostic context. Their
 backend services remain read-only and non-persistent. AS-GUI-2 exposes AS8
 reports in the GUI without moving AS8 policy, dataframe reads, or persistence
-into the GUI. AS9 remains backend-only.
+into the GUI. AS-GUI-3 exposes AS9 reports in the GUI without moving AS9
+policy, dataframe reads, genome encoding, path construction, or persistence
+into the GUI.
 
 ## Manifesto Direction
 
@@ -800,15 +807,13 @@ Backend services reviewed for GUI exposure:
   missingness/dtype diagnostics, leakage blockers, and combined
   blockers/warnings/errors. The GUI must not write reports or create project,
   run, or report stores.
-- AS8 `AnalysisSuitePoiFamilyPlanner` is backend-ready but should wait for a
-  later GUI phase. It requires POI definitions, condition editing, occurrence
-  previews, and family membership presentation. Exposing it before target,
-  feature, and diagnostic setup is stable would overload the first GUI patch.
-- AS9 `AnalysisSuiteGenomePathBuilder` is backend-ready but should wait for a
-  later GUI phase. It requires encoding definitions, component configuration,
-  row or AS8-family anchoring, path preview rendering, and conservative
-  current/past-only wording. It must not be exposed before AS8 GUI concepts are
-  usable.
+- AS8 `AnalysisSuitePoiFamilyPlanner` is exposed through AS-GUI-2 after the
+  target, feature, and diagnostic setup workflow became stable enough for the
+  first POI/family preview surface.
+- AS9 `AnalysisSuiteGenomePathBuilder` is exposed through AS-GUI-3 after AS8
+  POI/family GUI concepts became available. It remains read-only and
+  non-persistent; backend services still own encoding validation, dataframe
+  reads, path construction, and POI-family anchoring semantics.
 
 ## Accepted AS-GUI-1 - Target / Feature / Diagnostic Preview UI
 
@@ -880,10 +885,11 @@ Recommended staging:
    - Document accepted AS-GUI-2 behavior and preserve no-persistence/no-mutation
      boundaries.
 4. AS-GUI-3 - Genome Path Preview UI.
-   - Expose AS9 genome component and encoding definitions, row-anchored path
-     preview, and AS8-family-anchored path preview.
-   - Keep read-only/no-persistence boundaries.
-5. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+   - Implemented as the accepted AS9 genome/path preview workflow.
+5. AS-GUI-3D - Genome Path Preview UI docs sync.
+   - Document accepted AS-GUI-3 behavior and preserve no-persistence/no-mutation
+     boundaries.
+6. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
    Architecture.
    - Define comparison metrics and rule-discovery boundaries after the GUI can
      inspect current backend setup objects.
@@ -893,11 +899,12 @@ Suggested layout direction:
 - Preserve the current read-only catalog as the left-side selection anchor.
 - Keep readiness details and bounded dataframe preview available.
 - Use the accepted tabbed setup area for `Data Preview`, `Target Preview`,
-  `Feature Set`, `Diagnostic Report`, and `POI / Family Preview`.
+  `Feature Set`, `Diagnostic Report`, `POI / Family Preview`, and
+  `Genome Path Preview`.
 - Reset target, feature, diagnostic, POI, and family preview state when the
   selected database changes.
-- Keep AS9 tabs absent after AS-GUI-2. A later phase may add `Genome Path
-  Preview` after the AS9 interaction contract is stable.
+- Reset genome preview state when the selected database, feature/diagnostic,
+  POI/family, or encoding context changes.
 
 Service orchestration boundary:
 
@@ -909,8 +916,8 @@ Service orchestration boundary:
 - GUI code may collect user intent and render report objects, but backend
   services must own target generation, feature eligibility, leakage policy,
   diagnostic coherence, POI occurrence detection, family membership matching,
-  source/condition validation, dataframe reads, and JSON-safe report
-  construction.
+  source/condition validation, genome component validation, genome encoding,
+  path construction, dataframe reads, and JSON-safe report construction.
 - GUI code must not duplicate Data Manager persistence, Analysis Database
   materialization, artifact calculation, recipe execution, or OHLCV repair
   ownership.
@@ -1022,21 +1029,123 @@ Recommended staging after AS-GUI-2:
    - Document accepted AS-GUI-2 behavior and preserve backend-owned policy and
      no-persistence/no-mutation boundaries.
 2. AS-GUI-3 - Genome Path Preview UI.
-   - Expose AS9 genome encoding definitions and bounded row or AS8-family
-     anchored path previews after AS8 GUI concepts are stable.
-3. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+   - Implemented as the accepted AS9 genome/path preview workflow.
+3. AS-GUI-3D - Genome Path Preview UI docs sync.
+   - Document accepted AS-GUI-3 behavior and preserve backend-owned policy and
+     no-persistence/no-mutation boundaries.
+4. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
    Architecture.
    - Define comparison sets, support, precision, recall, lift,
      false-positive rate, stability, and family separation.
 
+## Accepted AS-GUI-3 - Genome Path Preview UI
+
+AS-GUI-3 implements the first AS9 genome/path GUI workflow in
+`AnalysisSuiteWindow`. It preserves the AS1 readiness catalog, AS3 bounded
+dataframe preview behavior, AS5 target preview, AS6 feature-set preview, AS7
+diagnostic report preview, AS8 POI/family preview, `Open Data Manager`
+routing, `Refresh Catalog`, and `Close`.
+
+The accepted tab area now contains:
+
+- `Data Preview`: existing AS3 bounded Head/Tail dataframe preview.
+- `Target Preview`: AS5 target preview controls and report rendering.
+- `Feature Set`: AS6 feature candidate listing, selected-feature validation,
+  and report rendering.
+- `Diagnostic Report`: AS7 diagnostic report rendering from current AS1, AS5,
+  and AS6 report objects.
+- `POI / Family Preview`: AS8 POI occurrence and family membership preview.
+- `Genome Path Preview`: AS9 genome encoding validation and genome path
+  preview.
+
+The `Genome Path Preview` tab has an Encoding Definition section. It lets the
+user enter encoding key, display name, `path_length_bars`, anchor mode, and
+component rows. Component rows include enabled state, component key, source
+column, encoding type, static bin config where used, `lookback_bars`, missing
+token, and display name. Supported AS9 encodings are `identity_numeric`,
+`categorical`, `boolean_symbolic`, `static_bin`, and `variation_direction`.
+The tab builds an in-memory `AnalysisSuiteGenomeEncodingDefinition`, calls
+`AnalysisSuiteGenomePathBuilder.validate_encoding_definition(...)`, and
+displays validation blockers, warnings, and errors. Genome encoding
+definitions are not persisted.
+
+Row-anchored path preview calls
+`AnalysisSuiteGenomePathBuilder.preview_paths(...)` and displays status, row
+count, path count, sample paths, sample snapshots/components, blockers,
+warnings, and errors. POI-family-anchored path preview requires a current AS8
+family preview report, calls
+`AnalysisSuiteGenomePathBuilder.preview_paths_for_poi_family(...)`, and uses
+the same bounded report style. AS8 owns POI/family discovery, AS9 owns
+genome/path preview construction, and the GUI does not recompute POIs or
+persist genome paths.
+
+AS-GUI-3 exposes only AS9 MVP encodings:
+
+- `identity_numeric`: keeps numeric values as JSON-safe numbers.
+- `categorical`: converts categorical/state values into JSON-safe tokens.
+- `boolean_symbolic`: converts boolean or true-ish/false-ish values into
+  symbolic tokens.
+- `static_bin`: uses explicit static bin rules only, with no quantile learning,
+  adaptive threshold fitting, or Dynamic Binner fitting.
+- `variation_direction`: uses only `t` and `t - lookback` for conservative
+  direction descriptors. It is not the full Variation Analyzer engine.
+
+AS-GUI-3 clears stale state:
+
+- selecting a different Analysis Database clears genome validation and path
+  reports;
+- feature, diagnostic, POI, or family changes clear stale genome reports;
+- changing encoding definition or component inputs clears stale genome path
+  reports.
+
+Backend services remain the policy owners. The GUI collects genome/path intent
+and renders AS9 report objects, while AS9 owns dataframe reads, component
+source validation, leakage/source eligibility checks, encoding values,
+variation descriptors, static bin application, path construction,
+POI-family anchoring interpretation, blockers, warnings, errors, and
+JSON-safe report construction. The GUI does not read `dataframe.csv` directly,
+parse `manifest.json` directly for readiness/feature/leakage/POI/genome
+policy, compute genome snapshots, compute genome paths, compute variation
+descriptors, fit bins, infer raw CSV header genome truth, or duplicate AS9
+source/encoding validation policy.
+
+AS-GUI-3 does not add:
+
+- AS10 controls.
+- White-box rule discovery or rule mining.
+- Category-builder UI.
+- Persistence for genome definitions, genome encoding definitions, genome
+  paths, targets, labels, feature sets, diagnostic reports, POI definitions,
+  or POI families.
+- Genome stores, POI/family stores, or Analysis Project/Run/Report stores.
+- Dynamic Binner fitting, full Dynamic Binner, or full Variation Analyzer.
+- Backtesting, road classification, outcome distribution analysis, model
+  training, signals, or trading logic.
+- Artifact calculation, recipe execution, database build/rebuild/materialize
+  operations, component editing, OHLCV repair/validation, manifest writes, or
+  dataframe writes.
+
+Recommended staging after AS-GUI-3:
+
+1. AS-GUI-3D - Genome Path Preview UI docs sync.
+   - Document accepted AS-GUI-3 behavior and preserve backend-owned policy and
+     no-persistence/no-mutation boundaries.
+2. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+   Architecture.
+   - Define comparison sets, support, precision, recall, lift,
+     false-positive rate, stability, and family separation.
+3. Optional GUI polish audit if manual AS-GUI-3 exploration finds usability
+   issues.
+
 ## Out-Of-Scope Boundaries
 
-AS8, AS9, AS-GUI-1, and AS-GUI-2 do not add:
+AS8, AS9, AS-GUI-1, AS-GUI-2, and AS-GUI-3 do not add:
 
 - GUI category builder.
-- AS9 genome builder GUI controls.
+- AS10 GUI controls.
 - Persistent POI family store.
 - POI definition or POI family definition persistence.
+- Persistent genome definition or genome path persistence.
 - Persistent genome stores.
 - Persistent binner policies.
 - Analysis Project/Run/Report stores.
@@ -1079,13 +1188,15 @@ Recommended sequence:
    - Document accepted AS-GUI-2 behavior and preserve backend-owned policy and
      no-persistence/no-mutation boundaries.
 5. AS-GUI-3 - Genome Path Preview UI.
-   - Expose AS9 genome encoding definitions and bounded row or AS8-family
-     anchored path previews after AS8 GUI concepts are stable.
-6. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+   - Implemented as the accepted read-only AS9 genome/path preview workflow.
+6. AS-GUI-3D - Genome Path Preview UI docs sync.
+   - Document accepted AS-GUI-3 behavior and preserve backend-owned policy and
+     no-persistence/no-mutation boundaries.
+7. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
    Architecture.
    - Define comparison sets, support, precision, recall, lift,
      false-positive rate, stability, and family separation.
-7. Future AS10 implementation and docs sync after AS10 architecture is
+8. Future AS10 implementation and docs sync after AS10 architecture is
    accepted.
 
 Research Suite validation integration, neural refinement, and Decisor logic

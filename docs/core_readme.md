@@ -1,7 +1,7 @@
 # Leonardo Core Architecture (Current State)
 
-Version: v3.20
-Date: 2026-05-29
+Version: v3.21
+Date: 2026-05-30
 
 ## Overview
 
@@ -624,7 +624,7 @@ Data Manager materialization uses accepted OHLCV only. `ArtifactCalculationServi
 
 ### Analysis Suite dataset readiness semantics
 
-A read-only Analysis Suite catalog, bounded preview surface, target preview planner, feature-set planner, diagnostic-report backend, and POI/family planner backend now exist, but project/run stores, model workflows, signal engines, persisted report systems, and trading systems remain out of scope. AS1 adds the read-only backend contract for Analysis Suite dataset consumption, AS2 exposes that contract in `AnalysisSuiteWindow`, AS3 adds the bounded dataframe preview service, AS4 wires that service into the window, AS5 adds backend target/label preview planning, AS6 adds backend feature-set planning, AS7 adds backend diagnostic-report composition, and AS8 adds backend POI/family occurrence planning.
+A read-only Analysis Suite catalog, bounded preview surface, target preview planner, feature-set planner, diagnostic-report backend, POI/family planner backend, and genome path builder backend now exist, but project/run stores, model workflows, signal engines, persisted report systems, and trading systems remain out of scope. AS1 adds the read-only backend contract for Analysis Suite dataset consumption, AS2 exposes that contract in `AnalysisSuiteWindow`, AS3 adds the bounded dataframe preview service, AS4 wires that service into the window, AS5 adds backend target/label preview planning, AS6 adds backend feature-set planning, AS7 adds backend diagnostic-report composition, AS8 adds backend POI/family occurrence planning, and AS9 adds backend genome/path preview planning.
 
 `AnalysisSuiteDatasetReadinessService` catalogs and evaluates Data Manager Analysis Databases for future Analysis Suite use. It returns JSON-safe `AnalysisSuiteDatasetCatalogReport` and `AnalysisSuiteDatasetReadinessReport` objects. The service scans Analysis Database manifest paths directly so corrupt or unreadable manifests can be reported as diagnostics instead of disappearing through Data Manager's resilient listing behavior.
 
@@ -661,6 +661,12 @@ AS8-AUDIT is documented in `docs/DESIGN_analysis_suite.md`. It defines the World
 
 AS8 gates access through AS1 readiness or an optional AS7 diagnostic report. `can_preview == false` blocks, blocked/error AS7 diagnostics block, and non-strict but previewable datasets may run while preserving warnings and blockers. The planner validates POI source and condition columns through Analysis Database manifest metadata before dataframe reads, rejects target-only, future-derived, and `feature_eligible = false` inputs when metadata is available, and reads dataframe values only for read-only physical occurrence and condition preview. Sample output is service-bounded with default `100` and max `500`. AS8 does not treat raw CSV headers as event truth and does not compute Peaks & Troughs, UTC, or Braids.
 
+`AnalysisSuiteGenomePathBuilder` is the backend-only read-only AS9 genome/path preview contract. It returns bounded JSON-safe `AnalysisSuiteGenomePathPreviewReport` diagnostics from in-memory `AnalysisSuiteGenomeEncodingDefinition` and `AnalysisSuiteGenomeComponentDefinition` inputs. `AnalysisSuiteStaticBinRule`, `AnalysisSuiteGenomeSnapshot`, and `AnalysisSuiteGenomePath` describe explicit static bins, encoded timestamp states, and ordered path samples. Public methods are `validate_encoding_definition(...)`, `preview_paths(...)`, and `preview_paths_for_poi_family(...)`.
+
+AS9 supports conservative MVP encodings: `identity_numeric`, `categorical`, `boolean_symbolic`, `static_bin`, and `variation_direction`. Static bins use explicit `AnalysisSuiteStaticBinRule` thresholds only; there is no fitting, quantile learning, adaptive threshold training, or future-looking threshold policy. `variation_direction` compares only the source value at `t` with `t - lookback`, producing `increasing`, `decreasing`, `flat`, or `missing`; it is not the full Variation Analyzer engine. Missing, NaN, and infinite values are converted through the service JSON-safe pattern. Row-anchored paths preserve ordered snapshots as `G(t-k) ... G(t)`, early or invalid anchors return structured blockers, and optional AS8 POI/family anchoring uses matched family membership samples without recomputing POIs.
+
+AS9 gates access through AS1 readiness or an optional AS7 diagnostic report. `can_preview == false` blocks, blocked/error AS7 diagnostics block, and non-strict but previewable datasets may run while preserving warnings. The builder validates component source columns through AS6 feature-set reports or Analysis Database manifest metadata when available, blocks `ts_ms`, target-only, future-derived, and `feature_eligible = false` inputs when metadata exists, and reads dataframe values only for read-only genome/path preview. Sample output is service-bounded with default `100` and max `500`. AS9 does not treat raw CSV headers as semantic genome truth and does not implement full Dynamic Binner, Dynamic Binner fitting, full Variation Analyzer, white-box discovery, road classification, model training, signals, or trading logic.
+
 Readiness status values are:
 
 - `ready`
@@ -684,7 +690,7 @@ Strict-ready requires:
 
 The minimum Analysis Suite topology is accepted OHLC base plus explicit Volume artifact, Braids artifact, Peaks & Troughs artifact, and UTC / Universal Trend Classifier artifact. Raw OHLCV volume is not an explicit Volume artifact; the explicit artifact has artifact identity, recipe identity, sidecar metadata, update/recovery lineage, and Analysis Database component behavior.
 
-AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. AS5 target planning, AS6 feature-set planning, AS7 diagnostic reports, and AS8 POI/family planning are not wired into `AnalysisSuiteWindow` yet. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, persist labels, persist target definitions, persist feature sets, persist diagnostic reports, persist POI/family definitions, add POI stores, add `FeatureSetStore`, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
+AS1 may inspect dataframe row count, column count, first timestamp, last timestamp, and SHA-256 hash read-only. AS4 preview still does not give GUI ownership of dataframe loading: `AnalysisSuiteWindow` calls `AnalysisSuiteDataframePreviewService` and does not read `dataframe.csv` directly or call `AnalysisDatabaseStore.load_dataframe(...)`. AS5 target planning, AS6 feature-set planning, AS7 diagnostic reports, AS8 POI/family planning, and AS9 genome/path previews are not wired into `AnalysisSuiteWindow` yet. Analysis Suite does not call materialization/build/rebuild APIs, calculate artifacts, execute recipes, repair or validate raw OHLCV, edit components, write manifests, write dataframes, persist labels, persist target definitions, persist feature sets, persist diagnostic reports, persist POI/family definitions, persist genome definitions, persist genome paths, add POI stores, add genome stores, add `FeatureSetStore`, add CoreBridge APIs, or add Analysis Project/Run/Report stores. Stale, missing, corrupt, or topology-incomplete datasets must be routed back to Data Manager or OHLCV Maintenance workflows rather than repaired by Analysis Suite.
 
 ### Artifact recipe and recovery orchestration semantics
 

@@ -1,8 +1,8 @@
 # Analysis Suite Design
 
-Version: v0.3
-Status: AS8 accepted backend MVP plus AS9-AUDIT genome architecture
-Date: 2026-05-29
+Version: v0.4
+Status: AS8 and AS9 accepted backend MVPs plus AS10-AUDIT future boundary
+Date: 2026-05-30
 
 ## Purpose
 
@@ -11,13 +11,13 @@ families, roads, outcomes, false-signal classes, genome states, and genome
 paths.
 
 AS8-AUDIT established the POI/family/road/genome design boundary. AS8
-implements the first backend POI/family planner within that boundary.
-AS9-AUDIT defines how validated feature columns and prepared topology columns
-should become genome components and event-anchored genome paths. The AS9-AUDIT
-design does not implement backend services, GUI controls, persistence,
-white-box rule discovery, backtesting, model training, signals, neural agents,
-Decisor logic, artifact calculation, recipe execution, Analysis Database
-mutation, or OHLCV repair.
+implements the first backend POI/family planner within that boundary. AS9
+implements the first backend genome/path preview builder within the AS9-AUDIT
+encoding boundary.
+
+AS9 does not add GUI controls, persistence, white-box rule discovery,
+backtesting, model training, signals, neural agents, Decisor logic, artifact
+calculation, recipe execution, Analysis Database mutation, or OHLCV repair.
 
 ## Current Foundation
 
@@ -45,13 +45,12 @@ The accepted Analysis Suite foundation is read-only:
 - AS8: `AnalysisSuitePoiFamilyPlanner` previews POI occurrences and POI
   family membership from prepared Analysis Database columns with bounded
   JSON-safe reports.
+- AS9: `AnalysisSuiteGenomePathBuilder` builds bounded genome snapshot/path
+  previews from prepared Analysis Database columns with conservative
+  current/past-only encodings.
 
-AS8 consumes AS1 readiness or optional AS7 diagnostic context. It remains
-backend-only, read-only, and non-persistent.
-
-AS9-AUDIT extends the design only. It defines genome encoding, genome paths,
-Variation Analyzer integration, Dynamic Binner integration, and the future AS9
-backend boundary without implementing those services.
+AS8 and AS9 consume AS1 readiness or optional AS7 diagnostic context. They
+remain backend-only, read-only, and non-persistent.
 
 ## Manifesto Direction
 
@@ -87,9 +86,9 @@ The operating sequence remains:
 AS8 is the first backend foundation for step 5. It remains limited to typed
 POI/family occurrence preview.
 
-AS9 is the architecture step for turning current and past market-state columns
-into encoded genome snapshots and paths. It must not discover rules, classify
-roads, train models, or generate signals.
+AS9 is the first backend step for turning current and past market-state
+columns into encoded genome snapshots and paths. It must not discover rules,
+classify roads, train models, or generate signals.
 
 ## World-Line Model
 
@@ -255,8 +254,8 @@ boolean markers, variation descriptors, and metadata-backed topology states.
 
 A genome is not a prediction, trading signal, model output, or persisted model
 input matrix. Later white-box and neural workflows may consume genome
-representations, but AS9 architecture only defines how those representations
-are built safely.
+representations, but AS9 only builds bounded read-only previews of those
+representations.
 
 Example fields:
 
@@ -303,30 +302,35 @@ Required future component metadata:
 - Knowability timestamp policy for delayed topology states.
 - Fitting scope and leakage status if an encoding policy was fit from data.
 
-Components are not new dataframe columns in AS9-AUDIT. They are design-time
-fields for a future read-only genome preview report.
+Components are not new dataframe columns in AS9. They are in-memory report
+fields in read-only genome snapshot/path previews.
 
 ## Genome Encoding Definition
 
 Genome encoding is the transformation from validated Analysis Database columns
 into structured genome components.
 
-Supported future encoding families should be explicit:
+Supported AS9 MVP encoding families are explicit:
 
 - Identity numeric: preserve a numeric value as a current-row component.
 - Categorical normalization: normalize string/state values into stable tokens.
 - Boolean symbolic: map true/false or event markers into symbolic states.
 - Static bin mapping: map numeric values through declared thresholds.
-- Dynamic bin mapping: map numeric values through a fitted or precomputed
-  binning policy.
 - Variation descriptor: describe current/past change state over a declared
   lookback window.
+
+Future encoding families remain possible, but are not part of the accepted AS9
+MVP:
+
+- Dynamic bin mapping: map numeric values through a fitted or precomputed
+  binning policy.
 - Topology context: map prepared topology outputs into symbolic current-state
   components.
 
 Encoding must preserve source metadata and must be deterministic for the same
-input dataframe, manifest metadata, and encoding definition. AS9-AUDIT does not
-implement an encoder.
+input dataframe, manifest metadata, and encoding definition. AS9 implements the
+conservative MVP encodings only; full Dynamic Binner and full Variation
+Analyzer integration remain future work.
 
 ## Genome Path
 
@@ -354,9 +358,10 @@ knowability. Path preview should support:
   membership.
 - Comparison path: same-window paths for two or more POI families.
 
-The future AS9 backend MVP should start with pre-event path previews anchored
-to AS8 POI occurrences. Post-event paths may be represented as a later preview
-concept, but road classification and outcome scoring remain out of scope.
+AS9 implements row-anchored pre-event path previews and optional AS8
+POI/family anchoring through matched family membership samples. Post-event
+paths may be represented as a later preview concept, but road classification
+and outcome scoring remain out of scope.
 
 ## Variation Analyzer Role
 
@@ -398,9 +403,10 @@ below but recovering
 ```
 
 Existing financial-tool code includes `VariationAnalyzer`, which estimates a
-per-series minimum meaningful movement step from time-series changes. AS9
-should integrate that capability as a policy-backed source of variation scale
-or descriptors, not move its calculation ownership into Analysis Suite.
+per-series minimum meaningful movement step from time-series changes. Later
+Analysis Suite genome work may integrate that capability as a policy-backed
+source of variation scale or descriptors, but it must not move calculation
+ownership into Analysis Suite.
 
 Variation rules:
 
@@ -433,8 +439,9 @@ Binning reduces token diversity and creates comparable condition states. The
 existing financial-tool `DynamicBinner` is a deterministic signed discretizer
 that consumes movement scale, and the existing `dynamic_binning` construct
 orchestrates `VariationAnalyzer` plus `DynamicBinner` as a non-visual
-construct. AS9 should integrate those outputs or policies through metadata and
-read-only preview rules. AS9 must not calculate artifacts or execute recipes.
+construct. Later Analysis Suite genome work may integrate those outputs or
+policies through metadata and read-only preview rules. AS9 must not calculate
+artifacts or execute recipes.
 
 Supported future bin policy families:
 
@@ -505,14 +512,13 @@ may also report anchor-based outcomes, but that distinction must be explicit.
 Last-window rows with insufficient future data should be unavailable rather
 than silently filled.
 
-## Relationship To AS1-AS8
+## Relationship To AS1-AS10
 
 AS1:
 
 - Owns dataset readiness and `can_preview`.
 - AS8 blocks when AS1 says the dataset is not safely consumable.
-- Future AS9 genome previews should also block when the dataset is not safely
-  consumable.
+- AS9 genome previews also block when the dataset is not safely consumable.
 
 AS3/AS4:
 
@@ -531,8 +537,8 @@ AS6:
 
 - Owns feature eligibility and leakage prevention.
 - AS8 event-family predicates consume AS6-validated columns and metadata when
-  available, not raw dataframe headers. Future genome inputs must preserve the
-  same metadata boundary.
+  available, not raw dataframe headers. AS9 genome inputs preserve the same
+  metadata boundary.
 - AS9 decides how AS6-eligible selected features become genome components. It
   must not accept raw column lists that bypass AS6 eligibility diagnostics.
 
@@ -542,9 +548,8 @@ AS7:
 - AS8 can consume AS7 diagnostic context.
 - AS8 blocks `blocked` or `error` diagnostics and may run on acceptable
   `ready` or `warning` diagnostics with warnings preserved.
-- AS9 should require acceptable AS7 diagnostics or preserve AS7 blockers and
-  warnings in its own preview report. Blocked/error diagnostic reports should
-  block AS9 preview.
+- AS9 blocks `blocked` or `error` diagnostics and may run on acceptable
+  `ready` or `warning` diagnostics with warnings preserved.
 
 AS8:
 
@@ -651,9 +656,9 @@ definitions. It does not treat raw CSV headers as feature or event truth.
 AS8 does not compute Peaks & Troughs, UTC, or Braids. It consumes already
 prepared Analysis Database columns.
 
-## Future AS9 Backend MVP Recommendation
+## Accepted AS9 Backend MVP
 
-Recommended next backend implementation:
+Accepted implementation:
 
 AS9 - Genome Path Builder Backend.
 
@@ -669,16 +674,17 @@ Scope:
 - No signals.
 - No artifact calculation or recipe execution.
 
-Likely source file:
+Source file:
 
 - `src/leonardo/data/historical/analysis_suite_genome_path_builder.py`
 
-Likely test file:
+Test file:
 
 - `tests/test_analysis_suite_genome_path_builder.py`
 
-Suggested public models:
+Public models:
 
+- `AnalysisSuiteStaticBinRule`.
 - `AnalysisSuiteGenomeComponentDefinition`.
 - `AnalysisSuiteGenomeEncodingDefinition`.
 - `AnalysisSuiteGenomeSnapshot`.
@@ -686,29 +692,58 @@ Suggested public models:
 - `AnalysisSuiteGenomePathPreviewReport`.
 - `AnalysisSuiteGenomePathBuilder`.
 
-Recommended MVP behavior:
+Public methods:
 
-- Consume AS6 feature-set preview reports, AS7 diagnostic reports, and optional
-  AS8 POI/family preview reports.
-- Require accepted AS6 feature candidates for genome inputs.
+- `validate_encoding_definition(...)`.
+- `preview_paths(...)`.
+- `preview_paths_for_poi_family(...)`.
+
+Supported MVP encodings:
+
+- `identity_numeric`: preserve numeric values as JSON-safe numbers.
+- `categorical`: convert category or state values into JSON-safe string
+  tokens.
+- `boolean_symbolic`: map boolean or true-ish/false-ish values to `true`,
+  `false`, or missing tokens.
+- `static_bin`: map numeric values through explicit
+  `AnalysisSuiteStaticBinRule` thresholds.
+- `variation_direction`: compare the value at `t` with `t - lookback` and
+  return `increasing`, `decreasing`, `flat`, or `missing`.
+
+Accepted behavior:
+
+- Build bounded JSON-safe genome snapshot/path previews from prepared Analysis
+  Database columns.
+- Support row-anchored paths ordered as `G(t-k) ... G(t)`.
+- Support optional AS8 POI/family anchoring through matched family membership
+  samples.
+- Consume AS1 readiness, AS7 diagnostic reports, AS6 feature-set reports, and
+  optional AS8 POI/family preview reports.
+- Block `can_preview == false`.
 - Block blocked/error AS7 diagnostics.
-- Preserve warning diagnostics in preview reports.
-- Support conservative encodings first:
-  - identity numeric;
-  - categorical normalization;
-  - boolean symbolic;
-  - explicit/static bin mapping;
-  - simple variation descriptors from current/past lookback windows.
-- Support pre-event genome path preview around AS8 POI occurrences or family
-  memberships.
+- Allow non-strict but previewable datasets with warnings preserved.
+- Use AS6 feature-set reports or Analysis Database manifest metadata as
+  semantic column truth when available.
+- Block `ts_ms`, target-only, future-derived, and `feature_eligible = false`
+  inputs when metadata exists.
+- Read dataframe values only for read-only genome/path preview.
+- Bound samples with default `100` and max `500`.
 - Return bounded JSON-safe reports with blockers, warnings, and errors.
 - Record source lineage, encoding policy, fitting scope, lookback window, and
   leakage/knowability metadata for every component.
+- Report invalid or early anchors with structured blockers.
+- Avoid raw CSV header semantic claims.
 
-Postponed AS9 behavior:
+AS9 does not recompute POIs when AS8 family preview reports are supplied. AS8
+owns POI occurrence discovery; AS9 owns genome/path preview construction.
+
+Postponed behavior:
 
 - Adaptive fitted bin policies without strict fitting-scope metadata.
 - Persistent genome definitions or binner policies.
+- Full Dynamic Binner implementation.
+- Dynamic Binner fitting.
+- Full Variation Analyzer implementation.
 - Post-event road classification.
 - Outcome scoring.
 - Rule discovery or comparison metrics.
@@ -729,14 +764,13 @@ Suite surface exposes:
 - genome path preview;
 - road/outcome summaries.
 
-Current AS8 does not add GUI controls and does not change
+Current AS8 and AS9 backend work does not add GUI controls and does not change
 `AnalysisSuiteWindow`. AnalysisSuiteWindow still exposes only the read-only
-catalog and bounded dataframe preview. AS9-AUDIT also does not add GUI
-controls.
+catalog and bounded dataframe preview.
 
 ## Out-Of-Scope Boundaries
 
-AS8 and AS9-AUDIT do not add:
+AS8 and AS9 do not add:
 
 - GUI category builder.
 - POI/family GUI controls.
@@ -748,9 +782,9 @@ AS8 and AS9-AUDIT do not add:
 - Analysis Project/Run/Report stores.
 - Road classification.
 - Full outcome distribution measurement.
-- Genome path building.
-- Dynamic Binner implementation.
-- Variation Analyzer implementation.
+- Dynamic Binner fitting.
+- Full Dynamic Binner implementation.
+- Full Variation Analyzer implementation.
 - Automatic rule discovery.
 - White-box rule discovery.
 - Backtesting engine.
@@ -773,21 +807,17 @@ AS8 and AS9-AUDIT do not add:
 
 Recommended sequence:
 
-1. AS9 - Genome Path Builder Backend.
-   - Backend-only, read-only, no persistence.
-   - Consume AS6/AS7/AS8 report context.
-   - Build bounded JSON-safe genome snapshot and pre-event path previews.
-   - Support conservative encodings only.
-   - Preserve leakage and knowability rules.
-2. AS9D - Docs sync.
+1. AS9D - Docs sync for Genome Path Builder Backend.
+2. AS-GUI-AUDIT - Analysis Suite GUI functionality audit.
+   - Decide how to expose target preview, feature-set builder, diagnostic
+     reports, POI/family/category builder, and genome path previews after
+     backend contracts are stable.
 3. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
    Architecture.
    - Define comparison sets, support, precision, recall, lift,
      false-positive rate, stability, and family separation.
-4. AS-GUI-AUDIT - Analysis Suite GUI functionality audit.
-   - Decide how to expose target preview, feature-set builder, diagnostic
-     reports, POI/family/category builder, and later genome path previews
-     after backend contracts are stable.
+4. Future AS10 implementation and docs sync after AS10 architecture is
+   accepted.
 
 Research Suite validation integration, neural refinement, and Decisor logic
 remain later architecture tracks.

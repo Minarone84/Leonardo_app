@@ -1,7 +1,7 @@
 # Analysis Suite Design
 
-Version: v0.12
-Status: AS8-AS11 accepted backend MVPs, AS11-AUDIT architecture, and accepted AS-GUI-1/2/3 workflows
+Version: v0.13
+Status: AS8-AS11 accepted backend MVPs, AS12-AUDIT architecture, and accepted AS-GUI-1/2/3 workflows
 Date: 2026-05-30
 
 ## Purpose
@@ -22,13 +22,15 @@ and white-box rule discovery. AS10 implements the first backend-only
 white-box rule testing layer within that boundary. AS11-AUDIT defines bounded
 white-box rule candidate discovery and mining guardrails. AS11 implements the
 first backend-only bounded single-predicate candidate scanner within that
-boundary.
+boundary. AS12-AUDIT defines candidate validation and temporal stability
+architecture for retesting AS11 candidates across chronological segments.
 
-AS9, AS10, AS11, AS-GUI-1, AS-GUI-2, AS-GUI-3, AS10-AUDIT, and AS11-AUDIT do
-not add persistence, implemented broad white-box discovery, conjunction
-expansion, broad candidate mining, backtesting, model training, signals,
-neural agents, Decisor logic, artifact calculation, recipe execution, Analysis
-Database mutation, or OHLCV repair.
+AS9, AS10, AS11, AS-GUI-1, AS-GUI-2, AS-GUI-3, AS10-AUDIT, AS11-AUDIT, and
+AS12-AUDIT do not add persistence, implemented broad white-box discovery,
+implemented temporal validation, conjunction expansion, broad candidate
+mining, backtesting, model training, signals, neural agents, Decisor logic,
+artifact calculation, recipe execution, Analysis Database mutation, or OHLCV
+repair.
 
 ## Current Foundation
 
@@ -82,6 +84,9 @@ The accepted Analysis Suite foundation is read-only:
   cohorts, reuses AS10 rule testing for metrics, ranks and filters candidates,
   and reports sample-limit, multiple-testing, and unknown-stability warnings
   without persistence or GUI exposure.
+- AS12-AUDIT: defines candidate validation, temporal stability, chronological
+  holdout discipline, rule survival, metric degradation, stability scoring,
+  segment-level diagnostics, and future backend MVP boundaries.
 
 AS8 and AS9 consume AS1 readiness or optional AS7 diagnostic context. AS10 can
 consume optional AS7 diagnostic context and supplied AS9 path reports. These
@@ -89,7 +94,8 @@ backend services remain read-only and non-persistent. AS-GUI-2 exposes AS8
 reports in the GUI without moving AS8 policy, dataframe reads, or persistence
 into the GUI. AS-GUI-3 exposes AS9 reports in the GUI without moving AS9
 policy, dataframe reads, genome encoding, path construction, or persistence
-into the GUI. AS10 and AS11 are not exposed in the GUI yet.
+into the GUI. AS10, AS11, and AS12 validation controls are not exposed in the
+GUI yet.
 
 ## Manifesto Direction
 
@@ -556,7 +562,7 @@ may also report anchor-based outcomes, but that distinction must be explicit.
 Last-window rows with insufficient future data should be unavailable rather
 than silently filled.
 
-## Relationship To AS1-AS11
+## Relationship To AS1-AS12
 
 AS1:
 
@@ -618,6 +624,16 @@ AS11:
 - AS11 owns bounded single-predicate candidate vocabulary generation and scan
   orchestration.
 - AS11 reuses AS10 metrics rather than duplicating rule-test evaluation.
+
+AS12:
+
+- AS12-AUDIT owns candidate validation and temporal stability architecture.
+- Future AS12 validation should consume AS11 candidates and AS10 comparison
+  sets, split cohorts by known anchor timestamps, and reuse AS10 rule testing
+  for per-segment metrics.
+- AS12 must not re-scan candidates, rebuild AS9 genome paths, recompute AS8
+  POIs, or duplicate AS10 metric formulas unless a later backend patch
+  explicitly extends those contracts.
 
 ## Accepted AS8 Backend MVP
 
@@ -1771,19 +1787,249 @@ Recommended sequence:
      stability scoring, degradation warnings, and criteria for any later
      conjunction expansion.
 
+## AS12-AUDIT - Candidate Validation / Temporal Stability Architecture
+
+AS12-AUDIT defines the architecture for validating AS11 rule candidates across
+time. It is design-only. It does not implement a backend service, GUI controls,
+persistence, stores, model training, signal generation, backtesting, PnL
+validation, order generation, trading execution, neural agents, RL Decisor
+logic, artifact calculation, recipe execution, Analysis Database mutation,
+OHLCV repair, or Data Manager mutation.
+
+AS11 can rank a candidate from one bounded sample, but ranking is not evidence
+that the candidate survives time. AS12 asks whether a candidate remains
+diagnostically useful outside the slice where it was found.
+
+### Candidate Validation
+
+Candidate validation is diagnostic retesting of AS11 candidates across
+independent or chronologically separated data segments. It measures robustness
+of an already-defined candidate rule. It does not prove profitability, create
+trading signals, persist strategies, or validate executable trading behavior.
+
+Validation reports evidence quality: whether support survives, whether lift or
+precision degrades, whether false positives expand, and whether validation data
+is sufficient for the claim being made.
+
+### Temporal Stability
+
+Temporal stability is consistency of candidate metrics across ordered time
+segments. Useful segment comparisons include:
+
+- discovery period versus validation period;
+- older history versus recent history;
+- first half versus second half;
+- rolling chronological windows;
+- expanding chronological windows;
+- recent holdout windows;
+- custom explicitly supplied segments.
+
+Metrics to compare include support, precision, recall, lift,
+false-positive rate, false-negative rate, baseline positive rate, candidate
+score, and candidate rank. Stability is diagnostic metadata only. It is not
+alpha, profitability, or trading performance.
+
+### Validation Splits
+
+Supported split concepts for architecture:
+
+- `chronological_holdout`: earlier rows are discovery/reference, later rows
+  are validation/holdout.
+- `discovery_validation`: explicit discovery and validation segment
+  definitions supplied by the caller.
+- `rolling_windows`: fixed-width ordered windows evaluated separately.
+- `expanding_windows`: growing discovery windows with later validation
+  windows.
+- `recent_holdout`: a final recent segment reserved for out-of-sample
+  diagnostics.
+- `custom_segments`: caller-provided segment keys and timestamp ranges.
+
+The recommended AS12 backend MVP is `chronological_holdout`. Random shuffling
+is not part of the time-series MVP because it can mix future and past market
+conditions in ways that hide temporal failure. True validation must keep later
+data out of discovery/reference metrics.
+
+### Rule Survival
+
+Rule survival means a candidate continues to meet explicit diagnostic
+thresholds in validation segments. Suggested survival statuses:
+
+- `survived`: validation support and metrics remain above configured
+  thresholds.
+- `degraded`: the rule still has evidence but lift, precision, recall,
+  support, or false-positive behavior materially worsens.
+- `failed`: validation metrics fall below required thresholds or false
+  positives become unacceptable.
+- `insufficient_data`: one or more validation segments are too small for a
+  useful claim.
+- `unknown`: timestamps, splits, or validation inputs are missing.
+
+Survival checks should include validation support, validation positive matches,
+precision, lift, false-positive rate, and configured retention thresholds
+against discovery/reference metrics.
+
+### Metric Degradation
+
+Metric degradation compares validation metrics against discovery/reference
+metrics. Examples:
+
+- precision degradation;
+- lift degradation;
+- recall degradation;
+- support degradation;
+- candidate score degradation;
+- rank degradation.
+
+For example, discovery lift of `3.0` and validation lift of `1.2` is a `60%`
+lift degradation. Degradation thresholds must be explicit in future backend
+configuration. Degradation warnings are diagnostics, not trading loss or PnL
+statements.
+
+### Stability Score
+
+A future AS12 stability score should summarize validation quality with clear
+components:
+
+- validation support adequacy;
+- positive-match adequacy;
+- precision retention;
+- lift retention;
+- recall retention;
+- false-positive-rate stability;
+- consistency across segments;
+- penalties for insufficient data;
+- penalties for sample-limited input.
+
+The stability score is a ranking and review aid. It is not alpha,
+profitability, tradability, or a signal.
+
+### Segment-Level Reports
+
+AS12 reports should expose each evaluated segment instead of hiding validation
+inside a single aggregate. Segment report fields should include:
+
+- `segment_key`;
+- `start_ts_ms`;
+- `end_ts_ms`;
+- `path_count`;
+- `positive_total`;
+- `negative_total`;
+- AS10 metric summary;
+- blockers;
+- warnings.
+
+Segment reports make it clear when a candidate works only in one historical
+slice or when validation support disappears outside the discovery/reference
+period.
+
+### Relationship To AS10 And AS11
+
+AS10 tests a specific rule against a specific comparison set. AS11 proposes
+single-predicate candidate rules and includes AS10 metric summaries. AS12
+validates already-defined rules or AS11 candidate reports across time segments.
+
+Future AS12 should reuse `AnalysisSuiteWhiteBoxRuleTester` against split
+comparison sets. It should not reimplement support, precision, recall, lift,
+false-positive, false-negative, baseline-rate, sample-limit, or diagnostic
+gating formulas. It should not rescan candidate vocabularies unless a future
+task explicitly requests a validation-aware scan mode.
+
+### Split Construction
+
+AS12 split construction should start from an AS10 comparison set whose
+positive and negative cohorts contain path objects with `anchor_ts_ms`.
+Validation segments are built by assigning cohort paths to timestamp ranges.
+
+If timestamps are missing, AS12 should block temporal stability validation or
+return `unknown` / `insufficient_data` with warnings. It must not infer
+chronology from row order alone unless a later contract explicitly declares
+row order as timestamp order.
+
+### Sample-Limited Inputs
+
+AS9, AS10, and AS11 reports may be bounded previews. If validation uses
+sample-limited inputs, AS12 must propagate that context and mark validation as
+sample-limited. Sample-limited validation can still be useful for workflow
+inspection, but it must not be described as full historical proof.
+
+### Multiple-Testing Risk
+
+AS11 candidate scanning creates multiple-testing and false-discovery risk.
+AS12 validation can reduce confidence in unstable candidates, but it does not
+erase the fact that many candidates may have been scanned. Future AS12 reports
+should preserve AS11 multiple-testing warnings and include candidate-scan
+context when available.
+
+### Candidate Promotion And Demotion
+
+Candidate review statuses are diagnostic:
+
+- `candidate`: generated or supplied candidate has not been validated.
+- `validation_survived`: candidate survived configured validation checks.
+- `validation_degraded`: candidate weakened but remains reviewable.
+- `validation_failed`: candidate failed validation thresholds.
+- `insufficient_data`: validation data is too small or incomplete.
+- `rejected`: candidate is no longer useful under configured diagnostics.
+- `review`: candidate needs manual review because warnings or mixed segment
+  results prevent a clean status.
+
+Promotion does not create a trading signal, saved strategy, order rule, or
+Research Suite validation result.
+
+### Future AS12 Backend MVP Recommendation
+
+Recommended AS12 backend MVP:
+
+- backend-only;
+- read-only;
+- no persistence;
+- no GUI;
+- consumes AS10 comparison sets and AS11 candidate reports;
+- reuses AS10 rule testing for per-segment metrics;
+- builds `chronological_holdout` splits from `anchor_ts_ms`;
+- reports discovery/reference metrics and validation/holdout metrics;
+- reports segment metrics, survival status, metric degradation, stability
+  score, blockers, warnings, and sample-limit context;
+- does not backtest, compute PnL, generate signals, train models, create
+  stores, mutate databases, or persist validated rules.
+
+### Future GUI Implications
+
+No AS12 GUI is part of AS12-AUDIT. A later GUI should expose validation reports
+only after the backend contract is implemented and reviewed. The GUI should
+collect validation intent and render backend reports; it must not split cohorts
+itself, compute AS10 metrics, assign survival statuses, compute stability
+scores, persist validated rules, generate signals, or run backtests.
+
+### Proposed Patch Sequence After AS12-AUDIT
+
+Recommended sequence:
+
+1. AS12 - Candidate Temporal Validation Backend.
+   - Implement backend-only, read-only `chronological_holdout` validation over
+     AS10 comparison sets and AS11 candidate reports.
+2. AS12D - Docs sync.
+   - Document accepted AS12 backend behavior after implementation.
+3. AS13-AUDIT - Validated Rule Review / Promotion Architecture.
+   - Define how validated candidates are reviewed, compared, grouped, and
+     prepared for later Research Suite validation without becoming trading
+     signals.
+
 ## Out-Of-Scope Boundaries
 
-AS8, AS9, AS10, AS11, AS-GUI-1, AS-GUI-2, AS-GUI-3, AS10-AUDIT, and AS11-AUDIT do
-not add:
+AS8, AS9, AS10, AS11, AS-GUI-1, AS-GUI-2, AS-GUI-3, AS10-AUDIT, AS11-AUDIT, and
+AS12-AUDIT do not add:
 
 - GUI category builder.
 - AS10 GUI controls.
 - AS11 GUI controls.
+- AS12 GUI controls.
 - Persistent POI family store.
 - POI definition or POI family definition persistence.
 - Persistent genome definition or genome path persistence.
 - Persistent genome stores.
 - Persistent rule definitions, comparison sets, rule reports, or rule stores.
+- Persistent candidate validation reports or validated rule stores.
 - Persistent binner policies.
 - Analysis Project/Run/Report stores.
 - Road classification.
@@ -1799,7 +2045,8 @@ not add:
 - Itemset mining.
 - Recursive search.
 - Genetic programming.
-- Temporal stability validation.
+- Implemented temporal stability validation.
+- Implemented chronological holdout validation.
 - Backtesting engine.
 - PnL or profit validation.
 - Order generation.
@@ -1858,6 +2105,13 @@ Recommended sequence:
 13. AS12-AUDIT - Candidate Validation / Temporal Stability Architecture.
     - Define chronological split validation and rule survival before broader
       candidate mining or conjunction expansion.
+14. AS12 - Candidate Temporal Validation Backend.
+    - Future backend-only validation over chronological holdout segments.
+15. AS12D - Docs sync.
+    - Future docs sync after AS12 implementation.
+16. AS13-AUDIT - Validated Rule Review / Promotion Architecture.
+    - Future design boundary for reviewing validated candidates without
+      turning them into trading signals.
 
 Research Suite validation integration, neural refinement, and Decisor logic
 remain later architecture tracks.

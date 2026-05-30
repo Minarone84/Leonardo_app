@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QMainWindow,
     QPlainTextEdit,
     QPushButton,
@@ -32,6 +33,12 @@ from leonardo.data.historical.analysis_suite_dataframe_preview import (
 from leonardo.data.historical.analysis_suite_dataset_readiness import AnalysisSuiteDatasetReadinessService
 from leonardo.data.historical.analysis_suite_diagnostic_report import AnalysisSuiteDiagnosticReportService
 from leonardo.data.historical.analysis_suite_feature_set_planner import AnalysisSuiteFeatureSetPlanner
+from leonardo.data.historical.analysis_suite_poi_family_planner import (
+    AnalysisSuitePoiCondition,
+    AnalysisSuitePoiDefinition,
+    AnalysisSuitePoiFamilyDefinition,
+    AnalysisSuitePoiFamilyPlanner,
+)
 from leonardo.data.historical.analysis_suite_target_planner import (
     AnalysisSuiteTargetDefinition,
     AnalysisSuiteTargetPlanner,
@@ -41,6 +48,34 @@ from leonardo.data.naming import canonicalize
 
 _REPORT_ROLE = Qt.UserRole + 1
 _CANDIDATE_ROLE = Qt.UserRole + 2
+_POI_CONDITION_COLUMNS = (
+    "Enabled",
+    "Column",
+    "Operator",
+    "Value",
+    "Values",
+    "Lookback",
+    "Required",
+    "Label",
+)
+_POI_EVENT_KINDS = (
+    ("Sparse event", "sparse_event"),
+    ("Boolean true", "boolean_true"),
+    ("Value equals", "value_equals"),
+    ("Transition", "transition"),
+)
+_POI_CONDITION_OPERATORS = (
+    "equals",
+    "not_equals",
+    "gt",
+    "gte",
+    "lt",
+    "lte",
+    "in",
+    "not_in",
+    "is_null",
+    "not_null",
+)
 
 
 class _ReadinessCatalogService(Protocol):
@@ -107,6 +142,32 @@ class _DiagnosticReportService(Protocol):
         ...
 
 
+class _PoiFamilyPreviewService(Protocol):
+    def preview_poi_occurrences(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        poi_definition: object,
+        sample_limit: int | None = None,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+    ) -> object:
+        ...
+
+    def preview_family(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        family_definition: object,
+        sample_limit: int | None = None,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+    ) -> object:
+        ...
+
+
 class AnalysisSuiteWindow(QMainWindow):
     """
     Read-only Analysis Suite dataset readiness catalog.
@@ -127,6 +188,7 @@ class AnalysisSuiteWindow(QMainWindow):
         target_service: _TargetPreviewService | None = None,
         feature_set_service: _FeatureSetPreviewService | None = None,
         diagnostic_service: _DiagnosticReportService | None = None,
+        poi_family_service: _PoiFamilyPreviewService | None = None,
         open_data_manager_callback: Callable[[], None] | None = None,
     ) -> None:
         super().__init__(parent, Qt.Window)
@@ -145,6 +207,9 @@ class AnalysisSuiteWindow(QMainWindow):
             historical_root=self._historical_root,
         )
         self._diagnostic_service = diagnostic_service or AnalysisSuiteDiagnosticReportService()
+        self._poi_family_service = poi_family_service or AnalysisSuitePoiFamilyPlanner(
+            historical_root=self._historical_root,
+        )
         self._open_data_manager_callback = open_data_manager_callback
         self._latest_catalog: object | None = None
         self._selected_report: object | None = None
@@ -155,6 +220,8 @@ class AnalysisSuiteWindow(QMainWindow):
         self._feature_set_report: object | None = None
         self._feature_set_report_key: tuple[object, ...] | None = None
         self._diagnostic_report: object | None = None
+        self._poi_occurrence_report: object | None = None
+        self._poi_family_report: object | None = None
 
         self.setObjectName("analysisSuiteWindow")
         self.setWindowTitle("Leonardo - Analysis Suite")
@@ -286,6 +353,7 @@ class AnalysisSuiteWindow(QMainWindow):
         tabs.addTab(self._build_target_group(parent), "Target Preview")
         tabs.addTab(self._build_feature_group(parent), "Feature Set")
         tabs.addTab(self._build_diagnostic_group(parent), "Diagnostic Report")
+        tabs.addTab(self._build_poi_family_group(parent), "POI / Family Preview")
         return tabs
 
     def _build_preview_group(self, parent: QWidget) -> QGroupBox:
@@ -474,6 +542,142 @@ class AnalysisSuiteWindow(QMainWindow):
         layout.addWidget(self._diagnostic_report_text, 1)
 
         return diagnostic_group
+
+    def _build_poi_family_group(self, parent: QWidget) -> QGroupBox:
+        poi_group = QGroupBox("POI / Family Preview", parent)
+        layout = QVBoxLayout(poi_group)
+        layout.setSpacing(8)
+
+        poi_definition_group = QGroupBox("POI Definition", poi_group)
+        poi_definition_layout = QVBoxLayout(poi_definition_group)
+        poi_definition_layout.setSpacing(8)
+
+        poi_row_1 = QHBoxLayout()
+        poi_row_1.setSpacing(8)
+        poi_definition_layout.addLayout(poi_row_1)
+
+        poi_row_1.addWidget(QLabel("Key", poi_definition_group))
+        self._poi_key = QLineEdit(poi_definition_group)
+        self._poi_key.setObjectName("analysisSuitePoiKeyEdit")
+        self._poi_key.setText("poi_preview")
+        self._poi_key.textChanged.connect(self._on_poi_definition_changed)
+        poi_row_1.addWidget(self._poi_key)
+
+        poi_row_1.addWidget(QLabel("Name", poi_definition_group))
+        self._poi_display_name = QLineEdit(poi_definition_group)
+        self._poi_display_name.setObjectName("analysisSuitePoiDisplayNameEdit")
+        self._poi_display_name.textChanged.connect(self._on_poi_definition_changed)
+        poi_row_1.addWidget(self._poi_display_name)
+
+        poi_row_1.addWidget(QLabel("Type", poi_definition_group))
+        self._poi_type = QLineEdit(poi_definition_group)
+        self._poi_type.setObjectName("analysisSuitePoiTypeEdit")
+        self._poi_type.setText("gui_preview")
+        self._poi_type.textChanged.connect(self._on_poi_definition_changed)
+        poi_row_1.addWidget(self._poi_type)
+
+        poi_row_2 = QHBoxLayout()
+        poi_row_2.setSpacing(8)
+        poi_definition_layout.addLayout(poi_row_2)
+
+        poi_row_2.addWidget(QLabel("Source", poi_definition_group))
+        self._poi_source_column = QComboBox(poi_definition_group)
+        self._poi_source_column.setObjectName("analysisSuitePoiSourceColumnCombo")
+        self._poi_source_column.setEditable(True)
+        self._poi_source_column.currentTextChanged.connect(self._on_poi_definition_changed)
+        poi_row_2.addWidget(self._poi_source_column)
+
+        poi_row_2.addWidget(QLabel("Event", poi_definition_group))
+        self._poi_event_kind = QComboBox(poi_definition_group)
+        self._poi_event_kind.setObjectName("analysisSuitePoiEventKindCombo")
+        for label, value in _POI_EVENT_KINDS:
+            self._poi_event_kind.addItem(label, value)
+        self._poi_event_kind.currentIndexChanged.connect(self._on_poi_definition_changed)
+        self._poi_event_kind.currentIndexChanged.connect(self._refresh_poi_value_state)
+        poi_row_2.addWidget(self._poi_event_kind)
+
+        poi_row_2.addWidget(QLabel("Value", poi_definition_group))
+        self._poi_event_value = QLineEdit(poi_definition_group)
+        self._poi_event_value.setObjectName("analysisSuitePoiEventValueEdit")
+        self._poi_event_value.textChanged.connect(self._on_poi_definition_changed)
+        poi_row_2.addWidget(self._poi_event_value)
+
+        poi_row_2.addWidget(QLabel("Previous", poi_definition_group))
+        self._poi_previous_value = QLineEdit(poi_definition_group)
+        self._poi_previous_value.setObjectName("analysisSuitePoiPreviousValueEdit")
+        self._poi_previous_value.textChanged.connect(self._on_poi_definition_changed)
+        poi_row_2.addWidget(self._poi_previous_value)
+
+        self._poi_preview_button = QPushButton("Preview POI Occurrences", poi_definition_group)
+        self._poi_preview_button.setObjectName("analysisSuitePoiPreviewButton")
+        self._poi_preview_button.setEnabled(False)
+        self._poi_preview_button.clicked.connect(self._preview_poi_occurrences)
+        poi_row_2.addWidget(self._poi_preview_button)
+
+        self._poi_report_text = QPlainTextEdit(poi_definition_group)
+        self._poi_report_text.setObjectName("analysisSuitePoiReportText")
+        self._poi_report_text.setReadOnly(True)
+        self._poi_report_text.setPlainText("Select a previewable Analysis Database.")
+        poi_definition_layout.addWidget(self._poi_report_text, 1)
+
+        layout.addWidget(poi_definition_group, 1)
+
+        family_group = QGroupBox("Family Conditions", poi_group)
+        family_layout = QVBoxLayout(family_group)
+        family_layout.setSpacing(8)
+
+        family_row = QHBoxLayout()
+        family_row.setSpacing(8)
+        family_layout.addLayout(family_row)
+
+        family_row.addWidget(QLabel("Family key", family_group))
+        self._poi_family_key = QLineEdit(family_group)
+        self._poi_family_key.setObjectName("analysisSuitePoiFamilyKeyEdit")
+        self._poi_family_key.setText("poi_family_preview")
+        self._poi_family_key.textChanged.connect(self._on_family_definition_changed)
+        family_row.addWidget(self._poi_family_key)
+
+        family_row.addWidget(QLabel("Name", family_group))
+        self._poi_family_display_name = QLineEdit(family_group)
+        self._poi_family_display_name.setObjectName("analysisSuitePoiFamilyDisplayNameEdit")
+        self._poi_family_display_name.setText("POI family preview")
+        self._poi_family_display_name.textChanged.connect(self._on_family_definition_changed)
+        family_row.addWidget(self._poi_family_display_name)
+
+        self._poi_add_condition_button = QPushButton("Add Condition", family_group)
+        self._poi_add_condition_button.setObjectName("analysisSuitePoiAddConditionButton")
+        self._poi_add_condition_button.clicked.connect(self._add_poi_condition_row)
+        family_row.addWidget(self._poi_add_condition_button)
+
+        self._poi_remove_condition_button = QPushButton("Remove Selected Condition", family_group)
+        self._poi_remove_condition_button.setObjectName("analysisSuitePoiRemoveConditionButton")
+        self._poi_remove_condition_button.clicked.connect(self._remove_selected_poi_condition_row)
+        family_row.addWidget(self._poi_remove_condition_button)
+
+        self._poi_family_preview_button = QPushButton("Preview Family", family_group)
+        self._poi_family_preview_button.setObjectName("analysisSuitePoiFamilyPreviewButton")
+        self._poi_family_preview_button.setEnabled(False)
+        self._poi_family_preview_button.clicked.connect(self._preview_poi_family)
+        family_row.addWidget(self._poi_family_preview_button)
+
+        self._poi_condition_table = QTableWidget(0, len(_POI_CONDITION_COLUMNS), family_group)
+        self._poi_condition_table.setObjectName("analysisSuitePoiConditionTable")
+        self._poi_condition_table.setHorizontalHeaderLabels(list(_POI_CONDITION_COLUMNS))
+        self._poi_condition_table.setEditTriggers(QTableWidget.AllEditTriggers)
+        self._poi_condition_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self._poi_condition_table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._poi_condition_table.itemChanged.connect(self._on_poi_condition_item_changed)
+        family_layout.addWidget(self._poi_condition_table, 1)
+
+        self._poi_family_report_text = QPlainTextEdit(family_group)
+        self._poi_family_report_text.setObjectName("analysisSuitePoiFamilyReportText")
+        self._poi_family_report_text.setReadOnly(True)
+        self._poi_family_report_text.setPlainText("Preview POI occurrences before family membership.")
+        family_layout.addWidget(self._poi_family_report_text, 1)
+
+        layout.addWidget(family_group, 1)
+        self._refresh_poi_value_state()
+        return poi_group
 
     def _open_data_manager(self) -> None:
         if self._open_data_manager_callback is None:
@@ -707,6 +911,11 @@ class AnalysisSuiteWindow(QMainWindow):
             tuple(getattr(candidates_report, "candidates", ()) or ())
         )
         self._feature_report_text.setPlainText(_feature_set_report_summary(candidates_report))
+        self._refresh_poi_column_options()
+        self._clear_poi_family_reports(
+            poi_message="Feature candidates changed. Preview POI occurrences again.",
+            family_message="Feature candidates changed. Preview the family again.",
+        )
         self._clear_diagnostic_setup()
         self.statusBar().showMessage(
             "Analysis Suite feature candidates: "
@@ -778,6 +987,10 @@ class AnalysisSuiteWindow(QMainWindow):
 
         self._diagnostic_report = diagnostic_report
         self._diagnostic_report_text.setPlainText(_diagnostic_report_summary(diagnostic_report))
+        self._clear_poi_family_reports(
+            poi_message="Diagnostic report changed. Preview POI occurrences again.",
+            family_message="Diagnostic report changed. Preview the family again.",
+        )
         self.statusBar().showMessage(
             f"Analysis Suite diagnostic report: {_value_text(getattr(diagnostic_report, 'status', None))}"
         )
@@ -847,6 +1060,10 @@ class AnalysisSuiteWindow(QMainWindow):
                 "Feature selection changed. Preview the feature set before diagnostics."
             )
         self._clear_diagnostic_setup()
+        self._clear_poi_family_reports(
+            poi_message="Feature selection changed. Preview POI occurrences again.",
+            family_message="Feature selection changed. Preview the family again.",
+        )
         self._refresh_analysis_setup_state()
 
     def _on_target_settings_changed(self) -> None:
@@ -882,11 +1099,19 @@ class AnalysisSuiteWindow(QMainWindow):
             and str(getattr(self._target_report, "status", "")) == "previewable"
             and str(getattr(self._feature_set_report, "status", "")) == "previewable"
         )
+        self._poi_preview_button.setEnabled(can_preview)
+        self._poi_family_preview_button.setEnabled(
+            can_preview
+            and bool(self._poi_key.text().strip())
+            and bool(self._poi_type.text().strip())
+            and bool(self._poi_source_column.currentText().strip())
+        )
 
     def _clear_analysis_setup(self) -> None:
         self._clear_target_setup()
         self._clear_feature_setup()
         self._clear_diagnostic_setup()
+        self._clear_poi_family_setup()
         self._refresh_analysis_setup_state()
 
     def _clear_target_setup(self) -> None:
@@ -901,6 +1126,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._feature_set_report_key = None
         self._clear_feature_table()
         self._feature_report_text.setPlainText(message)
+        self._refresh_poi_column_options()
 
     def _clear_feature_table(self) -> None:
         self._feature_table.blockSignals(True)
@@ -913,6 +1139,219 @@ class AnalysisSuiteWindow(QMainWindow):
         self._diagnostic_report_text.setPlainText(
             "Preview a target and feature set before running diagnostics."
         )
+
+    def _clear_poi_family_setup(self) -> None:
+        self._poi_occurrence_report = None
+        self._poi_family_report = None
+        self._poi_report_text.setPlainText("Select a previewable Analysis Database.")
+        self._poi_family_report_text.setPlainText(
+            "Preview POI occurrences before family membership."
+        )
+
+    def _clear_poi_family_reports(
+        self,
+        *,
+        poi_message: str = "POI definition changed. Preview POI occurrences again.",
+        family_message: str = "POI definition changed. Preview the family again.",
+    ) -> None:
+        self._poi_occurrence_report = None
+        self._poi_family_report = None
+        self._poi_report_text.setPlainText(poi_message)
+        self._poi_family_report_text.setPlainText(family_message)
+
+    def _on_poi_definition_changed(self) -> None:
+        if getattr(self, "_poi_report_text", None) is not None:
+            self._clear_poi_family_reports()
+        self._refresh_analysis_setup_state()
+
+    def _on_family_definition_changed(self) -> None:
+        if getattr(self, "_poi_family_report_text", None) is not None:
+            self._poi_family_report = None
+            self._poi_family_report_text.setPlainText(
+                "Family definition changed. Preview the family again."
+            )
+        self._refresh_analysis_setup_state()
+
+    def _on_poi_condition_item_changed(self, _item: QTableWidgetItem) -> None:
+        self._on_family_definition_changed()
+
+    def _refresh_poi_value_state(self) -> None:
+        event_kind = str(self._poi_event_kind.currentData() or "")
+        self._poi_event_value.setEnabled(event_kind in {"value_equals", "transition"})
+        self._poi_previous_value.setEnabled(event_kind == "transition")
+
+    def _refresh_poi_column_options(self) -> None:
+        if not hasattr(self, "_poi_source_column"):
+            return
+        current_text = self._poi_source_column.currentText()
+        candidate_names = _feature_candidate_names(self._feature_candidates_report)
+        self._poi_source_column.blockSignals(True)
+        self._poi_source_column.clear()
+        self._poi_source_column.addItems(candidate_names)
+        if current_text:
+            index = self._poi_source_column.findText(current_text)
+            if index >= 0:
+                self._poi_source_column.setCurrentIndex(index)
+            else:
+                self._poi_source_column.setEditText(current_text)
+        self._poi_source_column.blockSignals(False)
+
+    def _add_poi_condition_row(self) -> None:
+        row = self._poi_condition_table.rowCount()
+        self._poi_condition_table.blockSignals(True)
+        self._poi_condition_table.insertRow(row)
+
+        enabled_item = _checkable_table_item(True)
+        self._poi_condition_table.setItem(row, 0, enabled_item)
+        self._poi_condition_table.setItem(row, 1, QTableWidgetItem(""))
+        operator_item = QTableWidgetItem(_POI_CONDITION_OPERATORS[0])
+        operator_item.setToolTip("Supported operators: " + ", ".join(_POI_CONDITION_OPERATORS))
+        self._poi_condition_table.setItem(row, 2, operator_item)
+        self._poi_condition_table.setItem(row, 3, QTableWidgetItem(""))
+        self._poi_condition_table.setItem(row, 4, QTableWidgetItem(""))
+        self._poi_condition_table.setItem(row, 5, QTableWidgetItem("0"))
+        required_item = _checkable_table_item(True)
+        self._poi_condition_table.setItem(row, 6, required_item)
+        self._poi_condition_table.setItem(row, 7, QTableWidgetItem(""))
+        self._poi_condition_table.blockSignals(False)
+        self._on_family_definition_changed()
+
+    def _remove_selected_poi_condition_row(self) -> None:
+        selected = self._poi_condition_table.selectedItems()
+        if not selected:
+            return
+        self._poi_condition_table.removeRow(selected[0].row())
+        self._on_family_definition_changed()
+
+    def _preview_poi_occurrences(self) -> None:
+        context = self._selected_database_context()
+        if context is None:
+            self.statusBar().showMessage("Select an Analysis Database before POI preview")
+            return
+        readiness_report, market, database_id = context
+        definition = self._poi_definition_from_controls()
+        try:
+            report = self._poi_family_service.preview_poi_occurrences(
+                market=market,
+                database_id=database_id,
+                poi_definition=definition,
+                sample_limit=None,
+                readiness_report=readiness_report,
+                diagnostic_report=self._current_diagnostic_report_for_preview(),
+            )
+        except Exception as exc:
+            self._poi_occurrence_report = None
+            self._poi_family_report = None
+            self._poi_report_text.setPlainText(
+                f"POI occurrence preview failed:\n{type(exc).__name__}: {exc}"
+            )
+            self._poi_family_report_text.setPlainText(
+                "Preview POI occurrences before family membership."
+            )
+            self.statusBar().showMessage("Analysis Suite POI occurrence preview failed")
+            self._refresh_analysis_setup_state()
+            return
+
+        self._poi_occurrence_report = report
+        self._poi_family_report = None
+        self._poi_report_text.setPlainText(_poi_occurrence_report_summary(report))
+        self._poi_family_report_text.setPlainText(
+            "Preview POI family membership when the family definition is ready."
+        )
+        self.statusBar().showMessage(
+            f"Analysis Suite POI preview: {_value_text(getattr(report, 'status', None))}"
+        )
+        self._refresh_analysis_setup_state()
+
+    def _preview_poi_family(self) -> None:
+        context = self._selected_database_context()
+        if context is None:
+            self.statusBar().showMessage("Select an Analysis Database before family preview")
+            return
+        readiness_report, market, database_id = context
+        family_definition = self._poi_family_definition_from_controls()
+        try:
+            report = self._poi_family_service.preview_family(
+                market=market,
+                database_id=database_id,
+                family_definition=family_definition,
+                sample_limit=None,
+                readiness_report=readiness_report,
+                diagnostic_report=self._current_diagnostic_report_for_preview(),
+            )
+        except Exception as exc:
+            self._poi_family_report = None
+            self._poi_family_report_text.setPlainText(
+                f"POI family preview failed:\n{type(exc).__name__}: {exc}"
+            )
+            self.statusBar().showMessage("Analysis Suite POI family preview failed")
+            self._refresh_analysis_setup_state()
+            return
+
+        self._poi_family_report = report
+        self._poi_family_report_text.setPlainText(_poi_family_report_summary(report))
+        self.statusBar().showMessage(
+            f"Analysis Suite POI family preview: {_value_text(getattr(report, 'status', None))}"
+        )
+        self._refresh_analysis_setup_state()
+
+    def _poi_definition_from_controls(self) -> AnalysisSuitePoiDefinition:
+        return AnalysisSuitePoiDefinition(
+            poi_key=self._poi_key.text().strip(),
+            poi_type=self._poi_type.text().strip(),
+            source_column=self._poi_source_column.currentText().strip(),
+            event_kind=str(self._poi_event_kind.currentData() or ""),
+            event_value=_parse_literal(self._poi_event_value.text()),
+            previous_value=_parse_literal(self._poi_previous_value.text()),
+            display_name=self._poi_display_name.text().strip() or None,
+            metadata={"origin": "analysis_suite_gui"},
+        )
+
+    def _poi_family_definition_from_controls(self) -> AnalysisSuitePoiFamilyDefinition:
+        return AnalysisSuitePoiFamilyDefinition(
+            family_key=self._poi_family_key.text().strip(),
+            display_name=self._poi_family_display_name.text().strip(),
+            poi_definition=self._poi_definition_from_controls(),
+            conditions=self._poi_conditions_from_table(),
+            metadata={"origin": "analysis_suite_gui"},
+        )
+
+    def _poi_conditions_from_table(self) -> tuple[AnalysisSuitePoiCondition, ...]:
+        conditions: list[AnalysisSuitePoiCondition] = []
+        for row in range(self._poi_condition_table.rowCount()):
+            enabled = self._condition_check_state(row, 0)
+            if not enabled:
+                continue
+            operator = _table_text(self._poi_condition_table, row, 2)
+            value_text = _table_text(self._poi_condition_table, row, 3)
+            values_text = _table_text(self._poi_condition_table, row, 4)
+            conditions.append(
+                AnalysisSuitePoiCondition(
+                    column=_table_text(self._poi_condition_table, row, 1),
+                    operator=operator,
+                    value=_parse_literal(value_text),
+                    values=tuple(_parse_literal(item) for item in _split_values(values_text)),
+                    lookback_bars=_parse_non_negative_int(
+                        _table_text(self._poi_condition_table, row, 5)
+                    ),
+                    required=self._condition_check_state(row, 6),
+                    label=_table_text(self._poi_condition_table, row, 7) or None,
+                )
+            )
+        return tuple(conditions)
+
+    def _condition_check_state(self, row: int, column: int) -> bool:
+        item = self._poi_condition_table.item(row, column)
+        return item is not None and item.checkState() == Qt.Checked
+
+    def _current_diagnostic_report_for_preview(self) -> object | None:
+        if (
+            self._diagnostic_report is not None
+            and self._target_report_is_current()
+            and self._feature_set_report_is_current()
+        ):
+            return self._diagnostic_report
+        return None
 
     def _target_definition_from_controls(self) -> AnalysisSuiteTargetDefinition:
         horizon = int(self._target_horizon.value())
@@ -1142,6 +1581,101 @@ def _diagnostic_report_summary(report: object) -> str:
     return "\n".join(lines).strip()
 
 
+def _poi_occurrence_report_summary(report: object) -> str:
+    lines = [
+        f"Status: {_value_text(getattr(report, 'status', None))}",
+        f"Rows: {_value_text(getattr(report, 'row_count', None))}",
+        f"Occurrence count: {_value_text(getattr(report, 'occurrence_count', None))}",
+        f"First occurrence ts: {_value_text(getattr(report, 'first_occurrence_ts_ms', None))}",
+        f"Last occurrence ts: {_value_text(getattr(report, 'last_occurrence_ts_ms', None))}",
+        f"Requested sample limit: {_value_text(getattr(report, 'requested_sample_limit', None))}",
+        f"Sample limit: {_value_text(getattr(report, 'sample_limit', None))}",
+        _poi_occurrence_section(
+            "Sample occurrences",
+            getattr(report, "sample_occurrences", ()),
+        ),
+        _list_section("Warnings", getattr(report, "warnings", ())),
+        _list_section("Blockers", getattr(report, "blockers", ())),
+        _list_section("Errors", getattr(report, "errors", ())),
+    ]
+    return "\n".join(lines).strip()
+
+
+def _poi_family_report_summary(report: object) -> str:
+    lines = [
+        f"Status: {_value_text(getattr(report, 'status', None))}",
+        f"Rows: {_value_text(getattr(report, 'row_count', None))}",
+        f"Occurrence count: {_value_text(getattr(report, 'occurrence_count', None))}",
+        f"Matched count: {_value_text(getattr(report, 'matched_count', None))}",
+        f"Unmatched count: {_value_text(getattr(report, 'unmatched_count', None))}",
+        f"First occurrence ts: {_value_text(getattr(report, 'first_occurrence_ts_ms', None))}",
+        f"Last occurrence ts: {_value_text(getattr(report, 'last_occurrence_ts_ms', None))}",
+        f"Requested sample limit: {_value_text(getattr(report, 'requested_sample_limit', None))}",
+        f"Sample limit: {_value_text(getattr(report, 'sample_limit', None))}",
+        _poi_membership_section(
+            "Sample memberships",
+            getattr(report, "sample_memberships", ()),
+        ),
+        _list_section("Warnings", getattr(report, "warnings", ())),
+        _list_section("Blockers", getattr(report, "blockers", ())),
+        _list_section("Errors", getattr(report, "errors", ())),
+    ]
+    return "\n".join(lines).strip()
+
+
+def _poi_occurrence_section(label: str, occurrences: object) -> str:
+    items = tuple(occurrences or ())
+    if not items:
+        return f"{label}: none"
+    lines = [f"{label}:"]
+    for occurrence in items[:12]:
+        lines.append(
+            "- "
+            f"row={_value_text(getattr(occurrence, 'row_index', None))}, "
+            f"ts={_value_text(getattr(occurrence, 'ts_ms', None))}, "
+            f"poi={_value_text(getattr(occurrence, 'poi_key', None))}, "
+            f"type={_value_text(getattr(occurrence, 'poi_type', None))}, "
+            f"source={_value_text(getattr(occurrence, 'source_column', None))}, "
+            f"value={_value_text(getattr(occurrence, 'source_value', None))}, "
+            f"knowable_at={_value_text(getattr(occurrence, 'knowable_at_ts_ms', None))}"
+        )
+    if len(items) > 12:
+        lines.append(f"- ... {len(items) - 12} more")
+    return "\n".join(lines)
+
+
+def _poi_membership_section(label: str, memberships: object) -> str:
+    items = tuple(memberships or ())
+    if not items:
+        return f"{label}: none"
+    lines = [f"{label}:"]
+    for membership in items[:12]:
+        occurrence = getattr(membership, "occurrence", None)
+        lines.append(
+            "- "
+            f"row={_value_text(getattr(occurrence, 'row_index', None))}, "
+            f"ts={_value_text(getattr(occurrence, 'ts_ms', None))}, "
+            f"matched={_yes_no(getattr(membership, 'matched', False))}"
+        )
+        condition_results = tuple(getattr(membership, "condition_results", ()) or ())
+        for result in condition_results[:6]:
+            if not isinstance(result, dict):
+                result = dict(result or {}) if hasattr(result, "items") else {}
+            lines.append(
+                "  - "
+                f"{_value_text(result.get('label') or result.get('column'))}: "
+                f"matched={_yes_no(result.get('matched'))}, "
+                f"actual={_value_text(result.get('actual_value'))}"
+            )
+        if tuple(getattr(membership, "blockers", ()) or ()):
+            lines.append("  " + _list_section("Blockers", getattr(membership, "blockers", ())).replace("\n", "\n  "))
+        if tuple(getattr(membership, "warnings", ()) or ()):
+            lines.append("  " + _list_section("Warnings", getattr(membership, "warnings", ())).replace("\n", "\n  "))
+    if len(items) > 12:
+        lines.append(f"- ... {len(items) - 12} more")
+    return "\n".join(lines)
+
+
 def _mapping_section(label: str, values: object) -> str:
     if not isinstance(values, dict):
         values = dict(values or {}) if hasattr(values, "items") else {}
@@ -1202,6 +1736,69 @@ def _candidate_source(candidate: object) -> str:
         if value:
             return str(value)
     return ""
+
+
+def _feature_candidate_names(report: object | None) -> list[str]:
+    names: list[str] = []
+    for candidate in tuple(getattr(report, "candidates", ()) or ()):
+        name = str(getattr(candidate, "column_name", "") or "")
+        if name and name not in names:
+            names.append(name)
+    return names
+
+
+def _checkable_table_item(checked: bool) -> QTableWidgetItem:
+    item = QTableWidgetItem("")
+    item.setFlags(
+        item.flags()
+        | Qt.ItemIsUserCheckable
+        | Qt.ItemIsEnabled
+        | Qt.ItemIsSelectable
+    )
+    item.setCheckState(Qt.Checked if checked else Qt.Unchecked)
+    return item
+
+
+def _table_text(table: QTableWidget, row: int, column: int) -> str:
+    item = table.item(row, column)
+    if item is None:
+        return ""
+    return item.text().strip()
+
+
+def _parse_literal(text: str) -> object:
+    value = text.strip()
+    if not value:
+        return None
+    lowered = value.lower()
+    if lowered in {"none", "null", "nan"}:
+        return None
+    if lowered == "true":
+        return True
+    if lowered == "false":
+        return False
+    try:
+        integer_value = int(value)
+    except ValueError:
+        integer_value = None
+    if integer_value is not None:
+        return integer_value
+    try:
+        return float(value)
+    except ValueError:
+        return value
+
+
+def _split_values(text: str) -> tuple[str, ...]:
+    return tuple(item.strip() for item in text.split(",") if item.strip())
+
+
+def _parse_non_negative_int(text: str) -> int:
+    try:
+        value = int(text.strip() or "0")
+    except ValueError:
+        return 0
+    return max(value, 0)
 
 
 def _database_key(report: object) -> tuple[str, str, str, str, str]:

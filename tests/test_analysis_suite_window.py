@@ -12,6 +12,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
     QDoubleSpinBox,
+    QLineEdit,
     QPushButton,
     QPlainTextEdit,
     QSpinBox,
@@ -217,6 +218,58 @@ class _FakeDiagnosticService:
             }
         )
         return self.report
+
+
+class _FakePoiFamilyPlanner:
+    def __init__(self, *, occurrence_report: object, family_report: object) -> None:
+        self.occurrence_report = occurrence_report
+        self.family_report = family_report
+        self.occurrence_calls: list[dict[str, object]] = []
+        self.family_calls: list[dict[str, object]] = []
+
+    def preview_poi_occurrences(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        poi_definition: object,
+        sample_limit: int | None = None,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+    ) -> object:
+        self.occurrence_calls.append(
+            {
+                "market": market,
+                "database_id": database_id,
+                "poi_definition": poi_definition,
+                "sample_limit": sample_limit,
+                "readiness_report": readiness_report,
+                "diagnostic_report": diagnostic_report,
+            }
+        )
+        return self.occurrence_report
+
+    def preview_family(
+        self,
+        *,
+        market: object,
+        database_id: str,
+        family_definition: object,
+        sample_limit: int | None = None,
+        readiness_report: object | None = None,
+        diagnostic_report: object | None = None,
+    ) -> object:
+        self.family_calls.append(
+            {
+                "market": market,
+                "database_id": database_id,
+                "family_definition": family_definition,
+                "sample_limit": sample_limit,
+                "readiness_report": readiness_report,
+                "diagnostic_report": diagnostic_report,
+            }
+        )
+        return self.family_report
 
 
 def _ctx(tmp_path: Path, state: _FakeState | None = None):
@@ -457,6 +510,80 @@ def _diagnostic_report(*, status: str = "ready") -> SimpleNamespace:
     )
 
 
+def _poi_occurrence(
+    *,
+    row_index: int = 4,
+    ts_ms: int = 4000,
+    poi_key: str = "poi_preview",
+    source_column: str = "peak_marker",
+    source_value: object = 1,
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        row_index=row_index,
+        ts_ms=ts_ms,
+        anchor_ts_ms=ts_ms,
+        event_ts_ms=ts_ms,
+        knowable_at_ts_ms=ts_ms,
+        poi_key=poi_key,
+        poi_type="gui_preview",
+        source_column=source_column,
+        source_value=source_value,
+        metadata={"event_kind": "sparse_event"},
+    )
+
+
+def _poi_occurrence_report(*, status: str = "ready") -> SimpleNamespace:
+    occurrence = _poi_occurrence()
+    return SimpleNamespace(
+        status=status,
+        row_count=20,
+        occurrence_count=3,
+        first_occurrence_ts_ms=4000,
+        last_occurrence_ts_ms=12000,
+        requested_sample_limit=100,
+        sample_limit=100,
+        sample_occurrences=(occurrence,),
+        warnings=("poi_warning",),
+        blockers=(),
+        errors=(),
+    )
+
+
+def _poi_family_report(*, status: str = "ready") -> SimpleNamespace:
+    occurrence = _poi_occurrence()
+    return SimpleNamespace(
+        status=status,
+        row_count=20,
+        occurrence_count=3,
+        matched_count=2,
+        unmatched_count=1,
+        first_occurrence_ts_ms=4000,
+        last_occurrence_ts_ms=12000,
+        requested_sample_limit=100,
+        sample_limit=100,
+        sample_memberships=(
+            SimpleNamespace(
+                occurrence=occurrence,
+                matched=True,
+                condition_results=(
+                    {
+                        "column": "rsi_14",
+                        "operator": "gte",
+                        "value": 50,
+                        "actual_value": 61,
+                        "matched": True,
+                    },
+                ),
+                blockers=(),
+                warnings=(),
+            ),
+        ),
+        warnings=("family_warning",),
+        blockers=(),
+        errors=(),
+    )
+
+
 def test_analysis_suite_window_constructs_and_populates_readiness_rows(tmp_path: Path) -> None:
     _qapp()
     service = _FakeReadinessService(
@@ -595,6 +722,7 @@ def test_analysis_suite_window_target_feature_diagnostic_controls_exist(tmp_path
         "Target Preview",
         "Feature Set",
         "Diagnostic Report",
+        "POI / Family Preview",
     ]
     assert family is not None
     assert [family.itemText(index) for index in range(family.count())] == [
@@ -613,6 +741,57 @@ def test_analysis_suite_window_target_feature_diagnostic_controls_exist(tmp_path
     assert feature_button.isEnabled() is False
     assert diagnostic_button is not None
     assert diagnostic_button.isEnabled() is False
+
+
+def test_analysis_suite_window_poi_family_controls_exist(tmp_path: Path) -> None:
+    _qapp()
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(),
+        poi_family_service=_FakePoiFamilyPlanner(
+            occurrence_report=_poi_occurrence_report(),
+            family_report=_poi_family_report(),
+        ),
+    )
+
+    poi_key = window.findChild(QLineEdit, "analysisSuitePoiKeyEdit")
+    source = window.findChild(QComboBox, "analysisSuitePoiSourceColumnCombo")
+    event_kind = window.findChild(QComboBox, "analysisSuitePoiEventKindCombo")
+    event_value = window.findChild(QLineEdit, "analysisSuitePoiEventValueEdit")
+    previous_value = window.findChild(QLineEdit, "analysisSuitePoiPreviousValueEdit")
+    poi_button = window.findChild(QPushButton, "analysisSuitePoiPreviewButton")
+    condition_table = window.findChild(QTableWidget, "analysisSuitePoiConditionTable")
+    add_condition = window.findChild(QPushButton, "analysisSuitePoiAddConditionButton")
+    family_button = window.findChild(QPushButton, "analysisSuitePoiFamilyPreviewButton")
+    poi_report = window.findChild(QPlainTextEdit, "analysisSuitePoiReportText")
+    family_report = window.findChild(QPlainTextEdit, "analysisSuitePoiFamilyReportText")
+
+    assert poi_key is not None
+    assert poi_key.text() == "poi_preview"
+    assert source is not None
+    assert source.isEditable() is True
+    assert event_kind is not None
+    assert [event_kind.itemData(index) for index in range(event_kind.count())] == [
+        "sparse_event",
+        "boolean_true",
+        "value_equals",
+        "transition",
+    ]
+    assert event_value is not None
+    assert event_value.isEnabled() is False
+    assert previous_value is not None
+    assert previous_value.isEnabled() is False
+    assert poi_button is not None
+    assert poi_button.isEnabled() is False
+    assert condition_table is not None
+    assert condition_table.columnCount() == 8
+    assert add_condition is not None
+    assert family_button is not None
+    assert family_button.isEnabled() is False
+    assert poi_report is not None
+    assert poi_report.isReadOnly() is True
+    assert family_report is not None
+    assert family_report.isReadOnly() is True
 
 
 def test_analysis_suite_window_target_preview_calls_as5_service(tmp_path: Path) -> None:
@@ -885,6 +1064,212 @@ def test_analysis_suite_window_feature_candidate_selection_calls_as6_service(tmp
     assert "rsi_14" in text
 
 
+def test_analysis_suite_window_poi_preview_calls_as8_service(tmp_path: Path) -> None:
+    _qapp()
+    feature_service = _FakeFeatureSetPlanner(
+        candidates=(
+            _candidate("peak_marker", group="events"),
+            _candidate("rsi_14", group="oscillators"),
+        )
+    )
+    poi_service = _FakePoiFamilyPlanner(
+        occurrence_report=_poi_occurrence_report(),
+        family_report=_poi_family_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        feature_set_service=feature_service,
+        poi_family_service=poi_service,
+    )
+
+    list_button = window.findChild(QPushButton, "analysisSuiteFeatureRefreshButton")
+    source = window.findChild(QComboBox, "analysisSuitePoiSourceColumnCombo")
+    event_kind = window.findChild(QComboBox, "analysisSuitePoiEventKindCombo")
+    button = window.findChild(QPushButton, "analysisSuitePoiPreviewButton")
+    report_text = window.findChild(QPlainTextEdit, "analysisSuitePoiReportText")
+    assert list_button is not None
+    assert source is not None
+    assert event_kind is not None
+    assert button is not None
+    assert report_text is not None
+
+    list_button.click()
+    assert [source.itemText(index) for index in range(source.count())] == [
+        "peak_marker",
+        "rsi_14",
+    ]
+    source.setCurrentText("peak_marker")
+    event_kind.setCurrentIndex(0)
+    button.click()
+
+    assert len(poi_service.occurrence_calls) == 1
+    call = poi_service.occurrence_calls[0]
+    assert call["database_id"] == "adb_ready"
+    assert call["readiness_report"] is not None
+    definition = call["poi_definition"]
+    assert getattr(definition, "poi_key") == "poi_preview"
+    assert getattr(definition, "poi_type") == "gui_preview"
+    assert getattr(definition, "source_column") == "peak_marker"
+    assert getattr(definition, "event_kind") == "sparse_event"
+
+    text = report_text.toPlainText()
+    assert "Status: ready" in text
+    assert "Occurrence count: 3" in text
+    assert "peak_marker" in text
+    assert "poi_warning" in text
+
+
+def test_analysis_suite_window_family_preview_calls_as8_service(tmp_path: Path) -> None:
+    _qapp()
+    poi_service = _FakePoiFamilyPlanner(
+        occurrence_report=_poi_occurrence_report(),
+        family_report=_poi_family_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        poi_family_service=poi_service,
+    )
+
+    source = window.findChild(QComboBox, "analysisSuitePoiSourceColumnCombo")
+    event_kind = window.findChild(QComboBox, "analysisSuitePoiEventKindCombo")
+    event_value = window.findChild(QLineEdit, "analysisSuitePoiEventValueEdit")
+    add_condition = window.findChild(QPushButton, "analysisSuitePoiAddConditionButton")
+    condition_table = window.findChild(QTableWidget, "analysisSuitePoiConditionTable")
+    button = window.findChild(QPushButton, "analysisSuitePoiFamilyPreviewButton")
+    report_text = window.findChild(QPlainTextEdit, "analysisSuitePoiFamilyReportText")
+    assert source is not None
+    assert event_kind is not None
+    assert event_value is not None
+    assert add_condition is not None
+    assert condition_table is not None
+    assert button is not None
+    assert report_text is not None
+
+    source.setEditText("peak_marker")
+    event_kind.setCurrentIndex(2)
+    event_value.setText("1")
+    add_condition.click()
+    condition_table.item(0, 1).setText("rsi_14")
+    condition_table.item(0, 2).setText("gte")
+    condition_table.item(0, 3).setText("50")
+    condition_table.item(0, 5).setText("1")
+    condition_table.item(0, 7).setText("rsi confirmation")
+    button.click()
+
+    assert len(poi_service.family_calls) == 1
+    call = poi_service.family_calls[0]
+    assert call["database_id"] == "adb_ready"
+    definition = call["family_definition"]
+    assert getattr(definition, "family_key") == "poi_family_preview"
+    assert getattr(definition.poi_definition, "source_column") == "peak_marker"
+    assert getattr(definition.poi_definition, "event_kind") == "value_equals"
+    assert getattr(definition.poi_definition, "event_value") == 1
+    assert len(definition.conditions) == 1
+    condition = definition.conditions[0]
+    assert condition.column == "rsi_14"
+    assert condition.operator == "gte"
+    assert condition.value == 50
+    assert condition.lookback_bars == 1
+    assert condition.required is True
+    assert condition.label == "rsi confirmation"
+
+    text = report_text.toPlainText()
+    assert "Status: ready" in text
+    assert "Matched count: 2" in text
+    assert "Unmatched count: 1" in text
+    assert "rsi_14" in text
+    assert "family_warning" in text
+
+
+def test_analysis_suite_window_clears_poi_family_state_when_inputs_change(tmp_path: Path) -> None:
+    _qapp()
+    poi_service = _FakePoiFamilyPlanner(
+        occurrence_report=_poi_occurrence_report(),
+        family_report=_poi_family_report(),
+    )
+    window = AnalysisSuiteWindow(
+        ctx=_ctx(tmp_path),  # type: ignore[arg-type]
+        readiness_service=_FakeReadinessService(
+            items=(
+                _report(
+                    database_id="adb_ready",
+                    display_name="ReadyDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+                _report(
+                    database_id="adb_other",
+                    display_name="OtherDB",
+                    readiness_status="ready",
+                    strict_ready=True,
+                    can_preview=True,
+                ),
+            )
+        ),
+        poi_family_service=poi_service,
+    )
+
+    catalog = window.findChild(QTableWidget, "analysisSuiteCatalogTable")
+    source = window.findChild(QComboBox, "analysisSuitePoiSourceColumnCombo")
+    poi_button = window.findChild(QPushButton, "analysisSuitePoiPreviewButton")
+    family_button = window.findChild(QPushButton, "analysisSuitePoiFamilyPreviewButton")
+    add_condition = window.findChild(QPushButton, "analysisSuitePoiAddConditionButton")
+    condition_table = window.findChild(QTableWidget, "analysisSuitePoiConditionTable")
+    poi_text = window.findChild(QPlainTextEdit, "analysisSuitePoiReportText")
+    family_text = window.findChild(QPlainTextEdit, "analysisSuitePoiFamilyReportText")
+    assert catalog is not None
+    assert source is not None
+    assert poi_button is not None
+    assert family_button is not None
+    assert add_condition is not None
+    assert condition_table is not None
+    assert poi_text is not None
+    assert family_text is not None
+
+    source.setEditText("peak_marker")
+    poi_button.click()
+    family_button.click()
+    assert "Occurrence count: 3" in poi_text.toPlainText()
+    assert "Matched count: 2" in family_text.toPlainText()
+
+    source.setEditText("other_marker")
+    assert "POI definition changed" in poi_text.toPlainText()
+    assert "POI definition changed" in family_text.toPlainText()
+
+    poi_button.click()
+    family_button.click()
+    add_condition.click()
+    condition_table.item(0, 1).setText("rsi_14")
+    assert "Family definition changed" in family_text.toPlainText()
+
+    catalog.selectRow(1)
+    assert "Select a previewable Analysis Database" in poi_text.toPlainText()
+    assert "Preview POI occurrences before family membership" in family_text.toPlainText()
+
+
 def test_analysis_suite_window_diagnostic_requires_current_target_and_feature_reports(tmp_path: Path) -> None:
     _qapp()
     target_service = _FakeTargetPlanner(_target_preview_report())
@@ -1099,6 +1484,10 @@ def test_analysis_suite_window_allowed_actions_are_read_only(tmp_path: Path) -> 
         "Create Analysis Run",
         "Train Model",
         "Generate Signal",
+        "Genome Path",
+        "Category Builder",
+        "White-Box Discovery",
+        "Backtest",
     }
     assert buttons.isdisjoint(forbidden)
 
@@ -1162,6 +1551,9 @@ def test_analysis_suite_window_static_boundaries() -> None:
         "AnalysisProjectStore",
         "AnalysisRunStore",
         "AnalysisReportStore",
+        "AnalysisSuiteGenomePathBuilder",
+        "Genome Path Preview",
+        "Category Builder",
         "materialize_database",
         "rebuild_database",
         "replace_database_features",

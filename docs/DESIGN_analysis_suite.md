@@ -1,7 +1,7 @@
 # Analysis Suite Design
 
-Version: v0.11
-Status: AS8-AS10 accepted backend MVPs, AS11-AUDIT architecture, and accepted AS-GUI-1/2/3 workflows
+Version: v0.12
+Status: AS8-AS11 accepted backend MVPs, AS11-AUDIT architecture, and accepted AS-GUI-1/2/3 workflows
 Date: 2026-05-30
 
 ## Purpose
@@ -20,13 +20,15 @@ preview workflow. AS-GUI-3 implements the accepted genome/path preview
 workflow. AS10-AUDIT defines the first architecture for POI family comparison
 and white-box rule discovery. AS10 implements the first backend-only
 white-box rule testing layer within that boundary. AS11-AUDIT defines bounded
-white-box rule candidate discovery and mining guardrails before candidate
-generation is implemented.
+white-box rule candidate discovery and mining guardrails. AS11 implements the
+first backend-only bounded single-predicate candidate scanner within that
+boundary.
 
-AS9, AS10, AS-GUI-1, AS-GUI-2, AS-GUI-3, AS10-AUDIT, and AS11-AUDIT do not
-add persistence, implemented white-box rule discovery, candidate mining,
-backtesting, model training, signals, neural agents, Decisor logic, artifact
-calculation, recipe execution, Analysis Database mutation, or OHLCV repair.
+AS9, AS10, AS11, AS-GUI-1, AS-GUI-2, AS-GUI-3, AS10-AUDIT, and AS11-AUDIT do
+not add persistence, implemented broad white-box discovery, conjunction
+expansion, broad candidate mining, backtesting, model training, signals,
+neural agents, Decisor logic, artifact calculation, recipe execution, Analysis
+Database mutation, or OHLCV repair.
 
 ## Current Foundation
 
@@ -75,6 +77,11 @@ The accepted Analysis Suite foundation is read-only:
   including predicate vocabulary, single-predicate scans, cautious conjunction
   expansion, ranking, pruning, multiple-testing warnings, temporal stability,
   family separation, and future backend MVP boundaries.
+- AS11: `AnalysisSuiteRuleCandidateScanner` builds bounded single-predicate
+  candidate vocabularies from supplied AS9 genome paths in AS10 comparison
+  cohorts, reuses AS10 rule testing for metrics, ranks and filters candidates,
+  and reports sample-limit, multiple-testing, and unknown-stability warnings
+  without persistence or GUI exposure.
 
 AS8 and AS9 consume AS1 readiness or optional AS7 diagnostic context. AS10 can
 consume optional AS7 diagnostic context and supplied AS9 path reports. These
@@ -82,8 +89,7 @@ backend services remain read-only and non-persistent. AS-GUI-2 exposes AS8
 reports in the GUI without moving AS8 policy, dataframe reads, or persistence
 into the GUI. AS-GUI-3 exposes AS9 reports in the GUI without moving AS9
 policy, dataframe reads, genome encoding, path construction, or persistence
-into the GUI. AS10 is not exposed in the GUI yet. AS11 is design-only and has
-no backend or GUI exposure yet.
+into the GUI. AS10 and AS11 are not exposed in the GUI yet.
 
 ## Manifesto Direction
 
@@ -605,12 +611,13 @@ AS10:
   support, precision, recall, lift, false-positive rate, or rule stability as
   rule-testing outputs.
 
-AS11-AUDIT:
+AS11:
 
 - AS11-AUDIT owns bounded candidate discovery architecture and mining
   guardrails.
-- Future AS11 backend work should generate candidate rules and reuse AS10
-  metrics rather than duplicating rule-test evaluation.
+- AS11 owns bounded single-predicate candidate vocabulary generation and scan
+  orchestration.
+- AS11 reuses AS10 metrics rather than duplicating rule-test evaluation.
 
 ## Accepted AS8 Backend MVP
 
@@ -1206,10 +1213,10 @@ membership label.
 
 ### Rule Candidate
 
-A rule candidate is a rule under test before acceptance. AS10 now represents
-tested explicit rules and their diagnostics; future AS11 candidate-discovery
-models should add enough context to audit what was proposed, tested, and why it
-passed or failed. Conceptual fields:
+A rule candidate is a rule under test before acceptance. AS10 represents tested
+explicit rules and their diagnostics. AS11 now represents proposed
+single-predicate candidates and adds enough context to audit what was proposed,
+tested, filtered, ranked, and why it passed or failed. Conceptual fields:
 
 - `rule_key`.
 - predicates or components used by the rule.
@@ -1326,14 +1333,15 @@ should receive stability warnings even if aggregate precision is high.
 ### Rule Testing Versus Rule Discovery
 
 Rule testing means the user or caller supplies explicit predicates, and AS10
-reports metrics against a comparison set. Rule discovery means future AS11
+reports metrics against a comparison set. Rule discovery means AS11 or later
 services propose candidate predicates from a bounded search.
 
 The accepted AS10 MVP starts with explicit rule testing only. It does not
 perform single-predicate candidate scans or broader candidate mining.
-Discovery should wait for a later audit because unconstrained conjunction
-search can overfit quickly. Future candidate generation should use minimum
-support first, small conjunction limits, explicit predicate vocabulary from
+AS11 now implements bounded single-predicate candidate scans. Broader
+discovery should wait for later audit because unconstrained conjunction search
+can overfit quickly. Future candidate generation should use minimum support
+first, small conjunction limits, explicit predicate vocabulary from
 AS9 genome components and AS8 family context, temporal split validation, and
 bounded output.
 
@@ -1438,16 +1446,16 @@ path previews, AS10 reports `evaluated_sample_limited`, `input_path_count`,
 `evaluated_path_count`, requested sample limit, and effective sample limit so
 preview metrics are not mistaken for full-cohort claims.
 
-AS10 does not implement broad rule discovery, candidate mining, conjunction
+AS10 does not implement broad rule discovery, candidate scanning, conjunction
 mining, rule stores, GUI controls, persistence, model training, signal
 generation, backtesting, PnL/profit validation, order generation, trading
 execution, neural agents, RL Decisor logic, artifact calculation, recipe
 execution, Analysis Database mutation, OHLCV repair, Data Manager mutation,
 direct `dataframe.csv` reads, or direct `manifest.json` policy parsing.
 
-Rule candidate discovery remains future AS11-AUDIT scope so bounded candidate
-generation, pruning, ranking, false-discovery controls, and temporal
-validation can be designed explicitly before implementation.
+AS11 now owns bounded single-predicate candidate scanning. Broader candidate
+discovery, conjunction expansion, and temporal validation remain later
+architecture and implementation scope.
 
 ### Future GUI Implications
 
@@ -1535,8 +1543,8 @@ The first discovery layer should scan one predicate at a time:
 5. Rank the remaining candidates with support-first diagnostic scoring.
 6. Return bounded JSON-safe candidate summaries and AS10 metric summaries.
 
-This should be the AS11 backend MVP. It reuses AS10 for metrics and avoids
-introducing a second owner for rule evaluation.
+This is the accepted AS11 backend MVP shape. The implementation reuses AS10
+for metrics and avoids introducing a second owner for rule evaluation.
 
 ### Conjunction Expansion
 
@@ -1580,22 +1588,23 @@ or trading quality.
 
 ### Candidate Pruning
 
-AS11 candidate pruning should remove or block:
+AS11 candidate pruning removes or blocks MVP candidates for:
 
 - candidates below configured minimum support;
-- candidates with zero positive matches;
-- candidates with excessive false positives when a threshold is configured;
-- candidates that duplicate a simpler candidate;
-- conjunctions that do not improve over parent predicates;
-- unstable candidates when stability validation exists;
+- candidates below configured minimum positive matches;
+- candidates below configured precision or lift thresholds when those
+  thresholds are supplied;
 - predicates using blocked, leaky, target-only, or future-derived components;
 - predicates with positive path offsets;
 - candidates built from sample-limited data without explicit warnings.
 
+Duplicate-candidate pruning, false-positive thresholds, conjunction parent
+improvement checks, and stability-based pruning remain future work.
+
 Pruning decisions must be reported with candidate counts and reasons:
 `candidate_count_scanned`, `candidate_count_filtered`,
-`candidate_count_returned`, and filter summaries should be part of the future
-report contract.
+`candidate_count_returned`, and filter summaries are part of the AS11 report
+contract.
 
 ### Multiple-Testing And False Discovery Risk
 
@@ -1627,10 +1636,10 @@ mixing. Future validation modes may include:
 - market-regime or volatility segments when those labels exist;
 - symbol/timeframe splits as later cross-dataset scope.
 
-AS11 MVP may report stability as `unknown` if split validation is not yet
-implemented, but the architecture should reserve fields for split metrics.
-Future reports should include per-split support, precision, recall, lift,
-baseline positive rate, and degradation warnings.
+AS11 MVP reports stability as `unknown` because split validation is not yet
+implemented, but the architecture reserves fields for split metrics. Future
+reports should include per-split support, precision, recall, lift, baseline
+positive rate, and degradation warnings.
 
 Rule stability statuses:
 
@@ -1686,9 +1695,9 @@ reuse AS10 evaluation rather than duplicating support, precision, recall, lift,
 false-positive, false-negative, or sample-limit logic. AS11 candidate output
 should include AS10 metric summaries.
 
-### Future AS11 Backend MVP Recommendation
+### Accepted AS11 Backend Behavior
 
-Recommended first implementation:
+AS11 implements the first conservative backend candidate scan layer:
 
 AS11 - Bounded Rule Candidate Scan Backend
 
@@ -1699,62 +1708,77 @@ AS11 - Bounded Rule Candidate Scan Backend
 - consumes AS10 comparison set definitions and AS9 genome path reports or AS10
   cohorts;
 - uses `AnalysisSuiteWhiteBoxRuleTester` for rule evaluation and metrics;
-- builds a bounded predicate vocabulary;
+- builds a bounded predicate vocabulary with
+  `AnalysisSuitePredicateVocabularyItem` and
+  `AnalysisSuitePredicateVocabularyReport`;
 - scans single-predicate candidates only;
-- applies minimum support, sample-size, sample-limit, leakage, and
-  multiple-testing guardrails;
-- ranks returned candidates with support-first diagnostic scoring;
-- returns bounded JSON-safe reports with default 100 and max 500 candidates;
+- represents returned candidates with `AnalysisSuiteRuleCandidate`;
+- accepts `AnalysisSuiteRuleCandidateScanConfig`;
+- returns `AnalysisSuiteRuleCandidateScanReport`;
+- applies blockers, `min_total_support`, `min_positive_matches`, optional
+  `min_precision`, optional `min_lift`, sample-size, sample-limit, leakage,
+  and multiple-testing guardrails;
+- ranks returned candidates with diagnostic lift/precision/support-weight
+  scoring;
+- returns bounded JSON-safe reports with default `100` and max `500`
+  candidates;
 - reports `candidate_count_scanned`, `candidate_count_filtered`,
   `candidate_count_returned`, support thresholds, sample-limit warnings, and
   stability status;
 - reports stability as `unknown` unless temporal split validation is actually
   implemented.
 
-Limited conjunction expansion should wait for a later patch or be explicitly
-disabled by default. If later implemented, it should begin with conjunction
-size `2`, top-parent expansion only, strict support retention, and explicit
-parent-improvement checks.
+Predicate vocabulary generation uses observed AS9 genome path component values
+inside AS10 comparison cohorts. Symbolic, boolean, categorical, and
+static-bin-like values become `equals` predicates by default. Configured scans
+may include `not_equals`, `is_null`, and `not_null`. Numeric threshold mining is
+skipped by default when `numeric_threshold_policy = "none"`; AS11 does not fit
+quantiles or adaptive thresholds. Positive path offsets are blocked to prevent
+future-snapshot leakage. Negative offsets are used only when explicitly
+enabled. Components marked leaky or future-derived by metadata are skipped.
+
+Each vocabulary item becomes one AS10 `AnalysisSuiteWhiteBoxRuleDefinition`.
+AS11 calls `AnalysisSuiteWhiteBoxRuleTester.test_rule(...)` and consumes AS10
+metric summaries; it does not duplicate support, precision, recall, lift,
+false-positive, false-negative, sample-limit, or diagnostic-gating formulas.
+Candidate scores are diagnostic ranking aids only. They are not alpha,
+profitability, trading performance, or signals.
+
+AS11 reports sample-limited input honestly, warns that no multiple-testing
+correction is applied, and reports `stability_status = "unknown"` because
+temporal stability validation is not performed in AS11 MVP. Temporal stability,
+holdout validation, rule survival, cautious conjunction expansion, broad
+candidate mining, and AS10/AS11 GUI controls remain future work.
 
 ### Future GUI Implications
 
-No AS11 GUI is part of AS11-AUDIT. A future GUI should expose candidate scan
-reports only after the backend contract is stable and manually reviewed. The
-GUI should collect scan configuration, render backend candidate reports, and
-preserve backend ownership of predicate vocabulary, metrics, ranking, pruning,
-and warnings. The GUI must not generate candidates locally, compute metrics,
-infer feature truth from raw CSV headers, persist candidates, create stores,
-produce signals, or run backtests.
+No AS11 GUI is part of the accepted AS11 backend patch. A future GUI should
+expose candidate scan reports only after the backend contract is stable and
+manually reviewed. The GUI should collect scan configuration, render backend
+candidate reports, and preserve backend ownership of predicate vocabulary,
+metrics, ranking, pruning, and warnings. The GUI must not generate candidates
+locally, compute metrics, infer feature truth from raw CSV headers, persist
+candidates, create stores, produce signals, or run backtests.
 
-### Proposed Patch Sequence After AS11-AUDIT
+### Proposed Patch Sequence After AS11
 
 Recommended sequence:
 
-1. AS11 - Bounded Rule Candidate Scan Backend.
-   - Backend-only, read-only, no persistence, no GUI.
-   - Consume AS10 comparison sets and AS9 genome path reports/cohorts.
-   - Reuse AS10 rule testing for metrics.
-   - Build a bounded predicate vocabulary and scan single-predicate
-     candidates.
-   - Report ranked candidates, support thresholds, sample-limit context,
-     multiple-testing warnings, and stability status.
-   - Do not implement broad conjunction mining.
-2. AS11D - Docs sync.
+1. AS11D - Docs sync.
    - Document accepted AS11 backend behavior after implementation.
-3. AS12-AUDIT - Candidate Validation / Temporal Stability Architecture.
+2. AS12-AUDIT - Candidate Validation / Temporal Stability Architecture.
    - Define chronological split validation, holdout validation, rule survival,
      stability scoring, degradation warnings, and criteria for any later
      conjunction expansion.
 
 ## Out-Of-Scope Boundaries
 
-AS8, AS9, AS10, AS-GUI-1, AS-GUI-2, AS-GUI-3, AS10-AUDIT, and AS11-AUDIT do
+AS8, AS9, AS10, AS11, AS-GUI-1, AS-GUI-2, AS-GUI-3, AS10-AUDIT, and AS11-AUDIT do
 not add:
 
 - GUI category builder.
 - AS10 GUI controls.
 - AS11 GUI controls.
-- AS11 backend implementation.
 - Persistent POI family store.
 - POI definition or POI family definition persistence.
 - Persistent genome definition or genome path persistence.
@@ -1769,9 +1793,13 @@ not add:
 - Full Variation Analyzer implementation.
 - Automatic rule discovery.
 - Implemented white-box rule discovery.
-- Candidate mining.
-- Bounded candidate scan backend.
+- Broad candidate mining.
 - Conjunction mining.
+- Conjunction expansion.
+- Itemset mining.
+- Recursive search.
+- Genetic programming.
+- Temporal stability validation.
 - Backtesting engine.
 - PnL or profit validation.
 - Order generation.
@@ -1823,7 +1851,8 @@ Recommended sequence:
     - Define bounded candidate generation and overfitting guardrails before
       deeper rule mining.
 11. AS11 - Bounded Rule Candidate Scan Backend.
-    - Future backend-only, read-only single-predicate candidate scan.
+    - Implemented as the accepted backend-only, read-only single-predicate
+      candidate scan.
 12. AS11D - Docs sync.
     - Document accepted AS11 backend behavior after implementation.
 13. AS12-AUDIT - Candidate Validation / Temporal Stability Architecture.

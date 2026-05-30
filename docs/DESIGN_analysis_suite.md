@@ -1,7 +1,7 @@
 # Analysis Suite Design
 
-Version: v0.5
-Status: AS8 and AS9 accepted backend MVPs plus AS-GUI-AUDIT GUI exposure boundary
+Version: v0.6
+Status: AS8 and AS9 accepted backend MVPs plus accepted AS-GUI-1 setup workflow
 Date: 2026-05-30
 
 ## Purpose
@@ -13,13 +13,13 @@ paths.
 AS8-AUDIT established the POI/family/road/genome design boundary. AS8
 implements the first backend POI/family planner within that boundary. AS9
 implements the first backend genome/path preview builder within the AS9-AUDIT
-encoding boundary. AS-GUI-AUDIT defines the first safe Analysis Suite GUI
-exposure path without implementing GUI behavior.
+encoding boundary. AS-GUI-AUDIT defined the first safe Analysis Suite GUI
+exposure path, and AS-GUI-1 implements the accepted target, feature-set, and
+diagnostic preview workflow.
 
-AS9 and AS-GUI-AUDIT do not add GUI controls, persistence, white-box rule
-discovery, backtesting, model training, signals, neural agents, Decisor logic,
-artifact calculation, recipe execution, Analysis Database mutation, or OHLCV
-repair.
+AS9 and AS-GUI-1 do not add persistence, white-box rule discovery, backtesting,
+model training, signals, neural agents, Decisor logic, artifact calculation,
+recipe execution, Analysis Database mutation, or OHLCV repair.
 
 ## Current Foundation
 
@@ -44,6 +44,9 @@ The accepted Analysis Suite foundation is read-only:
   CSV headers.
 - AS7: `AnalysisSuiteDiagnosticReportService` composes AS1, AS5, and AS6
   reports into JSON-safe pre-analysis coherence reports.
+- AS-GUI-1: `AnalysisSuiteWindow` exposes AS5 target preview, AS6 feature
+  candidate/selection preview, and AS7 diagnostic report preview as read-only,
+  non-persistent tabs.
 - AS8: `AnalysisSuitePoiFamilyPlanner` previews POI occurrences and POI
   family membership from prepared Analysis Database columns with bounded
   JSON-safe reports.
@@ -753,11 +756,11 @@ Postponed behavior:
 
 ## AS-GUI-AUDIT - Analysis Suite GUI Functionality Audit
 
-AS-GUI-AUDIT is a design-only boundary for exposing accepted backend planners
-in `AnalysisSuiteWindow`. It does not add widgets, dialogs, actions, service
-wiring, persistence, stores, or runtime behavior.
+AS-GUI-AUDIT was the design-only boundary for exposing accepted backend
+planners in `AnalysisSuiteWindow`. It did not add widgets, dialogs, actions,
+service wiring, persistence, stores, or runtime behavior.
 
-Current `AnalysisSuiteWindow` baseline:
+Pre-AS-GUI-1 `AnalysisSuiteWindow` baseline found by the audit:
 
 - Opens from `Analysis -> Analysis Suite` through `WindowManager`.
 - Displays the AS1 readiness catalog in a read-only table.
@@ -770,27 +773,26 @@ Current `AnalysisSuiteWindow` baseline:
 - Offers `Refresh Catalog` and `Close`.
 - Constructs AS1/AS3 backend services from the configured historical root, with
   test-injected service protocols available.
-- Does not load `dataframe.csv` directly, inspect manifests for policy, call
+- Did not load `dataframe.csv` directly, inspect manifests for policy, call
   `AnalysisDatabaseStore.load_dataframe(...)`, mutate Data Manager objects, or
-  call AS5-AS9 services.
+  call AS5-AS9 services before AS-GUI-1.
 
-Backend services available for future GUI exposure:
+Backend services reviewed for GUI exposure:
 
-- AS5 `AnalysisSuiteTargetPlanner` is ready for read-only target preview
-  controls. The GUI would collect target family, horizon, thresholds, and
-  preview limit, then display `AnalysisSuiteTargetPreviewReport` fields. The
-  GUI must not persist target definitions or labels, and must not calculate
-  labels itself.
-- AS6 `AnalysisSuiteFeatureSetPlanner` is ready for read-only candidate and
+- AS5 `AnalysisSuiteTargetPlanner` is safe for read-only target preview
+  controls. The GUI collects target family, horizon, and thresholds, then
+  displays `AnalysisSuiteTargetPreviewReport` fields. The GUI must not persist
+  target definitions or labels, and must not calculate labels itself.
+- AS6 `AnalysisSuiteFeatureSetPlanner` is safe for read-only candidate and
   feature-selection preview after a selected database and target context exist.
-  The GUI would collect ordered selected columns from service-produced
-  candidates, then display accepted/rejected features, group summaries, leakage
-  summaries, blockers, warnings, and errors. The GUI must not infer eligibility
-  from raw CSV headers or duplicate leakage policy.
-- AS7 `AnalysisSuiteDiagnosticReportService` is ready for read-only diagnostic
-  preview once AS1, AS5, and AS6 reports are available. The GUI would display
-  final status, label availability, target statistics or class distribution,
-  feature missingness/dtype diagnostics, leakage blockers, and combined
+  The GUI collects selected columns from service-produced candidates, then
+  displays accepted/rejected features, group summaries, leakage summaries,
+  blockers, warnings, and errors. The GUI must not infer eligibility from raw
+  CSV headers or duplicate leakage policy.
+- AS7 `AnalysisSuiteDiagnosticReportService` is safe for read-only diagnostic
+  preview once AS1, AS5, and AS6 reports are available. The GUI displays final
+  status, label availability, target statistics or class distribution, feature
+  missingness/dtype diagnostics, leakage blockers, and combined
   blockers/warnings/errors. The GUI must not write reports or create project,
   run, or report stores.
 - AS8 `AnalysisSuitePoiFamilyPlanner` is backend-ready but should wait for a
@@ -803,24 +805,70 @@ Backend services available for future GUI exposure:
   current/past-only wording. It must not be exposed before AS8 GUI concepts are
   usable.
 
-Recommended first GUI phase:
+## Accepted AS-GUI-1 - Target / Feature / Diagnostic Preview UI
 
-AS-GUI-1 - Target / Feature / Diagnostic Preview UI.
+AS-GUI-1 implements the first interactive Analysis Suite setup workflow in
+`AnalysisSuiteWindow`. It preserves the AS1 readiness catalog, selected
+readiness details, AS3 bounded dataframe preview behavior, `Open Data Manager`
+routing, `Refresh Catalog`, and `Close`.
 
-AS-GUI-1 should expose AS5, AS6, and AS7 together as one read-only setup
-workflow. Target preview alone is useful but incomplete, and diagnostic
-preview cannot be coherent without both target and feature-set reports. AS8 and
-AS9 controls should remain postponed until users can inspect the target,
-feature, and diagnostic setup reliably.
+The accepted tab area contains:
+
+- `Data Preview`: existing AS3 bounded Head/Tail dataframe preview.
+- `Target Preview`: AS5 target preview controls and report rendering.
+- `Feature Set`: AS6 feature candidate listing, selected-feature validation,
+  and report rendering.
+- `Diagnostic Report`: AS7 diagnostic report rendering from current AS1, AS5,
+  and AS6 report objects.
+
+The `Target Preview` tab lets the user configure:
+
+- target family: future return regression or future direction classification;
+- `horizon_bars`;
+- up/down thresholds for direction classification.
+
+It calls `AnalysisSuiteTargetPlanner` and displays label availability, target
+statistics or class distribution, leakage metadata, blockers, warnings, and
+errors. Target definitions remain in memory and are not persisted.
+
+The `Feature Set` tab lists AS6 feature candidates, including status, group,
+reason, and source metadata where available. The user may select candidate
+features for validation, use `Select All Eligible`, clear selection, and
+preview the feature set. `Select All Eligible` selects only candidates reported
+as eligible by the backend. The tab calls `AnalysisSuiteFeatureSetPlanner` and
+displays selected/rejected features, group summaries, leakage summaries,
+blockers, warnings, and errors. Feature sets remain in memory and are not
+persisted.
+
+The `Diagnostic Report` tab requires a selected database, a current target
+preview, and a current feature-set preview. It calls
+`AnalysisSuiteDiagnosticReportService` and displays final `ready`, `warning`,
+`blocked`, or `error` status with dataset, target, feature, leakage, label,
+missingness, dtype, blocker, warning, and error diagnostics. Diagnostic reports
+remain in memory and are not persisted.
+
+AS-GUI-1 clears stale state:
+
+- selecting a different Analysis Database clears target, feature, and
+  diagnostic previews;
+- changing target settings clears downstream feature and diagnostic state;
+- changing feature selection clears diagnostic state.
+
+Backend services remain the policy owners. The GUI collects intent and renders
+reports, while AS5/AS6/AS7 own target generation, feature eligibility, leakage
+checks, dataframe reads, diagnostic composition, missingness/dtype checks,
+blockers, warnings, and errors. The GUI does not read `dataframe.csv` directly,
+parse `manifest.json` directly for readiness/feature/leakage policy, infer raw
+CSV header feature truth, or duplicate backend leakage policy.
+
+Manual GUI exploration after AS-GUI-1 found the workflow acceptable for
+continued work. Layout and small usability polish remain future work; the
+workflow UX is not treated as final.
 
 Recommended staging:
 
-1. AS-GUI-1 - Target / Feature / Diagnostic Preview UI.
-   - Add AS5 target definition controls.
-   - Add AS6 feature candidate and selected-feature preview.
-   - Add AS7 diagnostic report preview.
-   - Preserve current AS1 catalog and AS3 dataframe preview behavior.
-   - Keep all definitions and reports in memory.
+1. AS-GUI-1D - Target / Feature / Diagnostic Preview UI docs sync.
+   - Document accepted AS-GUI-1 behavior and manual smoke-check status.
 2. AS-GUI-2 - POI / Family Preview UI.
    - Expose AS8 POI definitions, simple condition rules, occurrence previews,
      and family membership previews.
@@ -837,23 +885,22 @@ Recommended staging:
 Suggested layout direction:
 
 - Preserve the current read-only catalog as the left-side selection anchor.
-- Keep readiness details and bounded dataframe preview available as the
-  existing baseline.
-- Add a tabbed setup area for AS-GUI-1 rather than several modal dialogs:
-  `Target Preview`, `Feature Set`, and `Diagnostic Report`.
+- Keep readiness details and bounded dataframe preview available.
+- Use the accepted tabbed setup area for `Data Preview`, `Target Preview`,
+  `Feature Set`, and `Diagnostic Report`.
 - Reset target, feature, and diagnostic preview state when the selected
   database changes.
-- Keep AS8/AS9 tabs absent in AS-GUI-1. Later phases may add `POI / Family
+- Keep AS8/AS9 tabs absent after AS-GUI-1. Later phases may add `POI / Family
   Preview` and `Genome Path Preview` tabs after their interaction contracts are
   stable.
 
 Service orchestration boundary:
 
-- Future GUI code should call backend services through narrow GUI-owned
-  orchestration methods or injected service protocols, matching the current
-  AS1/AS3 testable pattern.
-- New CoreBridge APIs are not needed for AS-GUI-1 unless a later lifecycle
-  audit requires centralized service registration.
+- GUI code calls backend services through narrow GUI-owned orchestration
+  methods and injected service protocols, matching the AS1/AS3 testable
+  pattern.
+- New CoreBridge APIs were not added by AS-GUI-1. A later lifecycle audit may
+  revisit centralized service registration if needed.
 - GUI code may collect user intent and render report objects, but backend
   services must own target generation, feature eligibility, leakage policy,
   diagnostic coherence, dataframe reads, and JSON-safe report construction.
@@ -861,7 +908,7 @@ Service orchestration boundary:
   materialization, artifact calculation, recipe execution, or OHLCV repair
   ownership.
 
-AS-GUI-1 test requirements:
+AS-GUI-1 test coverage requirements:
 
 - `AnalysisSuiteWindow` exposes target preview controls only after a database
   selection.
@@ -880,7 +927,7 @@ AS-GUI-1 test requirements:
   calls, manifest/dataframe writes, Data Manager mutation, stores, model
   training, signal generation, backtesting, or GUI-owned leakage policy.
 
-AS-GUI-1 must not add:
+AS-GUI-1 does not add:
 
 - Persistence for targets, labels, feature sets, diagnostic reports, POI
   definitions, POI families, genome definitions, or genome paths.
@@ -933,22 +980,23 @@ AS8 and AS9 do not add:
 
 Recommended sequence:
 
-1. AS-GUI-1 - Target / Feature / Diagnostic Preview UI.
-   - Expose AS5 target preview, AS6 feature candidate/selection preview, and
-     AS7 diagnostic report preview in `AnalysisSuiteWindow`.
-   - Keep the patch read-only, non-persistent, and limited to backend report
-     display.
-2. AS-GUI-2 - POI / Family Preview UI.
+1. AS-GUI-1D - Target / Feature / Diagnostic Preview UI docs sync.
+   - Document accepted AS-GUI-1 behavior and preserve no-persistence/no-mutation
+     boundaries.
+2. Optional AS-GUI-POLISH-AUDIT.
+   - Review layout and small usability issues found during manual exploration
+     without changing backend contracts.
+3. AS-GUI-2 - POI / Family Preview UI.
    - Expose AS8 POI/family definitions and bounded occurrence/membership
      previews after AS-GUI-1 is stable.
-3. AS-GUI-3 - Genome Path Preview UI.
+4. AS-GUI-3 - Genome Path Preview UI.
    - Expose AS9 genome encoding definitions and bounded row or AS8-family
      anchored path previews after AS8 GUI concepts are stable.
-4. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
+5. AS10-AUDIT - POI Family Comparison and White-Box Rule Discovery
    Architecture.
    - Define comparison sets, support, precision, recall, lift,
      false-positive rate, stability, and family separation.
-5. Future AS10 implementation and docs sync after AS10 architecture is
+6. Future AS10 implementation and docs sync after AS10 architecture is
    accepted.
 
 Research Suite validation integration, neural refinement, and Decisor logic

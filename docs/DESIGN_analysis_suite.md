@@ -1,7 +1,7 @@
 # Analysis Suite Design
 
-Version: v0.9
-Status: AS8 and AS9 accepted backend MVPs, accepted AS-GUI-1/2/3 workflows, and AS10-AUDIT architecture
+Version: v0.10
+Status: AS8-AS10 accepted backend MVPs and accepted AS-GUI-1/2/3 workflows
 Date: 2026-05-30
 
 ## Purpose
@@ -18,12 +18,13 @@ exposure path. AS-GUI-1 implements the accepted target, feature-set, and
 diagnostic preview workflow, and AS-GUI-2 implements the accepted POI/family
 preview workflow. AS-GUI-3 implements the accepted genome/path preview
 workflow. AS10-AUDIT defines the first architecture for POI family comparison
-and white-box rule discovery.
+and white-box rule discovery. AS10 implements the first backend-only
+white-box rule testing layer within that boundary.
 
-AS9, AS-GUI-1, AS-GUI-2, AS-GUI-3, and AS10-AUDIT do not add persistence,
-implemented white-box rule discovery, backtesting, model training, signals,
-neural agents, Decisor logic, artifact calculation, recipe execution,
-Analysis Database mutation, or OHLCV repair.
+AS9, AS10, AS-GUI-1, AS-GUI-2, AS-GUI-3, and AS10-AUDIT do not add
+persistence, implemented white-box rule discovery, candidate mining,
+backtesting, model training, signals, neural agents, Decisor logic, artifact
+calculation, recipe execution, Analysis Database mutation, or OHLCV repair.
 
 ## Current Foundation
 
@@ -64,14 +65,18 @@ The accepted Analysis Suite foundation is read-only:
   current/past-only encodings.
 - AS10-AUDIT: defines POI family comparison, white-box rule candidates,
   comparison sets, road/outcome/false-signal analysis concepts, metrics, and
-  guardrails for a future backend-only AS10 MVP.
+  guardrails for the backend-only AS10 rule-testing MVP.
+- AS10: `AnalysisSuiteWhiteBoxRuleTester` tests explicit white-box rules
+  against supplied AS9 genome-path comparison cohorts and reports bounded
+  JSON-safe diagnostic metrics without persistence or GUI exposure.
 
-AS8 and AS9 consume AS1 readiness or optional AS7 diagnostic context. Their
+AS8 and AS9 consume AS1 readiness or optional AS7 diagnostic context. AS10 can
+consume optional AS7 diagnostic context and supplied AS9 path reports. These
 backend services remain read-only and non-persistent. AS-GUI-2 exposes AS8
 reports in the GUI without moving AS8 policy, dataframe reads, or persistence
 into the GUI. AS-GUI-3 exposes AS9 reports in the GUI without moving AS9
 policy, dataframe reads, genome encoding, path construction, or persistence
-into the GUI.
+into the GUI. AS10 is not exposed in the GUI yet.
 
 ## Manifesto Direction
 
@@ -587,10 +592,12 @@ AS8:
 
 AS10:
 
-- Future AS10 should own POI-family comparison and white-box rule discovery.
+- AS10 owns explicit white-box rule testing over supplied comparison cohorts
+  and AS9 genome paths.
+- Future AS11 work should own broad candidate discovery and mining guardrails.
 - AS9 builds encoded genome and path representations only. It must not compute
   support, precision, recall, lift, false-positive rate, or rule stability as
-  discovery outputs.
+  rule-testing outputs.
 
 ## Accepted AS8 Backend MVP
 
@@ -1144,21 +1151,26 @@ Recommended staging after AS-GUI-3:
    - Implemented by this design section as the white-box comparison
      architecture boundary.
 3. AS10 - White-Box Rule Testing Backend.
-   - Future backend-only, read-only MVP after AS10-AUDIT is accepted.
-4. Optional GUI polish audit if manual AS-GUI-3 exploration finds usability
+   - Implemented backend-only, read-only rule-testing MVP.
+4. AS10D - Docs sync.
+   - Document accepted AS10 backend behavior and preserve no-GUI,
+     no-persistence, no-discovery, and no-mutation boundaries.
+5. AS11-AUDIT - White-Box Rule Discovery / Candidate Mining Architecture.
+   - Future design-only guardrails before broad candidate generation.
+6. Optional GUI polish audit if manual AS-GUI-3 exploration finds usability
    issues.
 
 ## AS10-AUDIT - POI Family Comparison And White-Box Rule Discovery Architecture
 
-AS10-AUDIT defines the first white-box analysis architecture after the
+AS10-AUDIT defined the first white-box analysis architecture after the
 accepted AS1-AS9 and AS-GUI-1/2/3 foundation. AS8 identifies POI/family
 occurrences. AS9 builds genome snapshots and paths around rows or matched
-POI/family anchors. AS10 defines how later services should compare those
-cohorts and evaluate explicit, human-readable rules.
+POI/family anchors. AS10 now implements the first backend service for
+comparing supplied cohorts and evaluating explicit, human-readable rules.
 
-AS10-AUDIT is design-only. It does not implement a backend service, GUI
-controls, persistence, stores, model training, signal generation, backtesting,
-PnL validation, order generation, trading execution, neural agents, RL Decisor
+AS10 remains backend-only and read-only. It does not add GUI controls,
+persistence, stores, model training, signal generation, backtesting, PnL
+validation, order generation, trading execution, neural agents, RL Decisor
 logic, artifact calculation, recipe execution, Analysis Database mutation, or
 OHLCV repair.
 
@@ -1180,9 +1192,10 @@ membership label.
 
 ### Rule Candidate
 
-A rule candidate is a rule under test before acceptance. Future AS10 models
-should represent candidates with enough context to audit what was tested and
-why it passed or failed. Conceptual fields:
+A rule candidate is a rule under test before acceptance. AS10 now represents
+tested explicit rules and their diagnostics; future AS11 candidate-discovery
+models should add enough context to audit what was proposed, tested, and why it
+passed or failed. Conceptual fields:
 
 - `rule_key`.
 - predicates or components used by the rule.
@@ -1302,15 +1315,16 @@ Rule testing means the user or caller supplies explicit predicates, and AS10
 reports metrics against a comparison set. Rule discovery means AS10 proposes
 candidate predicates from a bounded search.
 
-The recommended MVP starts with rule testing and an optional single-predicate
-candidate scan. Discovery beyond single predicates should wait for a later
-audit because unconstrained conjunction search can overfit quickly. Future
-candidate generation should use minimum support first, small conjunction
-limits, explicit predicate vocabulary from AS9 genome components and AS8
-family context, temporal split validation, and bounded output.
+The accepted AS10 MVP starts with explicit rule testing only. It does not
+perform single-predicate candidate scans or broader candidate mining.
+Discovery should wait for a later audit because unconstrained conjunction
+search can overfit quickly. Future candidate generation should use minimum
+support first, small conjunction limits, explicit predicate vocabulary from
+AS9 genome components and AS8 family context, temporal split validation, and
+bounded output.
 
-AS10 discovery is not model training, neural refinement, RL Decisor logic,
-signal generation, or trading execution.
+Future white-box discovery is not model training, neural refinement, RL Decisor
+logic, signal generation, or trading execution.
 
 ### Relationship To AS5, AS7, AS8, And AS9
 
@@ -1319,10 +1333,9 @@ AS5-style future-return or direction logic, but AS10 labels are event-centered
 and comparison-set-aware. Future-dependent AS10 outcome outputs must never
 become AS9 genome components.
 
-AS7 remains the setup coherence checkpoint. Future AS10 services should
-consume an acceptable AS7 diagnostic report when available and block or warn
-according to the established `ready`, `warning`, `blocked`, and `error`
-diagnostic status pattern.
+AS7 remains the setup coherence checkpoint. AS10 accepts an AS7 diagnostic
+report when available and blocks or warns according to the established `ready`,
+`warning`, `blocked`, and `error` diagnostic status pattern.
 
 AS8 owns POI occurrence and family membership discovery. AS10 consumes AS8
 reports to build comparison cohorts and should not recompute POIs when AS8
@@ -1332,63 +1345,120 @@ AS9 owns genome component encoding and genome path preview construction. AS10
 consumes AS9 genome/path components as predicate vocabulary and should not
 re-encode genome paths when AS9 reports are supplied.
 
-### Future AS10 Backend MVP Recommendation
+### Accepted AS10 Backend Behavior
 
-The recommended first implementation patch is:
+AS10 implements `AnalysisSuiteWhiteBoxRuleTester` as the first conservative
+white-box rule testing backend. It is backend-only, read-only, non-persistent,
+and has no GUI exposure. It evaluates caller-supplied
+`AnalysisSuiteWhiteBoxRuleDefinition` objects against explicit
+`AnalysisSuiteComparisonSetDefinition` positive and negative/background cohorts
+containing AS9 genome paths or JSON-like AS9 path dictionaries.
 
-AS10 - White-Box Rule Testing Backend
+Accepted AS10 data contracts:
 
-- backend-only;
-- read-only;
-- no persistence;
-- no GUI;
-- consumes AS7 diagnostic, AS8 POI/family preview, AS9 genome path preview,
-  and optional AS5 target or future outcome-definition context;
-- defines comparison-set models;
-- defines rule predicate and tested-rule models;
-- evaluates explicit predicates/rules against comparison sets;
-- optionally performs a bounded single-predicate candidate scan;
-- reports support, coverage, precision, recall, lift, false positives,
-  false negatives, false-positive rate, false-negative rate, specificity, and
-  basic time stability;
-- returns bounded JSON-safe candidate/report output with default 100 and max
-  500 returned candidates.
+- `AnalysisSuiteRulePredicate`.
+- `AnalysisSuiteWhiteBoxRuleDefinition`.
+- `AnalysisSuiteComparisonCohort`.
+- `AnalysisSuiteComparisonSetDefinition`.
+- `AnalysisSuitePredicateResult`.
+- `AnalysisSuiteRuleMatch`.
+- `AnalysisSuiteRuleMetricSummary`.
+- `AnalysisSuiteRuleValidationReport`.
+- `AnalysisSuiteRuleTestReport`.
+- `AnalysisSuiteWhiteBoxRuleTester`.
 
-The first backend should not implement deep combinatorial mining. If rule
-candidate discovery needs conjunctions beyond size one, it should be split
-into AS11-AUDIT so pruning, false-discovery-rate controls, ranking, and
-temporal validation can be designed explicitly.
+Accepted AS10 public methods:
+
+- `validate_rule_definition(...)`.
+- `test_rule(...)`.
+- `build_comparison_set_from_path_reports(...)`.
+
+AS10 predicates support `equals`, `not_equals`, `gt`, `gte`, `lt`, `lte`,
+`in`, `not_in`, `is_null`, and `not_null`. MVP rules use AND semantics only.
+There are no nested expression trees, OR groups, arbitrary expression
+evaluation, executable predicates, regex policies, or `eval`.
+
+Predicate `path_offset` selects the AS9 genome snapshot to inspect:
+
+- `0` means the anchor snapshot `G(t)`.
+- negative offsets select previous snapshots such as `G(t-1)`.
+- positive offsets are blocked to prevent future-snapshot leakage.
+
+Missing required components fail the predicate and produce structured
+predicate result details. Optional missing predicates may warn without causing
+the rule match to fail.
+
+AS10 comparison sets are explicit. The tester does not silently invent
+negative examples, does not recompute AS8 POIs or family membership, and does
+not rebuild AS9 genome paths when path reports are supplied. Empty rules and
+empty cohorts block. Cohort identity overlap and missing time-split metadata
+are surfaced as diagnostics when detected.
+
+AS10 reports these diagnostic metrics:
+
+- true positives.
+- false positives.
+- false negatives.
+- true negatives.
+- support.
+- coverage.
+- precision.
+- recall.
+- specificity.
+- false-positive rate.
+- false-negative rate.
+- baseline positive rate.
+- matched positive rate.
+- lift.
+
+Support is the total number of matched examples across the evaluated positive
+and negative/background cohorts. Metrics handle zero denominators safely and
+warn on small total, positive, negative, or matched support samples. Metrics
+are evidence-quality diagnostics, not trading performance, profit validation,
+or backtest results.
+
+AS10 preserves AS7 diagnostic gating: blocked/error diagnostic reports block
+rule testing, warning diagnostics allow testing with warning, and ready
+diagnostics allow testing. When comparison cohorts are built from bounded AS9
+path previews, AS10 reports `evaluated_sample_limited`, `input_path_count`,
+`evaluated_path_count`, requested sample limit, and effective sample limit so
+preview metrics are not mistaken for full-cohort claims.
+
+AS10 does not implement broad rule discovery, candidate mining, conjunction
+mining, rule stores, GUI controls, persistence, model training, signal
+generation, backtesting, PnL/profit validation, order generation, trading
+execution, neural agents, RL Decisor logic, artifact calculation, recipe
+execution, Analysis Database mutation, OHLCV repair, Data Manager mutation,
+direct `dataframe.csv` reads, or direct `manifest.json` policy parsing.
+
+Rule candidate discovery remains future AS11-AUDIT scope so bounded candidate
+generation, pruning, ranking, false-discovery controls, and temporal
+validation can be designed explicitly before implementation.
 
 ### Future GUI Implications
 
-No AS10 GUI is part of AS10-AUDIT. A future GUI should expose rule testing
-only after the backend contract is stable. The GUI should collect comparison
-set and rule intent, render backend reports, and preserve the established
-Analysis Suite rule that policy, dataframe reads, metrics, and blockers belong
-to backend services. The GUI must not compute rule metrics, infer feature
-truth from raw CSV headers, persist rules, create stores, produce signals, or
-run backtests.
+AS10 has no GUI exposure. A future GUI should expose rule testing only after
+manual/backend review confirms the AS10 report contract is stable enough for
+interactive use. The GUI should collect comparison-set and rule intent, render
+backend reports, and preserve the established Analysis Suite rule that policy,
+dataframe reads, metrics, and blockers belong to backend services. The GUI
+must not compute rule metrics, infer feature truth from raw CSV headers,
+persist rules, create stores, produce signals, or run backtests.
 
 ### Proposed Patch Sequence After AS10-AUDIT
 
 Recommended sequence:
 
-1. AS10 - White-Box Rule Testing Backend.
-   - Backend-only, read-only, no persistence, no GUI.
-   - Test explicit predicates/rules against comparison sets from AS7/AS8/AS9
-     context.
-   - Report support, precision, recall, lift, false positives/negatives, and
-     basic stability.
-2. AS10D - Docs sync.
+1. AS10D - Docs sync.
    - Document accepted AS10 backend behavior after implementation.
-3. AS11-AUDIT - White-Box Rule Discovery / Candidate Mining Architecture.
+2. AS11-AUDIT - White-Box Rule Discovery / Candidate Mining Architecture.
    - Define bounded candidate generation, overfitting guardrails, rule
      ranking, rule pruning, temporal split validation, and false-discovery
      controls.
 
 ## Out-Of-Scope Boundaries
 
-AS8, AS9, AS-GUI-1, AS-GUI-2, AS-GUI-3, and AS10-AUDIT do not add:
+AS8, AS9, AS10, AS-GUI-1, AS-GUI-2, AS-GUI-3, and AS10-AUDIT do not add:
 
 - GUI category builder.
 - AS10 GUI controls.
@@ -1396,6 +1466,7 @@ AS8, AS9, AS-GUI-1, AS-GUI-2, AS-GUI-3, and AS10-AUDIT do not add:
 - POI definition or POI family definition persistence.
 - Persistent genome definition or genome path persistence.
 - Persistent genome stores.
+- Persistent rule definitions, comparison sets, rule reports, or rule stores.
 - Persistent binner policies.
 - Analysis Project/Run/Report stores.
 - Road classification.
@@ -1405,6 +1476,8 @@ AS8, AS9, AS-GUI-1, AS-GUI-2, AS-GUI-3, and AS10-AUDIT do not add:
 - Full Variation Analyzer implementation.
 - Automatic rule discovery.
 - Implemented white-box rule discovery.
+- Candidate mining.
+- Conjunction mining.
 - Backtesting engine.
 - PnL or profit validation.
 - Order generation.
@@ -1449,8 +1522,7 @@ Recommended sequence:
    - Defines comparison sets, rule testing, support, precision, recall, lift,
      false-positive rate, stability, and family separation.
 8. AS10 - White-Box Rule Testing Backend.
-   - Future backend-only, read-only rule-testing MVP after this architecture is
-     accepted.
+   - Implemented as the accepted backend-only, read-only rule-testing MVP.
 9. AS10D - Docs sync.
    - Document accepted AS10 backend behavior after implementation.
 10. AS11-AUDIT - White-Box Rule Discovery / Candidate Mining Architecture.

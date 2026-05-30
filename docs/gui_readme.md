@@ -312,7 +312,7 @@ Selection changes clear stale state: changing the selected Analysis Database cle
 
 Still out of scope for the GUI: AS10 controls, category-builder controls, white-box rule discovery, rule mining, model training, signal generation, backtesting, target/label/feature-set/diagnostic-report/POI/family/genome persistence, POI/family stores, genome stores, `FeatureSetStore`, Analysis Projects, Analysis Runs, Analysis Reports, trading workflows, road classification, outcome distribution analysis, Dynamic Binner fitting, full Dynamic Binner, full Variation Analyzer, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, raw OHLCV repair/validation, manifest writes, dataframe writes, and GUI-owned leakage, feature-eligibility, source-eligibility, POI/family validation, or genome validation policy.
 
-Recommended staging after AS-GUI-3 is AS-GUI-3D docs sync, then AS10-AUDIT for POI family comparison and white-box rule-discovery architecture. GUI polish may be handled separately if manual exploration finds usability issues. Future Analysis Suite GUI work should keep backend services as the policy owners; GUI code must not infer feature eligibility from raw CSV headers, compute labels, compute POI occurrences or family memberships, compute genome snapshots or paths, compute variation descriptors, fit bins, duplicate leakage/source/condition/genome policy, load `dataframe.csv` directly, write manifests/dataframes, persist definitions/reports, or perform Data Manager mutation.
+After AS10-AUDIT, the next Analysis Suite implementation step is expected to be backend-only AS10 rule testing; AS10 GUI controls remain future work. GUI polish may be handled separately if manual exploration finds usability issues. Future Analysis Suite GUI work should keep backend services as the policy owners; GUI code must not infer feature eligibility from raw CSV headers, compute labels, compute POI occurrences or family memberships, compute genome snapshots or paths, compute variation descriptors, fit bins, compute white-box rule metrics, duplicate leakage/source/condition/genome/rule policy, load `dataframe.csv` directly, write manifests/dataframes, persist definitions/reports, or perform Data Manager mutation.
 
 Current Analysis Database UI behavior:
 
@@ -1700,6 +1700,8 @@ Recommended tooling (in the GUI package):
 ---
 
 ## Change log
+
+- **v3.41 (2026-05-30)** - Analysis Suite AS10-AUDIT sync: documents that POI family comparison and white-box rule-discovery architecture is design-only, AS10 GUI controls remain future work, and future GUI code must not compute white-box rule metrics, persist definitions/reports, or own backend rule policy.
 
 - **v3.40 (2026-05-30)** - Analysis Suite AS-GUI-3 sync: documents the accepted Genome Path Preview UI in `AnalysisSuiteWindow`, including AS9 encoding definition controls, component rows, validation, row-anchored and POI-family-anchored path previews, stale genome state clearing, no persistence, no direct dataframe or manifest policy reads, no Dynamic Binner fitting, no full Variation Analyzer, and no AS10 white-box/rule-discovery behavior.
 

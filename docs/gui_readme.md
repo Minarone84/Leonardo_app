@@ -1,6 +1,6 @@
 # Leonardo GUI Architecture (Current State)
 
-Version: v3.37
+Version: v3.46
 Date: 2026-05-30
 
 ## Overview
@@ -312,7 +312,7 @@ Selection changes clear stale state: changing the selected Analysis Database cle
 
 Still out of scope for the GUI: AS10 controls, AS11 controls, AS12 controls, category-builder controls, white-box rule testing controls, white-box candidate-discovery controls, candidate-validation controls, temporal-stability controls, white-box rule discovery, rule mining, model training, signal generation, backtesting, target/label/feature-set/diagnostic-report/POI/family/genome/rule persistence, POI/family stores, genome stores, rule stores, `FeatureSetStore`, Analysis Projects, Analysis Runs, Analysis Reports, trading workflows, road classification, outcome distribution analysis, Dynamic Binner fitting, full Dynamic Binner, full Variation Analyzer, artifact calculation, recipe execution, Analysis Database build/rebuild/materialization, component editing, database extension, raw OHLCV repair/validation, manifest writes, dataframe writes, and GUI-owned leakage, feature-eligibility, source-eligibility, POI/family validation, genome validation, rule policy, or candidate validation policy.
 
-AS10 now exists as a backend-only white-box rule testing service, AS11 now exists as a backend-only bounded rule candidate scan service, and AS12-AUDIT now defines candidate validation / temporal stability architecture, but none of those workflows is exposed in `AnalysisSuiteWindow`. The current Analysis Suite GUI remains the AS5-AS9 preview surface: Data Preview, Target Preview, Feature Set, Diagnostic Report, POI / Family Preview, and Genome Path Preview. Future AS10/AS11/AS12 GUI controls remain separate work. GUI polish may be handled separately if manual exploration finds usability issues. Future Analysis Suite GUI work should keep backend services as the policy owners; GUI code must not infer feature eligibility from raw CSV headers, compute labels, compute POI occurrences or family memberships, compute genome snapshots or paths, compute variation descriptors, fit bins, compute white-box rule metrics, generate candidate rules, run candidate scans, split validation cohorts, compute temporal stability, duplicate leakage/source/condition/genome/rule/validation policy, load `dataframe.csv` directly, write manifests/dataframes, persist definitions/reports, or perform Data Manager mutation.
+AS10 now exists as a backend-only white-box rule testing service, AS11 now exists as a backend-only bounded rule candidate scan service, and AS12 now exists as a backend-only candidate temporal validation service, but none of those workflows is exposed in `AnalysisSuiteWindow`. The current Analysis Suite GUI remains the AS5-AS9 preview surface: Data Preview, Target Preview, Feature Set, Diagnostic Report, POI / Family Preview, and Genome Path Preview. Future AS10/AS11/AS12 GUI controls remain separate work. GUI polish may be handled separately if manual exploration finds usability issues. Future Analysis Suite GUI work should keep backend services as the policy owners; GUI code must not infer feature eligibility from raw CSV headers, compute labels, compute POI occurrences or family memberships, compute genome snapshots or paths, compute variation descriptors, fit bins, compute white-box rule metrics, generate candidate rules, run candidate scans, split validation cohorts, compute metric degradation, compute temporal stability, assign rule survival, duplicate leakage/source/condition/genome/rule/validation policy, load `dataframe.csv` directly, write manifests/dataframes, persist definitions/reports, or perform Data Manager mutation.
 
 Current Analysis Database UI behavior:
 
@@ -1701,6 +1701,7 @@ Recommended tooling (in the GUI package):
 
 ## Change log
 
+- **v3.46 (2026-05-30)** - Analysis Suite AS12 backend sync: documents that `AnalysisSuiteCandidateTemporalValidator` is backend-only and still not exposed in `AnalysisSuiteWindow`; the GUI must not split validation cohorts, compute metric degradation, compute temporal stability, assign rule survival, persist validation reports, or own AS12 validation policy.
 - **v3.45 (2026-05-30)** - Analysis Suite AS12-AUDIT sync: documents that candidate validation / temporal stability architecture is design-only and not exposed in `AnalysisSuiteWindow`; the GUI remains an AS5-AS9 read-only preview surface and must not split validation cohorts, compute temporal stability, assign rule survival, persist validated candidates, or own AS12 validation policy.
 
 - **v3.44 (2026-05-30)** - Analysis Suite AS11 docs sync: documents that `AnalysisSuiteRuleCandidateScanner` is backend-only and not exposed in `AnalysisSuiteWindow`; the GUI remains an AS5-AS9 read-only preview surface and must not generate candidate rules, run candidate scans, compute rule metrics, persist candidates, or own AS11 rule policy.
